@@ -1,0 +1,18 @@
+services:
+  fiolfolio:
+    build:
+      context: .
+    container_name: fiolfolio
+    restart: unless-stopped
+    ports:
+      - "${PORT:-8000}:8000"
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8000
+      DATA_DIR: /app/data
+      DEFAULT_IMPORT: /imports/export.csv
+      SCRYFALL_QUERY: game:paper
+      SCRYFALL_LANGUAGE: en
+    volumes:
+      - ./data:/app/data
+      - ./imports:/imports:ro

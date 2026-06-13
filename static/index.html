@@ -1,0 +1,417 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Fiolfolio</title>
+    <link rel="stylesheet" href="/styles.css?v=25">
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Self-hosted collection</p>
+        <h1>Fiolfolio</h1>
+      </div>
+      <div class="actions">
+        <button id="addCardButton" class="icon-button" type="button" title="Add a card">+ Add New Card</button>
+        <button id="importButton" class="icon-button" type="button" title="Import cards">+ Import</button>
+        <button id="settingsButton" class="gear-button" type="button" aria-label="Settings" title="Settings">&#9881;</button>
+      </div>
+    </header>
+
+    <div class="app-shell">
+      <aside class="command-menu" aria-label="App navigation">
+        <nav>
+          <button class="nav-command is-active" type="button" data-page-target="dashboard">Dashboard</button>
+          <button class="nav-command" type="button" data-page-target="collection">Collection</button>
+          <button class="nav-command" type="button" data-page-target="decks">Decks</button>
+        </nav>
+      </aside>
+
+      <main class="page-shell">
+      <section class="dashboard-band app-page" data-page="dashboard">
+        <div class="metric-grid">
+          <article class="metric">
+            <span>Current value</span>
+            <strong id="currentValue">$0.00</strong>
+          </article>
+          <article class="metric">
+            <span>Paid total</span>
+            <strong id="paidTotal">$0.00</strong>
+          </article>
+          <article class="metric">
+            <span>Gain / loss</span>
+            <strong id="gainLoss">$0.00</strong>
+          </article>
+          <article class="metric">
+            <span>Owned cards</span>
+            <strong id="ownedCards">0</strong>
+          </article>
+        </div>
+
+        <div class="dashboard-grid">
+          <section class="panel chart-panel">
+            <div class="panel-head">
+              <h2>Value Over Time</h2>
+              <span id="historyCount"></span>
+            </div>
+            <svg id="historyChart" role="img" aria-label="Collection value history"></svg>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <h2>Top 10 Cards</h2>
+              <span id="topCount"></span>
+            </div>
+            <div id="topCards" class="top-list"></div>
+          </section>
+
+          <section class="panel set-completion-panel">
+            <div class="panel-head">
+              <h2>Set Completion</h2>
+              <span id="setCompletionCount"></span>
+            </div>
+            <div id="setCompletion" class="set-completion-list"></div>
+          </section>
+        </div>
+      </section>
+
+      <section class="collection-band app-page" data-page="collection" hidden>
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Catalog and owned cards</p>
+            <h2>Collection</h2>
+          </div>
+          <div class="filters">
+            <input id="searchInput" type="search" placeholder="Search cards, sets, numbers">
+            <select id="ownedFilter" aria-label="Ownership filter">
+              <option value="all">All cards</option>
+              <option value="owned">Owned</option>
+              <option value="missing">Missing</option>
+            </select>
+            <select id="sortSelect" aria-label="Sort cards">
+              <option value="value">Owned value</option>
+              <option value="price">Card price</option>
+              <option value="gain">Gain/loss</option>
+              <option value="acquired">Acquired date</option>
+              <option value="set">Set order</option>
+              <option value="name">Name</option>
+            </select>
+          </div>
+        </div>
+
+        <div id="collectionBulkBar" class="bulk-bar" hidden>
+          <span id="selectedCardsCount">0 selected</span>
+          <button id="addToDeckButton" class="primary-button" type="button">Add to Deck</button>
+        </div>
+        <div id="status" class="status" aria-live="polite"></div>
+        <div id="cardsGrid" class="cards-grid"></div>
+      </section>
+
+      <section class="decks-band app-page" data-page="decks" hidden>
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Build and organize</p>
+            <h2>Decks</h2>
+          </div>
+          <button id="addDeckButton" class="primary-button" type="button">Add Deck</button>
+        </div>
+        <div id="decksStatus" class="status" aria-live="polite"></div>
+        <div id="decksGrid" class="decks-grid"></div>
+      </section>
+
+      <section class="shared-card-band app-page" data-page="shared" hidden>
+        <div id="sharedCardShell" class="shared-card-shell"></div>
+      </section>
+
+      <section class="set-band app-page" data-page="set" hidden>
+        <div id="setPageShell" class="set-page-shell"></div>
+      </section>
+
+      <section class="deck-share-band app-page" data-page="deck-share" hidden>
+        <div id="deckShareShell" class="deck-share-shell"></div>
+      </section>
+      </main>
+    </div>
+
+    <template id="cardTemplate">
+      <article class="card-row">
+        <header class="collection-card-head">
+          <label class="select-card-wrap" title="Select card for deck">
+            <input class="select-card-checkbox" type="checkbox" aria-label="Select card">
+          </label>
+          <div class="title-wrap">
+            <h3></h3>
+            <span class="variant-badge"></span>
+          </div>
+          <div class="card-actions">
+            <button class="favorite-button" type="button" aria-label="Favorite card" title="Favorite"></button>
+            <button class="edit-button" type="button" aria-label="Edit card" title="Edit card">...</button>
+          </div>
+        </header>
+        <div class="card-divider"></div>
+        <div class="collection-card-body">
+          <a class="card-art" target="_blank" rel="noreferrer">
+            <img alt="">
+          </a>
+          <div class="card-main">
+            <strong class="owned-value"></strong>
+            <p class="card-meta"></p>
+            <p class="card-type"></p>
+          <div class="card-stats">
+            <span class="price"></span>
+            <span class="delta"></span>
+          </div>
+          <dl class="card-details">
+            <div>
+              <dt>Qty</dt>
+              <dd class="detail-quantity"></dd>
+            </div>
+            <div>
+              <dt>Paid</dt>
+              <dd class="detail-paid"></dd>
+            </div>
+            <div>
+              <dt>Date Added</dt>
+              <dd class="detail-date"></dd>
+            </div>
+            <div>
+              <dt>Variant</dt>
+              <dd class="detail-variant"></dd>
+            </div>
+          </dl>
+          </div>
+        </div>
+        <footer class="card-footer">
+          <button class="share-button" type="button" aria-label="Share card" title="Share card">&#8599;</button>
+        </footer>
+      </article>
+    </template>
+
+    <div id="editOverlay" class="modal-overlay" hidden>
+      <section class="edit-modal" role="dialog" aria-modal="true" aria-labelledby="editTitle">
+        <header class="edit-modal-head">
+          <div>
+            <p class="eyebrow">Edit collection card</p>
+            <h2 id="editTitle">Card</h2>
+          </div>
+          <button id="closeEditButton" class="modal-close" type="button" aria-label="Close edit dialog">x</button>
+        </header>
+        <form id="editForm" class="edit-form">
+          <input name="card_id" type="hidden">
+          <input name="original_variant" type="hidden">
+          <label>
+            Quantity
+            <input name="quantity" type="number" min="0" step="1">
+          </label>
+          <label>
+            Price paid
+            <input name="paid_price" type="number" min="0.01" step="0.01">
+          </label>
+          <label>
+            Date acquired
+            <input name="acquired_date" type="date">
+          </label>
+          <label>
+            Variant
+            <select name="variant">
+              <option>Normal</option>
+              <option>Foil</option>
+              <option>Surge Foil</option>
+              <option>Etched Foil</option>
+              <option>Chocobo Track Foil</option>
+              <option>Rainbow Foil</option>
+            </select>
+          </label>
+          <label>
+            Condition
+            <input name="card_condition" type="text">
+          </label>
+          <label class="full-field">
+            Notes
+            <textarea name="notes" rows="3"></textarea>
+          </label>
+          <div class="modal-actions">
+            <button id="cancelEditButton" class="secondary-button" type="button">Cancel</button>
+            <button class="primary-button" type="submit">Save</button>
+          </div>
+        </form>
+      </section>
+    </div>
+
+    <div id="addCardOverlay" class="modal-overlay" hidden>
+      <section class="add-modal" role="dialog" aria-modal="true" aria-labelledby="addCardTitle">
+        <header class="edit-modal-head">
+          <div>
+            <p class="eyebrow">Add to collection</p>
+            <h2 id="addCardTitle">Add New Card</h2>
+          </div>
+          <button id="closeAddCardButton" class="modal-close" type="button" aria-label="Close add card dialog">x</button>
+        </header>
+
+        <form id="addSearchForm" class="add-search-form">
+          <label>
+            Scryfall search
+            <span class="search-control">
+              <input id="addSearchInput" type="search" autocomplete="off" placeholder="Card name, set, collector number">
+              <button id="addSearchButton" class="search-button" type="submit" aria-label="Search Scryfall">&#128269;</button>
+            </span>
+          </label>
+        </form>
+
+        <div id="addSearchStatus" class="add-search-status" aria-live="polite"></div>
+        <div id="addSearchResults" class="add-search-results"></div>
+
+        <form id="addCardForm" class="add-card-form">
+          <input name="scryfall_id" type="hidden">
+          <div id="selectedAddCard" class="selected-add-card" hidden></div>
+          <label>
+            Quantity
+            <input name="quantity" type="number" min="1" step="1" value="1">
+          </label>
+          <label>
+            Price paid per card
+            <input name="paid_price" type="number" min="0.01" step="0.01" value="0.01">
+          </label>
+          <label>
+            Date acquired
+            <input name="acquired_date" type="date">
+          </label>
+          <label>
+            Variant
+            <select name="variant">
+              <option>Normal</option>
+            </select>
+          </label>
+          <div class="modal-actions">
+            <button id="cancelAddCardButton" class="secondary-button" type="button">Cancel</button>
+            <button id="confirmAddCardButton" class="primary-button" type="submit" disabled>Add</button>
+          </div>
+        </form>
+      </section>
+    </div>
+
+    <div id="settingsOverlay" class="modal-overlay" hidden>
+      <section class="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+        <header class="edit-modal-head">
+          <div>
+            <p class="eyebrow">Preferences</p>
+            <h2 id="settingsTitle">Settings</h2>
+          </div>
+          <button id="closeSettingsButton" class="modal-close" type="button" aria-label="Close settings dialog">x</button>
+        </header>
+        <form id="settingsForm" class="settings-form">
+          <label>
+            Language
+            <select name="language">
+              <option value="en">English (EN)</option>
+            </select>
+          </label>
+          <label>
+            Theme
+            <select name="theme">
+              <option value="light">Light Mode</option>
+              <option value="dark">Dark Mode</option>
+              <option value="retro">Retro</option>
+              <option value="neon">Neon</option>
+              <option value="red">Magic Red</option>
+              <option value="blue">Magic Blue</option>
+              <option value="black">Magic Black</option>
+              <option value="green">Magic Green</option>
+            </select>
+          </label>
+          <div class="modal-actions">
+            <button id="cancelSettingsButton" class="secondary-button" type="button">Cancel</button>
+            <button class="primary-button" type="submit">Save</button>
+          </div>
+        </form>
+      </section>
+    </div>
+
+    <div id="shareOverlay" class="modal-overlay" hidden>
+      <section class="share-modal" role="dialog" aria-modal="true" aria-labelledby="shareTitle">
+        <header class="edit-modal-head">
+          <div>
+            <p class="eyebrow">Share card</p>
+            <h2 id="shareTitle">Share link</h2>
+          </div>
+          <button id="closeShareButton" class="modal-close" type="button" aria-label="Close share dialog">x</button>
+        </header>
+        <div class="share-content">
+          <label>
+            Unique card URL
+            <input id="shareUrlInput" type="text" readonly>
+          </label>
+          <div class="modal-actions">
+            <button id="copyShareButton" class="primary-button" type="button">Copy</button>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <div id="addDeckOverlay" class="modal-overlay" hidden>
+      <section class="settings-modal" role="dialog" aria-modal="true" aria-labelledby="addDeckTitle">
+        <header class="edit-modal-head">
+          <div>
+            <p class="eyebrow">New deck</p>
+            <h2 id="addDeckTitle">Add Deck</h2>
+          </div>
+          <button id="closeAddDeckButton" class="modal-close" type="button" aria-label="Close add deck dialog">x</button>
+        </header>
+        <form id="addDeckForm" class="settings-form">
+          <label>
+            Deck name
+            <input name="name" type="text" maxlength="20" required placeholder="20 characters max">
+          </label>
+          <div class="modal-actions">
+            <button id="cancelAddDeckButton" class="secondary-button" type="button">Cancel</button>
+            <button class="primary-button" type="submit">Add</button>
+          </div>
+        </form>
+      </section>
+    </div>
+
+    <div id="assignDeckOverlay" class="modal-overlay" hidden>
+      <section class="settings-modal" role="dialog" aria-modal="true" aria-labelledby="assignDeckTitle">
+        <header class="edit-modal-head">
+          <div>
+            <p class="eyebrow">Assign selected cards</p>
+            <h2 id="assignDeckTitle">Add to Deck</h2>
+          </div>
+          <button id="closeAssignDeckButton" class="modal-close" type="button" aria-label="Close add to deck dialog">x</button>
+        </header>
+        <form id="assignDeckForm" class="settings-form">
+          <label>
+            Deck
+            <select name="deck_id" required></select>
+          </label>
+          <div class="modal-actions">
+            <button id="cancelAssignDeckButton" class="secondary-button" type="button">Cancel</button>
+            <button class="primary-button" type="submit">Add to Deck</button>
+          </div>
+        </form>
+      </section>
+    </div>
+
+    <div id="deckDetailOverlay" class="modal-overlay" hidden>
+      <section class="deck-detail-modal" role="dialog" aria-modal="true" aria-labelledby="deckDetailTitle">
+        <header class="edit-modal-head">
+          <div>
+            <p class="eyebrow">Deck cards</p>
+            <h2 id="deckDetailTitle">Deck</h2>
+          </div>
+          <div class="deck-modal-actions">
+            <button id="shareDeckButton" class="share-button" type="button" aria-label="Share deck" title="Share deck">&#8599;</button>
+            <button id="deleteDeckButton" class="danger-icon-button" type="button" aria-label="Delete deck" title="Delete deck">x</button>
+          </div>
+        </header>
+        <div id="deckDetailCards" class="deck-detail-list"></div>
+        <div class="modal-actions deck-detail-footer">
+          <button id="closeDeckDetailButton" class="secondary-button" type="button">Close</button>
+        </div>
+      </section>
+    </div>
+
+    <script src="/app.js?v=25"></script>
+  </body>
+</html>
