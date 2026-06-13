@@ -31,6 +31,14 @@ SCRYFALL_QUERY = os.environ.get("SCRYFALL_QUERY", "game:paper")
 SCRYFALL_LANGUAGE = os.environ.get("SCRYFALL_LANGUAGE", "en")
 SUPPORTED_SCRYFALL_LANGUAGES = {"en"}
 USER_AGENT = "fiolfolio/0.1"
+CARD_CONDITIONS = (
+    "Near Mint",
+    "Lightly Played",
+    "Moderately Played",
+    "Heavily Played",
+    "Damaged",
+)
+DEFAULT_CARD_CONDITION = "Near Mint"
 
 
 def now_iso():
@@ -74,6 +82,17 @@ def money(value, fallback=0.0):
 
 def normalize(value):
     return re.sub(r"[^a-z0-9]+", "", (value or "").lower())
+
+
+def card_condition(value):
+    text = re.sub(r"\s+", " ", (value or "").strip())
+    return text if text in CARD_CONDITIONS else DEFAULT_CARD_CONDITION
+
+
+def bool_int(value):
+    if isinstance(value, str):
+        return 1 if value.lower() in {"1", "true", "yes", "on", "graded"} else 0
+    return 1 if value else 0
 
 
 def scryfall_language(value=None):
@@ -353,7 +372,8 @@ def init_db(conn):
             acquired_date TEXT,
             paid_price REAL NOT NULL DEFAULT 0.01,
             variant TEXT NOT NULL DEFAULT 'Normal',
-            card_condition TEXT,
+            card_condition TEXT NOT NULL DEFAULT 'Near Mint',
+            graded INTEGER NOT NULL DEFAULT 0,
             notes TEXT,
             updated_at TEXT NOT NULL,
             PRIMARY KEY (card_id, variant),
@@ -398,10 +418,31 @@ def init_db(conn):
             FOREIGN KEY (card_id) REFERENCES cards(scryfall_id) ON DELETE CASCADE
         );
 
+        CREATE TABLE IF NOT EXISTS containers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            location TEXT NOT NULL DEFAULT '',
+            notes TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS container_cards (
+            container_id INTEGER NOT NULL,
+            card_id TEXT NOT NULL,
+            variant TEXT NOT NULL DEFAULT 'Normal',
+            quantity INTEGER NOT NULL DEFAULT 0,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (container_id, card_id, variant),
+            FOREIGN KEY (container_id) REFERENCES containers(id) ON DELETE CASCADE,
+            FOREIGN KEY (card_id) REFERENCES cards(scryfall_id) ON DELETE CASCADE
+        );
+
         CREATE INDEX IF NOT EXISTS idx_cards_lookup ON cards(set_code, collector_number, name);
         CREATE INDEX IF NOT EXISTS idx_cards_name ON cards(name);
         CREATE INDEX IF NOT EXISTS idx_collection_quantity ON collection(quantity);
         CREATE INDEX IF NOT EXISTS idx_deck_cards_card ON deck_cards(card_id, variant);
+        CREATE INDEX IF NOT EXISTS idx_container_cards_card ON container_cards(card_id, variant);
         CREATE INDEX IF NOT EXISTS idx_snapshots_date ON price_snapshots(snapshot_date);
         """
     )
@@ -429,10 +470,24 @@ def migrate_cards_schema(conn):
 
 def migrate_collection_schema(conn):
     columns = conn.execute("PRAGMA table_info(collection)").fetchall()
+    column_names = {col["name"] for col in columns}
+    if "graded" not in column_names:
+        conn.execute("ALTER TABLE collection ADD COLUMN graded INTEGER NOT NULL DEFAULT 0")
+    placeholders = ", ".join("?" for _ in CARD_CONDITIONS)
+    conn.execute(
+        f"""
+        UPDATE collection
+        SET card_condition = ?
+        WHERE card_condition IS NULL
+           OR trim(card_condition) = ''
+           OR card_condition NOT IN ({placeholders})
+        """,
+        (DEFAULT_CARD_CONDITION, *CARD_CONDITIONS),
+    )
     card_id_pk = [col for col in columns if col["name"] == "card_id" and col["pk"] == 1]
     variant_pk = [col for col in columns if col["name"] == "variant" and col["pk"] == 2]
     if not card_id_pk or variant_pk:
-        if "share_id" not in {col["name"] for col in columns}:
+        if "share_id" not in column_names:
             conn.execute("ALTER TABLE collection ADD COLUMN share_id TEXT")
         return
     conn.executescript(
@@ -445,14 +500,15 @@ def migrate_collection_schema(conn):
             acquired_date TEXT,
             paid_price REAL NOT NULL DEFAULT 0.01,
             variant TEXT NOT NULL DEFAULT 'Normal',
-            card_condition TEXT,
+            card_condition TEXT NOT NULL DEFAULT 'Near Mint',
+            graded INTEGER NOT NULL DEFAULT 0,
             notes TEXT,
             updated_at TEXT NOT NULL,
             PRIMARY KEY (card_id, variant),
             FOREIGN KEY (card_id) REFERENCES cards(scryfall_id) ON DELETE CASCADE
         );
-        INSERT INTO collection (card_id, quantity, acquired_date, paid_price, variant, card_condition, notes, updated_at)
-        SELECT card_id, quantity, acquired_date, paid_price, COALESCE(NULLIF(variant, ''), 'Normal'), card_condition, notes, updated_at
+        INSERT INTO collection (card_id, quantity, acquired_date, paid_price, variant, card_condition, graded, notes, updated_at)
+        SELECT card_id, quantity, acquired_date, paid_price, COALESCE(NULLIF(variant, ''), 'Normal'), COALESCE(NULLIF(card_condition, ''), 'Near Mint'), graded, notes, updated_at
         FROM collection_old;
         DROP TABLE collection_old;
         """
@@ -759,7 +815,7 @@ def add_card_to_collection(conn, payload):
 
     existing = conn.execute(
         """
-        SELECT quantity, paid_price, acquired_date, card_condition, notes, share_id
+        SELECT quantity, paid_price, acquired_date, card_condition, graded, notes, share_id
         FROM collection
         WHERE card_id = ? AND variant = ?
         """,
@@ -774,29 +830,32 @@ def add_card_to_collection(conn, payload):
             acquired_date = min(existing["acquired_date"], acquired_date)
         else:
             acquired_date = existing["acquired_date"] or acquired_date
-        card_condition = existing["card_condition"] or ""
+        card_condition_value = card_condition(existing["card_condition"])
+        graded = int(existing["graded"] or 0)
         notes = existing["notes"] or ""
         share_id = existing["share_id"] or new_share_id(conn)
     else:
         new_quantity = quantity
-        card_condition = ""
+        card_condition_value = card_condition(payload.get("card_condition"))
+        graded = bool_int(payload.get("graded"))
         notes = ""
         share_id = new_share_id(conn)
 
     conn.execute(
         """
-        INSERT INTO collection (card_id, share_id, quantity, acquired_date, paid_price, variant, card_condition, notes, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO collection (card_id, share_id, quantity, acquired_date, paid_price, variant, card_condition, graded, notes, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(card_id, variant) DO UPDATE SET
             share_id = COALESCE(collection.share_id, excluded.share_id),
             quantity = excluded.quantity,
             acquired_date = excluded.acquired_date,
             paid_price = excluded.paid_price,
             card_condition = excluded.card_condition,
+            graded = excluded.graded,
             notes = excluded.notes,
             updated_at = excluded.updated_at
         """,
-        (card_id, share_id, new_quantity, acquired_date, paid_price, variant, card_condition, notes, now_iso()),
+        (card_id, share_id, new_quantity, acquired_date, paid_price, variant, card_condition_value, graded, notes, now_iso()),
     )
     card = conn.execute("SELECT * FROM cards WHERE scryfall_id = ?", (card_id,)).fetchone()
     conn.commit()
@@ -895,7 +954,8 @@ def import_csv(conn, csv_path):
                     "quantity": 0,
                     "paid_total": 0.0,
                     "acquired_date": source.get("Date Added") or today_iso(),
-                    "card_condition": source.get("Card Condition") or "",
+                    "card_condition": card_condition(source.get("Card Condition")),
+                    "graded": bool_int(source.get("Graded")),
                     "notes": [],
                 }
             record = records[key]
@@ -905,7 +965,9 @@ def import_csv(conn, csv_path):
             if acquired_date and (not record["acquired_date"] or acquired_date < record["acquired_date"]):
                 record["acquired_date"] = acquired_date
             if source.get("Card Condition"):
-                record["card_condition"] = source.get("Card Condition")
+                record["card_condition"] = card_condition(source.get("Card Condition"))
+            if source.get("Graded"):
+                record["graded"] = bool_int(source.get("Graded"))
             if source.get("Notes"):
                 record["notes"].append(source.get("Notes"))
             imported += 1
@@ -920,14 +982,15 @@ def import_csv(conn, csv_path):
         used_share_ids.add(share_id)
         conn.execute(
             """
-            INSERT INTO collection (card_id, share_id, quantity, acquired_date, paid_price, variant, card_condition, notes, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO collection (card_id, share_id, quantity, acquired_date, paid_price, variant, card_condition, graded, notes, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(card_id, variant) DO UPDATE SET
                 share_id = COALESCE(collection.share_id, excluded.share_id),
                 quantity = excluded.quantity,
                 acquired_date = excluded.acquired_date,
                 paid_price = excluded.paid_price,
                 card_condition = excluded.card_condition,
+                graded = excluded.graded,
                 notes = excluded.notes,
                 updated_at = excluded.updated_at
             """,
@@ -939,6 +1002,7 @@ def import_csv(conn, csv_path):
                 paid_price,
                 record["variant"],
                 record["card_condition"],
+                record["graded"],
                 "; ".join(record["notes"]),
                 updated_at,
             ),
@@ -1182,6 +1246,8 @@ def deck_cards(conn, deck_id):
         SELECT c.*, dc.variant, dc.added_at,
                COALESCE(col.quantity, 0) AS quantity,
                COALESCE(col.paid_price, 0.01) AS paid_price,
+               COALESCE(col.card_condition, 'Near Mint') AS card_condition,
+               COALESCE(col.graded, 0) AS graded,
                col.acquired_date,
                col.share_id,
                ({price_expr}) AS display_price,
@@ -1290,6 +1356,203 @@ def delete_deck(conn, deck_id):
     return {"ok": True, "deleted": deck_id}
 
 
+def allocated_quantity(conn, card_id, variant, exclude_container_id=None):
+    params = [card_id, variant]
+    exclude_sql = ""
+    if exclude_container_id is not None:
+        exclude_sql = " AND container_id != ?"
+        params.append(exclude_container_id)
+    row = conn.execute(
+        f"""
+        SELECT COALESCE(SUM(quantity), 0) AS quantity
+        FROM container_cards
+        WHERE card_id = ? AND variant = ?{exclude_sql}
+        """,
+        params,
+    ).fetchone()
+    return int(row["quantity"] or 0)
+
+
+def owned_quantity(conn, card_id, variant):
+    row = conn.execute(
+        "SELECT COALESCE(quantity, 0) AS quantity FROM collection WHERE card_id = ? AND variant = ?",
+        (card_id, variant),
+    ).fetchone()
+    return int(row["quantity"] or 0) if row else 0
+
+
+def list_containers(conn):
+    rows = conn.execute(
+        """
+        SELECT c.id, c.name, c.location, c.notes, c.created_at, c.updated_at,
+               COUNT(cc.card_id) AS card_count,
+               COALESCE(SUM(cc.quantity), 0) AS stored_quantity
+        FROM containers c
+        LEFT JOIN container_cards cc ON cc.container_id = c.id
+        GROUP BY c.id
+        ORDER BY c.updated_at DESC, c.name COLLATE NOCASE
+        """
+    ).fetchall()
+    return rows_to_dicts(rows)
+
+
+def clean_limited_text(payload, key, label, limit, required=False):
+    value = re.sub(r"\s+", " ", (payload.get(key) or "").strip())
+    if required and not value:
+        raise ValueError(f"{label} is required.")
+    if len(value) > limit:
+        raise ValueError(f"{label} must be {limit} characters or fewer.")
+    return value
+
+
+def create_container(conn, payload):
+    name = clean_limited_text(payload, "name", "Container name", 30, required=True)
+    location = clean_limited_text(payload, "location", "Container location", 30)
+    notes = (payload.get("notes") or "").strip()
+    if len(notes) > 500:
+        raise ValueError("Notes / Description must be 500 characters or fewer.")
+    timestamp = now_iso()
+    cursor = conn.execute(
+        """
+        INSERT INTO containers (name, location, notes, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (name, location, notes, timestamp, timestamp),
+    )
+    conn.commit()
+    return {
+        "ok": True,
+        "container": {
+            "id": cursor.lastrowid,
+            "name": name,
+            "location": location,
+            "notes": notes,
+            "created_at": timestamp,
+            "updated_at": timestamp,
+            "card_count": 0,
+            "stored_quantity": 0,
+        },
+    }
+
+
+def container_cards(conn, container_id):
+    price_expr = current_price_sql("c")
+    rows = conn.execute(
+        f"""
+        SELECT c.*, cc.variant, cc.quantity AS stored_quantity, cc.updated_at,
+               COALESCE(col.quantity, 0) AS quantity,
+               COALESCE(col.paid_price, 0.01) AS paid_price,
+               COALESCE(col.card_condition, 'Near Mint') AS card_condition,
+               COALESCE(col.graded, 0) AS graded,
+               col.acquired_date,
+               col.share_id,
+               ({price_expr}) AS display_price,
+               COALESCE(col.quantity, 0) * ({price_expr}) AS owned_value
+        FROM container_cards cc
+        JOIN cards c ON c.scryfall_id = cc.card_id
+        LEFT JOIN collection col ON col.card_id = cc.card_id AND col.variant = cc.variant
+        WHERE cc.container_id = ?
+        ORDER BY c.name COLLATE NOCASE, cc.variant
+        """,
+        (container_id,),
+    ).fetchall()
+    return rows_to_dicts(rows)
+
+
+def container_detail(conn, container_id):
+    container = conn.execute(
+        """
+        SELECT c.id, c.name, c.location, c.notes, c.created_at, c.updated_at,
+               COUNT(cc.card_id) AS card_count,
+               COALESCE(SUM(cc.quantity), 0) AS stored_quantity
+        FROM containers c
+        LEFT JOIN container_cards cc ON cc.container_id = c.id
+        WHERE c.id = ?
+        GROUP BY c.id
+        """,
+        (container_id,),
+    ).fetchone()
+    if not container:
+        raise KeyError("Container not found")
+    payload = dict(container)
+    payload["cards"] = container_cards(conn, container_id)
+    return payload
+
+
+def add_cards_to_container(conn, container_id, payload):
+    container = conn.execute("SELECT id FROM containers WHERE id = ?", (container_id,)).fetchone()
+    if not container:
+        raise KeyError("Container not found")
+    cards = payload.get("cards") or []
+    if not isinstance(cards, list) or not cards:
+        raise ValueError("Choose at least one card.")
+
+    timestamp = now_iso()
+    added = 0
+    for item in cards:
+        card_id = item.get("card_id") or item.get("scryfall_id")
+        variant = item.get("variant") or "Normal"
+        quantity = max(0, int(item.get("quantity") or 0))
+        if not card_id or quantity <= 0:
+            continue
+        owned = owned_quantity(conn, card_id, variant)
+        if owned <= 0:
+            raise ValueError("Only owned cards can be stored in containers.")
+        existing = conn.execute(
+            """
+            SELECT COALESCE(quantity, 0) AS quantity
+            FROM container_cards
+            WHERE container_id = ? AND card_id = ? AND variant = ?
+            """,
+            (container_id, card_id, variant),
+        ).fetchone()
+        current_here = int(existing["quantity"] or 0) if existing else 0
+        allocated_elsewhere = allocated_quantity(conn, card_id, variant, exclude_container_id=container_id)
+        max_here = owned - allocated_elsewhere
+        if current_here + quantity > max_here:
+            available = max(0, max_here - current_here)
+            raise ValueError(f"Only {available} unassigned copy/copies are available for this card.")
+        conn.execute(
+            """
+            INSERT INTO container_cards (container_id, card_id, variant, quantity, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(container_id, card_id, variant) DO UPDATE SET
+                quantity = container_cards.quantity + excluded.quantity,
+                updated_at = excluded.updated_at
+            """,
+            (container_id, card_id, variant, quantity, timestamp),
+        )
+        added += quantity
+    conn.execute("UPDATE containers SET updated_at = ? WHERE id = ?", (timestamp, container_id))
+    conn.commit()
+    return {"ok": True, "added": added, "container_id": container_id}
+
+
+def remove_card_from_container(conn, container_id, payload):
+    container = conn.execute("SELECT id FROM containers WHERE id = ?", (container_id,)).fetchone()
+    if not container:
+        raise KeyError("Container not found")
+    card_id = payload.get("card_id") or payload.get("scryfall_id")
+    variant = payload.get("variant") or "Normal"
+    if not card_id:
+        raise ValueError("Card is required.")
+    cursor = conn.execute(
+        "DELETE FROM container_cards WHERE container_id = ? AND card_id = ? AND variant = ?",
+        (container_id, card_id, variant),
+    )
+    conn.execute("UPDATE containers SET updated_at = ? WHERE id = ?", (now_iso(), container_id))
+    conn.commit()
+    return {"ok": True, "removed": cursor.rowcount}
+
+
+def delete_container(conn, container_id):
+    cursor = conn.execute("DELETE FROM containers WHERE id = ?", (container_id,))
+    if cursor.rowcount == 0:
+        raise KeyError("Container not found")
+    conn.commit()
+    return {"ok": True, "deleted": container_id}
+
+
 def list_cards(conn, query):
     params = urllib.parse.parse_qs(query)
     search = (params.get("search", [""])[0] or "").strip()
@@ -1312,6 +1575,13 @@ def list_cards(conn, query):
         where.append("COALESCE(col.quantity, 0) = 0")
     where_sql = "WHERE " + " AND ".join(where) if where else ""
     price_expr = current_price_sql("c")
+    allocated_expr = """
+        COALESCE((
+            SELECT SUM(cc.quantity)
+            FROM container_cards cc
+            WHERE cc.card_id = c.scryfall_id AND cc.variant = COALESCE(col.variant, 'Normal')
+        ), 0)
+    """
     sort_map = {
         "name": "c.name COLLATE NOCASE ASC",
         "set": "c.set_name COLLATE NOCASE ASC, CAST(c.collector_number AS INTEGER), c.collector_number",
@@ -1325,8 +1595,13 @@ def list_cards(conn, query):
     rows = conn.execute(
         f"""
         SELECT c.*, COALESCE(col.quantity, 0) AS quantity, COALESCE(col.paid_price, 0.01) AS paid_price,
-               COALESCE(col.variant, 'Normal') AS variant, col.share_id, col.acquired_date, col.card_condition, col.notes,
+               COALESCE(col.variant, 'Normal') AS variant, col.share_id, col.acquired_date,
+               COALESCE(col.card_condition, 'Near Mint') AS card_condition,
+               COALESCE(col.graded, 0) AS graded,
+               col.notes,
                COALESCE(meta.favorite, 0) AS favorite,
+               ({allocated_expr}) AS container_quantity,
+               MAX(COALESCE(col.quantity, 0) - ({allocated_expr}), 0) AS unassigned_quantity,
                ({price_expr}) AS display_price,
                COALESCE(col.quantity, 0) * ({price_expr}) AS owned_value,
                COALESCE(col.quantity, 0) * (({price_expr}) - COALESCE(col.paid_price, 0.01)) AS gain_loss
@@ -1347,7 +1622,9 @@ def shared_card(conn, share_id):
     row = conn.execute(
         f"""
         SELECT c.*, col.share_id, col.quantity, col.paid_price, col.variant, col.acquired_date,
-               col.card_condition, col.notes, COALESCE(meta.favorite, 0) AS favorite,
+               COALESCE(col.card_condition, 'Near Mint') AS card_condition,
+               COALESCE(col.graded, 0) AS graded,
+               col.notes, COALESCE(meta.favorite, 0) AS favorite,
                ({price_expr}) AS display_price,
                col.quantity * ({price_expr}) AS owned_value,
                col.quantity * (({price_expr}) - col.paid_price) AS gain_loss
@@ -1381,6 +1658,11 @@ def update_collection(conn, card_id, payload):
         "SELECT favorite FROM card_meta WHERE card_id = ? AND variant = ?",
         (card_id, original_variant),
     ).fetchone()
+    current_allocated = allocated_quantity(conn, card_id, original_variant)
+    if original_variant != variant and current_allocated > 0:
+        raise ValueError("Remove this card from containers before changing its variant.")
+    if quantity < current_allocated:
+        raise ValueError(f"This card has {current_allocated} copy/copies stored in containers.")
     if quantity == 0:
         conn.execute("DELETE FROM collection WHERE card_id = ? AND variant = ?", (card_id, original_variant))
     else:
@@ -1395,8 +1677,8 @@ def update_collection(conn, card_id, payload):
             conn.execute("DELETE FROM collection WHERE card_id = ? AND variant = ?", (card_id, original_variant))
         conn.execute(
             """
-            INSERT INTO collection (card_id, share_id, quantity, acquired_date, paid_price, variant, card_condition, notes, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO collection (card_id, share_id, quantity, acquired_date, paid_price, variant, card_condition, graded, notes, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(card_id, variant) DO UPDATE SET
                 share_id = COALESCE(collection.share_id, excluded.share_id),
                 quantity = excluded.quantity,
@@ -1404,6 +1686,7 @@ def update_collection(conn, card_id, payload):
                 paid_price = excluded.paid_price,
                 variant = excluded.variant,
                 card_condition = excluded.card_condition,
+                graded = excluded.graded,
                 notes = excluded.notes,
                 updated_at = excluded.updated_at
             """,
@@ -1414,7 +1697,8 @@ def update_collection(conn, card_id, payload):
                 payload.get("acquired_date") or today_iso(),
                 paid_price,
                 variant,
-                payload.get("card_condition") or "",
+                card_condition(payload.get("card_condition")),
+                bool_int(payload.get("graded")),
                 payload.get("notes") or "",
                 now_iso(),
             ),
@@ -1436,6 +1720,9 @@ def update_collection(conn, card_id, payload):
 
 def delete_collection_entry(conn, card_id, payload):
     variant = payload.get("variant") or "Normal"
+    current_allocated = allocated_quantity(conn, card_id, variant)
+    if current_allocated > 0:
+        raise ValueError("Remove this card from containers before deleting it from your collection.")
     cursor = conn.execute(
         "DELETE FROM collection WHERE card_id = ? AND variant = ?",
         (card_id, variant),
@@ -1477,7 +1764,9 @@ def export_rows(conn):
         SELECT c.name, c.set_name, c.collector_number, c.rarity, c.type_line,
                COALESCE(col.quantity, 0) AS quantity, COALESCE(col.acquired_date, '') AS acquired_date,
                COALESCE(col.paid_price, 0.01) AS paid_price, COALESCE(col.variant, 'Normal') AS variant,
-               COALESCE(col.card_condition, '') AS card_condition, COALESCE(col.notes, '') AS notes,
+               COALESCE(col.card_condition, 'Near Mint') AS card_condition,
+               COALESCE(col.graded, 0) AS graded,
+               COALESCE(col.notes, '') AS notes,
                COALESCE(meta.favorite, 0) AS favorite,
                ({price_expr}) AS current_value, COALESCE(col.quantity, 0) * ({price_expr}) AS owned_value,
                c.scryfall_uri
@@ -1496,7 +1785,7 @@ def export_csv(conn):
     writer = csv.writer(output)
     writer.writerow([
         "Name", "Set", "Card Number", "Rarity", "Type", "Quantity", "Date Acquired",
-        "Price Paid", "Variant", "Condition", "Notes", "Favorite", "Current Value", "Owned Value", "Scryfall URL"
+        "Price Paid", "Variant", "Condition", "Graded", "Notes", "Favorite", "Current Value", "Owned Value", "Scryfall URL"
     ])
     for row in rows:
         writer.writerow([row[key] for key in row.keys()])
@@ -1506,7 +1795,7 @@ def export_csv(conn):
 def export_json(conn):
     keys = [
         "name", "set_name", "collector_number", "rarity", "type_line", "quantity", "acquired_date",
-        "paid_price", "variant", "card_condition", "notes", "favorite", "current_value", "owned_value", "scryfall_uri"
+        "paid_price", "variant", "card_condition", "graded", "notes", "favorite", "current_value", "owned_value", "scryfall_uri"
     ]
     return [
         {key: row[key] for key in keys}
@@ -1549,6 +1838,11 @@ class Handler(SimpleHTTPRequestHandler):
                 match = re.match(r"^/api/decks/([0-9]+)$", parsed.path)
                 if match:
                     return self.send_json(deck_detail(conn, int(match.group(1))))
+                if parsed.path == "/api/containers":
+                    return self.send_json({"containers": list_containers(conn)})
+                match = re.match(r"^/api/containers/([0-9]+)$", parsed.path)
+                if match:
+                    return self.send_json(container_detail(conn, int(match.group(1))))
                 match = re.match(r"^/api/sets/([^/]+)$", parsed.path)
                 if match:
                     return self.send_json(set_detail(conn, urllib.parse.unquote(match.group(1)).lower()))
@@ -1608,6 +1902,11 @@ class Handler(SimpleHTTPRequestHandler):
                 match = re.match(r"^/api/decks/([0-9]+)/cards$", parsed.path)
                 if match:
                     return self.send_json(add_cards_to_deck(conn, int(match.group(1)), self.read_json()))
+                if parsed.path == "/api/containers":
+                    return self.send_json(create_container(conn, self.read_json()), HTTPStatus.CREATED)
+                match = re.match(r"^/api/containers/([0-9]+)/cards$", parsed.path)
+                if match:
+                    return self.send_json(add_cards_to_container(conn, int(match.group(1)), self.read_json()))
                 match = re.match(r"^/api/cards/([^/]+)/collection$", parsed.path)
                 if match:
                     return self.send_json(update_collection(conn, urllib.parse.unquote(match.group(1)), self.read_json()))
@@ -1635,6 +1934,12 @@ class Handler(SimpleHTTPRequestHandler):
                 match = re.match(r"^/api/decks/([0-9]+)/cards$", parsed.path)
                 if match:
                     return self.send_json(remove_card_from_deck(conn, int(match.group(1)), self.read_json()))
+                match = re.match(r"^/api/containers/([0-9]+)$", parsed.path)
+                if match:
+                    return self.send_json(delete_container(conn, int(match.group(1))))
+                match = re.match(r"^/api/containers/([0-9]+)/cards$", parsed.path)
+                if match:
+                    return self.send_json(remove_card_from_container(conn, int(match.group(1)), self.read_json()))
                 match = re.match(r"^/api/cards/([^/]+)/collection$", parsed.path)
                 if match:
                     return self.send_json(delete_collection_entry(conn, urllib.parse.unquote(match.group(1)), self.read_json()))
