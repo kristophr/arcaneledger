@@ -30,7 +30,7 @@ SCRYFALL_ID_URL = "https://api.scryfall.com/cards/{card_id}"
 SCRYFALL_QUERY = os.environ.get("SCRYFALL_QUERY", "game:paper")
 SCRYFALL_LANGUAGE = os.environ.get("SCRYFALL_LANGUAGE", "en")
 SUPPORTED_SCRYFALL_LANGUAGES = {"en"}
-USER_AGENT = "fiolfolio/0.1"
+USER_AGENT = "foilfolio/0.1"
 CARD_CONDITIONS = (
     "Near Mint",
     "Lightly Played",
@@ -1863,7 +1863,7 @@ class Handler(SimpleHTTPRequestHandler):
                     data = export_csv(conn).encode("utf-8")
                     self.send_response(HTTPStatus.OK)
                     self.send_header("Content-Type", "text/csv; charset=utf-8")
-                    self.send_header("Content-Disposition", "attachment; filename=fiolfolio-collection.csv")
+                    self.send_header("Content-Disposition", "attachment; filename=foilfolio-collection.csv")
                     self.send_header("Content-Length", str(len(data)))
                     self.end_headers()
                     self.wfile.write(data)
@@ -1872,7 +1872,7 @@ class Handler(SimpleHTTPRequestHandler):
                     data = json.dumps(export_json(conn), indent=2).encode("utf-8")
                     self.send_response(HTTPStatus.OK)
                     self.send_header("Content-Type", "application/json; charset=utf-8")
-                    self.send_header("Content-Disposition", "attachment; filename=fiolfolio-collection.json")
+                    self.send_header("Content-Disposition", "attachment; filename=foilfolio-collection.json")
                     self.send_header("Content-Length", str(len(data)))
                     self.end_headers()
                     self.wfile.write(data)
@@ -1957,7 +1957,7 @@ def serve(host="127.0.0.1", port=8000):
         init_db(conn)
     server = ThreadingHTTPServer((host, port), Handler)
     display_host = "127.0.0.1" if host in ("0.0.0.0", "::") else host
-    print(f"Fiolfolio running at http://{display_host}:{port}")
+    print(f"FoilFolio running at http://{display_host}:{port}")
     server.serve_forever()
 
 

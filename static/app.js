@@ -13,11 +13,11 @@ const state = {
   containers: [],
   activeContainer: null,
   selectedCards: new Map(),
-  collectionView: localStorage.getItem("fiolfolio.collectionView") || "tiles",
+  collectionView: localStorage.getItem("foilfolio.collectionView") || "tiles",
   settings: null,
 };
 
-const settingsKey = "fiolfolio.settings";
+const settingsKey = "foilfolio.settings";
 
 const dollars = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -271,7 +271,7 @@ async function deleteCollectionCard(card) {
 
 function setCollectionView(view) {
   state.collectionView = view === "list" ? "list" : "tiles";
-  localStorage.setItem("fiolfolio.collectionView", state.collectionView);
+  localStorage.setItem("foilfolio.collectionView", state.collectionView);
   els.tileViewButton.classList.toggle("is-active", state.collectionView === "tiles");
   els.listViewButton.classList.toggle("is-active", state.collectionView === "list");
   renderCollection();
@@ -561,7 +561,7 @@ function smoothPath(coords) {
 function cardQuery() {
   const params = new URLSearchParams({
     search: els.searchInput.value.trim(),
-    owned: els.ownedFilter.value,
+    owned: "owned",
     sort: els.sortSelect.value,
     limit: "250",
   });
@@ -1309,7 +1309,7 @@ function renderSharedCard(card) {
         <img src="${escapeHtml(card.image_normal || card.image_small || "")}" alt="${escapeHtml(cardTitle(card))}">
       </a>
       <div class="shared-card-copy">
-        <p class="eyebrow">Shared from Fiolfolio</p>
+        <p class="eyebrow">Shared from FoilFolio</p>
         <h2>${escapeHtml(cardTitle(card))}</h2>
         <div class="card-divider"></div>
         <p>${escapeHtml(card.set_name)} #${escapeHtml(card.collector_number)} - ${escapeHtml(card.rarity || "unknown")}</p>

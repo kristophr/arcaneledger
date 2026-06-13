@@ -1,8 +1,8 @@
 services:
-  fiolfolio:
+  foilfolio:
     build:
       context: .
-    container_name: fiolfolio
+    container_name: foilfolio
     restart: unless-stopped
     ports:
       - "${PORT:-8000}:8000"

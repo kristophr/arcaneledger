@@ -1,4 +1,4 @@
-# Fiolfolio
+# FoilFolio
 
 A self-hosted Magic: The Gathering collection tracker. It uses Scryfall as the catalog and price source, stores data in SQLite, imports portfolio CSV exports, tracks decks, supports read-only share links, and exports your owned cards back to CSV.
 
@@ -41,21 +41,21 @@ For a one-time catalog sync plus CSV import:
 ```bash
 mkdir -p imports
 cp "/Users/kristophr/Downloads/export(1).csv" imports/export.csv
-docker compose run --rm fiolfolio python app.py seed /imports/export.csv
+docker compose run --rm foilfolio python app.py seed /imports/export.csv
 docker compose up -d --build
 ```
 
 To sync current Scryfall prices later:
 
 ```bash
-docker compose exec fiolfolio python app.py sync
+docker compose exec foilfolio python app.py sync
 ```
 
 To replace the collection from a new CSV export:
 
 ```bash
 cp "/path/to/new-export.csv" imports/export.csv
-docker compose exec fiolfolio python app.py import /imports/export.csv
+docker compose exec foilfolio python app.py import /imports/export.csv
 ```
 
 ## Local Python Run
@@ -92,7 +92,7 @@ Docker Compose mounts that same folder to `/app/data`, so the database persists 
 
 The app initializes and migrates its SQLite schema on startup, so new tables and columns are created automatically when you update the code and restart the container.
 
-By default Fiolfolio syncs all paper Magic prints from Scryfall with:
+By default FoilFolio syncs all paper Magic prints from Scryfall with:
 
 ```text
 SCRYFALL_QUERY=game:paper

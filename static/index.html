@@ -3,14 +3,14 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Fiolfolio</title>
-    <link rel="stylesheet" href="/styles.css?v=38">
+    <title>FoilFolio</title>
+    <link rel="stylesheet" href="/styles.css?v=39">
   </head>
   <body>
     <header class="topbar">
       <div>
         <p class="eyebrow">Self-hosted collection</p>
-        <h1>Fiolfolio</h1>
+        <h1>FoilFolio</h1>
       </div>
       <div class="actions">
         <button id="addCardButton" class="icon-button" type="button" title="Add a card">+ Add New Card</button>
@@ -80,15 +80,13 @@
       <section class="collection-band app-page" data-page="collection" hidden>
         <div class="section-head">
           <div>
-            <p class="eyebrow">Catalog and owned cards</p>
+            <p class="eyebrow">Owned cards</p>
             <h2>Collection</h2>
           </div>
           <div class="filters">
             <input id="searchInput" type="search" placeholder="Search cards, sets, numbers">
-            <select id="ownedFilter" aria-label="Ownership filter">
-              <option value="all">All cards</option>
-              <option value="owned">Owned</option>
-              <option value="missing">Missing</option>
+            <select id="ownedFilter" aria-label="Ownership filter" hidden>
+              <option value="owned" selected>Owned</option>
             </select>
             <select id="sortSelect" aria-label="Sort cards">
               <option value="value">Owned value</option>
@@ -539,6 +537,6 @@
       </section>
     </div>
 
-    <script src="/app.js?v=38"></script>
+    <script src="/app.js?v=39"></script>
   </body>
 </html>
