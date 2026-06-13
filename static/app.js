@@ -11,6 +11,7 @@ const state = {
   decks: [],
   activeDeck: null,
   selectedCards: new Map(),
+  collectionView: localStorage.getItem("fiolfolio.collectionView") || "tiles",
   settings: null,
 };
 
@@ -46,6 +47,8 @@ const els = {
   searchInput: document.querySelector("#searchInput"),
   ownedFilter: document.querySelector("#ownedFilter"),
   sortSelect: document.querySelector("#sortSelect"),
+  tileViewButton: document.querySelector("#tileViewButton"),
+  listViewButton: document.querySelector("#listViewButton"),
   collectionBulkBar: document.querySelector("#collectionBulkBar"),
   selectedCardsCount: document.querySelector("#selectedCardsCount"),
   addToDeckButton: document.querySelector("#addToDeckButton"),
@@ -53,6 +56,7 @@ const els = {
   importButton: document.querySelector("#importButton"),
   settingsButton: document.querySelector("#settingsButton"),
   template: document.querySelector("#cardTemplate"),
+  listTemplate: document.querySelector("#cardListTemplate"),
   editOverlay: document.querySelector("#editOverlay"),
   editForm: document.querySelector("#editForm"),
   editTitle: document.querySelector("#editTitle"),
@@ -187,6 +191,60 @@ function clearSelectedCards() {
     checkbox.checked = false;
   }
   updateBulkBar();
+}
+
+function wireCardSelection(selectWrap, selectCheckbox, card, options = {}) {
+  const owned = Number(card.quantity || 0) > 0;
+  const selectable = Boolean(options.selectable && owned);
+  selectWrap.hidden = !options.selectable;
+  selectCheckbox.disabled = !selectable;
+  selectCheckbox.checked = state.selectedCards.has(cardSelectionKey(card));
+  selectCheckbox.addEventListener("change", () => {
+    const key = cardSelectionKey(card);
+    if (selectCheckbox.checked) {
+      state.selectedCards.set(key, {
+        card_id: card.scryfall_id,
+        variant: card.variant || "Normal",
+        name: cardTitle(card),
+      });
+    } else {
+      state.selectedCards.delete(key);
+    }
+    updateBulkBar();
+  });
+}
+
+function wireShareButton(button, card) {
+  button.disabled = !card.share_id;
+  button.addEventListener("click", () => openShareModal(card));
+}
+
+function wireDeleteCardButton(button, card) {
+  const owned = Number(card.quantity || 0) > 0;
+  button.disabled = !owned;
+  button.addEventListener("click", () => {
+    deleteCollectionCard(card).catch((error) => setStatus(error.message, "error"));
+  });
+}
+
+async function deleteCollectionCard(card) {
+  const confirmed = window.confirm(`Remove ${cardTitle(card)} (${card.variant || "Normal"}) from your collection?`);
+  if (!confirmed) return;
+  await api(`/api/cards/${encodeURIComponent(card.scryfall_id)}/collection`, {
+    method: "DELETE",
+    body: JSON.stringify({ variant: card.variant || "Normal" }),
+  });
+  setStatus(`Removed ${cardTitle(card)} from your collection.`);
+  state.selectedCards.delete(cardSelectionKey(card));
+  await refresh();
+}
+
+function setCollectionView(view) {
+  state.collectionView = view === "list" ? "list" : "tiles";
+  localStorage.setItem("fiolfolio.collectionView", state.collectionView);
+  els.tileViewButton.classList.toggle("is-active", state.collectionView === "tiles");
+  els.listViewButton.classList.toggle("is-active", state.collectionView === "list");
+  renderCollection();
 }
 
 function renderDashboard(data) {
@@ -483,7 +541,18 @@ function cardQuery() {
 async function loadCards() {
   const data = await api(`/api/cards?${cardQuery()}`);
   state.cards = data.cards || [];
-  renderCards(state.cards, els.cardsGrid, { selectable: true });
+  renderCollection();
+}
+
+function renderCollection() {
+  els.cardsGrid.className = state.collectionView === "list" ? "cards-list" : "cards-grid";
+  els.tileViewButton.classList.toggle("is-active", state.collectionView === "tiles");
+  els.listViewButton.classList.toggle("is-active", state.collectionView === "list");
+  if (state.collectionView === "list") {
+    renderCardList(state.cards, els.cardsGrid, { selectable: true });
+  } else {
+    renderCards(state.cards, els.cardsGrid, { selectable: true });
+  }
 }
 
 function renderCards(cards, target = els.cardsGrid, options = {}) {
@@ -533,23 +602,7 @@ function renderCards(cards, target = els.cardsGrid, options = {}) {
     detailDate.textContent = formatDate(card.acquired_date);
     detailVariant.textContent = card.variant || "Normal";
 
-    const selectable = Boolean(options.selectable && owned);
-    selectWrap.hidden = !options.selectable;
-    selectCheckbox.disabled = !selectable;
-    selectCheckbox.checked = state.selectedCards.has(cardSelectionKey(card));
-    selectCheckbox.addEventListener("change", () => {
-      const key = cardSelectionKey(card);
-      if (selectCheckbox.checked) {
-        state.selectedCards.set(key, {
-          card_id: card.scryfall_id,
-          variant: card.variant || "Normal",
-          name: cardTitle(card),
-        });
-      } else {
-        state.selectedCards.delete(key);
-      }
-      updateBulkBar();
-    });
+    wireCardSelection(selectWrap, selectCheckbox, card, options);
 
     favoriteButton.classList.toggle("is-favorite", Boolean(card.favorite));
     favoriteButton.setAttribute("aria-pressed", card.favorite ? "true" : "false");
@@ -571,8 +624,53 @@ function renderCards(cards, target = els.cardsGrid, options = {}) {
       }
     });
     editButton.addEventListener("click", () => openEditModal(card));
-    shareButton.disabled = !card.share_id;
-    shareButton.addEventListener("click", () => openShareModal(card));
+    wireShareButton(shareButton, card);
+
+    target.appendChild(node);
+  }
+  if (target === els.cardsGrid) updateBulkBar();
+}
+
+function renderCardList(cards, target = els.cardsGrid, options = {}) {
+  target.innerHTML = "";
+  if (!cards.length) {
+    target.innerHTML = '<div class="empty-state">No cards match the current filters.</div>';
+    if (target === els.cardsGrid) updateBulkBar();
+    return;
+  }
+  for (const card of cards) {
+    const owned = Number(card.quantity || 0) > 0;
+    const node = els.listTemplate.content.firstElementChild.cloneNode(true);
+    const selectWrap = node.querySelector(".select-card-wrap");
+    const selectCheckbox = node.querySelector(".select-card-checkbox");
+    const link = node.querySelector(".list-card-art");
+    const img = node.querySelector("img");
+    const title = node.querySelector("h3");
+    const meta = node.querySelector(".card-meta");
+    const type = node.querySelector(".card-type");
+    const price = node.querySelector(".price");
+    const ownedValue = node.querySelector(".owned-value");
+    const quantity = node.querySelector(".detail-quantity");
+    const variant = node.querySelector(".detail-variant");
+    const shareButton = node.querySelector(".share-button");
+    const deleteButton = node.querySelector(".delete-card-button");
+
+    node.classList.toggle("is-special", isSpecialVariant(card.variant));
+    node.classList.toggle("is-missing", !owned);
+    link.href = card.scryfall_uri || "#";
+    img.src = card.image_normal || card.image_small || "";
+    img.alt = cardTitle(card);
+    title.textContent = cardTitle(card);
+    meta.textContent = `${card.set_name} #${card.collector_number} - ${card.rarity || "unknown"}${cardRulesName(card) ? ` - Rules: ${cardRulesName(card)}` : ""}`;
+    type.textContent = card.type_line || "";
+    price.textContent = `Now ${dollars.format(card.display_price || 0)}`;
+    ownedValue.textContent = `Value ${dollars.format(card.owned_value || 0)}`;
+    quantity.textContent = `Qty ${integer.format(card.quantity || 0)}`;
+    variant.textContent = card.variant || "Normal";
+
+    wireCardSelection(selectWrap, selectCheckbox, card, options);
+    wireShareButton(shareButton, card);
+    wireDeleteCardButton(deleteButton, card);
 
     target.appendChild(node);
   }
@@ -1173,6 +1271,8 @@ function wireEvents() {
   els.addCardButton.addEventListener("click", openAddCardModal);
   els.settingsButton.addEventListener("click", openSettingsModal);
   els.addDeckButton.addEventListener("click", openAddDeckModal);
+  els.tileViewButton.addEventListener("click", () => setCollectionView("tiles"));
+  els.listViewButton.addEventListener("click", () => setCollectionView("list"));
   els.addToDeckButton.addEventListener("click", () => {
     openAssignDeckModal().catch((error) => setStatus(error.message, "error"));
   });
@@ -1394,11 +1494,11 @@ if (initialSharedId) {
   loadSetPage(initialSetCode);
   refresh().catch((error) => {
     setStatus(error.message, "error");
-    renderCards([]);
+    renderCollection();
   });
 } else {
   refresh().catch((error) => {
     setStatus(error.message, "error");
-    renderCards([]);
+    renderCollection();
   });
 }

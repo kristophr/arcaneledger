@@ -1434,6 +1434,18 @@ def update_collection(conn, card_id, payload):
     return {"ok": True}
 
 
+def delete_collection_entry(conn, card_id, payload):
+    variant = payload.get("variant") or "Normal"
+    cursor = conn.execute(
+        "DELETE FROM collection WHERE card_id = ? AND variant = ?",
+        (card_id, variant),
+    )
+    if cursor.rowcount == 0:
+        raise KeyError("Collection entry not found")
+    conn.commit()
+    return {"ok": True, "deleted": {"card_id": card_id, "variant": variant}}
+
+
 def update_favorite(conn, card_id, payload):
     card = conn.execute("SELECT 1 FROM cards WHERE scryfall_id = ?", (card_id,)).fetchone()
     if not card:
@@ -1458,9 +1470,9 @@ def update_favorite(conn, card_id, payload):
     return {"ok": True, "favorite": bool(favorite)}
 
 
-def export_csv(conn):
+def export_rows(conn):
     price_expr = current_price_sql("c")
-    rows = conn.execute(
+    return conn.execute(
         f"""
         SELECT c.name, c.set_name, c.collector_number, c.rarity, c.type_line,
                COALESCE(col.quantity, 0) AS quantity, COALESCE(col.acquired_date, '') AS acquired_date,
@@ -1476,6 +1488,10 @@ def export_csv(conn):
         ORDER BY owned_value DESC, c.name
         """
     ).fetchall()
+
+
+def export_csv(conn):
+    rows = export_rows(conn)
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow([
@@ -1485,6 +1501,17 @@ def export_csv(conn):
     for row in rows:
         writer.writerow([row[key] for key in row.keys()])
     return output.getvalue()
+
+
+def export_json(conn):
+    keys = [
+        "name", "set_name", "collector_number", "rarity", "type_line", "quantity", "acquired_date",
+        "paid_price", "variant", "card_condition", "notes", "favorite", "current_value", "owned_value", "scryfall_uri"
+    ]
+    return [
+        {key: row[key] for key in keys}
+        for row in export_rows(conn)
+    ]
 
 
 class Handler(SimpleHTTPRequestHandler):
@@ -1547,6 +1574,15 @@ class Handler(SimpleHTTPRequestHandler):
                     self.end_headers()
                     self.wfile.write(data)
                     return
+                if parsed.path == "/api/export.json":
+                    data = json.dumps(export_json(conn), indent=2).encode("utf-8")
+                    self.send_response(HTTPStatus.OK)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Content-Disposition", "attachment; filename=fiolfolio-collection.json")
+                    self.send_header("Content-Length", str(len(data)))
+                    self.end_headers()
+                    self.wfile.write(data)
+                    return
         except KeyError as exc:
             return self.send_json({"error": str(exc)}, HTTPStatus.NOT_FOUND)
         except Exception as exc:
@@ -1599,6 +1635,9 @@ class Handler(SimpleHTTPRequestHandler):
                 match = re.match(r"^/api/decks/([0-9]+)/cards$", parsed.path)
                 if match:
                     return self.send_json(remove_card_from_deck(conn, int(match.group(1)), self.read_json()))
+                match = re.match(r"^/api/cards/([^/]+)/collection$", parsed.path)
+                if match:
+                    return self.send_json(delete_collection_entry(conn, urllib.parse.unquote(match.group(1)), self.read_json()))
         except KeyError as exc:
             return self.send_json({"error": str(exc)}, HTTPStatus.NOT_FOUND)
         except ValueError as exc:
