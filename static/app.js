@@ -12,6 +12,7 @@ const state = {
   activeDeck: null,
   containers: [],
   activeContainer: null,
+  editingContainer: null,
   selectedCards: new Map(),
   collectionView: localStorage.getItem("foilfolio.collectionView") || "tiles",
   settings: null,
@@ -76,6 +77,7 @@ const els = {
   selectedAddCard: document.querySelector("#selectedAddCard"),
   closeAddCardButton: document.querySelector("#closeAddCardButton"),
   cancelAddCardButton: document.querySelector("#cancelAddCardButton"),
+  confirmAddNewCardButton: document.querySelector("#confirmAddNewCardButton"),
   confirmAddCardButton: document.querySelector("#confirmAddCardButton"),
   settingsOverlay: document.querySelector("#settingsOverlay"),
   settingsForm: document.querySelector("#settingsForm"),
@@ -98,10 +100,25 @@ const els = {
   shareDeckButton: document.querySelector("#shareDeckButton"),
   deleteDeckButton: document.querySelector("#deleteDeckButton"),
   closeDeckDetailButton: document.querySelector("#closeDeckDetailButton"),
+  addDeckCardButton: document.querySelector("#addDeckCardButton"),
+  deckCardSearchOverlay: document.querySelector("#deckCardSearchOverlay"),
+  deckCardSearchTitle: document.querySelector("#deckCardSearchTitle"),
+  deckCardSearchForm: document.querySelector("#deckCardSearchForm"),
+  deckCardSearchInput: document.querySelector("#deckCardSearchInput"),
+  deckCardSearchStatus: document.querySelector("#deckCardSearchStatus"),
+  deckCardSearchResults: document.querySelector("#deckCardSearchResults"),
+  closeDeckCardSearchButton: document.querySelector("#closeDeckCardSearchButton"),
   deckShareShell: document.querySelector("#deckShareShell"),
+  cardDecksOverlay: document.querySelector("#cardDecksOverlay"),
+  cardDecksTitle: document.querySelector("#cardDecksTitle"),
+  cardDecksList: document.querySelector("#cardDecksList"),
+  closeCardDecksButton: document.querySelector("#closeCardDecksButton"),
   addContainerButton: document.querySelector("#addContainerButton"),
   addContainerOverlay: document.querySelector("#addContainerOverlay"),
   addContainerForm: document.querySelector("#addContainerForm"),
+  addContainerEyebrow: document.querySelector("#addContainerEyebrow"),
+  addContainerTitle: document.querySelector("#addContainerTitle"),
+  saveContainerButton: document.querySelector("#saveContainerButton"),
   closeAddContainerButton: document.querySelector("#closeAddContainerButton"),
   cancelAddContainerButton: document.querySelector("#cancelAddContainerButton"),
   containersGrid: document.querySelector("#containersGrid"),
@@ -115,8 +132,13 @@ const els = {
   containerDetailTitle: document.querySelector("#containerDetailTitle"),
   containerDetailMeta: document.querySelector("#containerDetailMeta"),
   containerDetailCards: document.querySelector("#containerDetailCards"),
+  editContainerButton: document.querySelector("#editContainerButton"),
   deleteContainerButton: document.querySelector("#deleteContainerButton"),
   closeContainerDetailButton: document.querySelector("#closeContainerDetailButton"),
+  cardContainersOverlay: document.querySelector("#cardContainersOverlay"),
+  cardContainersTitle: document.querySelector("#cardContainersTitle"),
+  cardContainersList: document.querySelector("#cardContainersList"),
+  closeCardContainersButton: document.querySelector("#closeCardContainersButton"),
   shareOverlay: document.querySelector("#shareOverlay"),
   shareTitle: document.querySelector("#shareTitle"),
   shareUrlInput: document.querySelector("#shareUrlInput"),
@@ -610,6 +632,8 @@ function renderCards(cards, target = els.cardsGrid, options = {}) {
     const conditionPill = node.querySelector(".condition-pill");
     const favoriteButton = node.querySelector(".favorite-button");
     const editButton = node.querySelector(".edit-button");
+    const deckButton = node.querySelector(".deck-membership-button");
+    const containerButton = node.querySelector(".container-membership-button");
     const shareButton = node.querySelector(".share-button");
 
     link.href = card.scryfall_uri || "#";
@@ -650,6 +674,8 @@ function renderCards(cards, target = els.cardsGrid, options = {}) {
       }
     });
     editButton.addEventListener("click", () => openEditModal(card));
+    wireDeckMembershipButton(deckButton, card, target === els.cardsGrid);
+    wireContainerMembershipButton(containerButton, card, target === els.cardsGrid);
     wireShareButton(shareButton, card);
 
     target.appendChild(node);
@@ -679,6 +705,8 @@ function renderCardList(cards, target = els.cardsGrid, options = {}) {
     const quantity = node.querySelector(".detail-quantity");
     const variant = node.querySelector(".detail-variant");
     const conditionPill = node.querySelector(".condition-pill");
+    const deckButton = node.querySelector(".deck-membership-button");
+    const containerButton = node.querySelector(".container-membership-button");
     const shareButton = node.querySelector(".share-button");
     const deleteButton = node.querySelector(".delete-card-button");
 
@@ -697,6 +725,8 @@ function renderCardList(cards, target = els.cardsGrid, options = {}) {
     conditionPill.textContent = conditionText(card);
 
     wireCardSelection(selectWrap, selectCheckbox, card, options);
+    wireDeckMembershipButton(deckButton, card, target === els.cardsGrid);
+    wireContainerMembershipButton(containerButton, card, target === els.cardsGrid);
     wireShareButton(shareButton, card);
     wireDeleteCardButton(deleteButton, card);
 
@@ -787,6 +817,127 @@ function openDeckShareModal(deck) {
   openShareUrl(deck.name || "Deck", url);
 }
 
+function deckMemberships(card) {
+  return Array.isArray(card.deck_memberships) ? card.deck_memberships : [];
+}
+
+function containerType(value) {
+  return ["binder", "box", "other"].includes(value) ? value : "other";
+}
+
+function containerTypeLabel(value) {
+  return {
+    binder: "Binder",
+    box: "Box",
+    other: "Other",
+  }[containerType(value)];
+}
+
+function containerIconHtml(value) {
+  return `<span class="container-icon ${containerType(value)}-icon" aria-hidden="true"></span>`;
+}
+
+function containerMemberships(card) {
+  return Array.isArray(card.container_memberships) ? card.container_memberships : [];
+}
+
+function openCardDecksModal(card) {
+  const decks = deckMemberships(card);
+  if (!decks.length) return;
+  els.cardDecksTitle.textContent = cardTitle(card);
+  els.cardDecksList.innerHTML = decks.map((deck) => `
+    <button class="card-deck-link" type="button" data-share-id="${escapeHtml(deck.share_id || "")}">
+      <span class="deck-icon" aria-hidden="true"></span>
+      <span>${escapeHtml(deck.name || "Deck")}</span>
+    </button>
+  `).join("");
+  for (const button of els.cardDecksList.querySelectorAll(".card-deck-link")) {
+    button.addEventListener("click", () => {
+      const shareId = button.dataset.shareId;
+      if (!shareId) return;
+      window.open(`/decks/${encodeURIComponent(shareId)}`, "_blank", "noopener");
+    });
+  }
+  els.cardDecksOverlay.hidden = false;
+  document.body.classList.add("modal-open");
+}
+
+function openCardContainersModal(card) {
+  const containers = containerMemberships(card);
+  if (!containers.length) return;
+  if (containers.length === 1 && containers[0].id) {
+    openContainerDetailModal(containers[0].id).catch((error) => {
+      setStatus(error.message, "error");
+    });
+    return;
+  }
+  els.cardContainersTitle.textContent = cardTitle(card);
+  els.cardContainersList.innerHTML = containers.map((container) => `
+    <button class="card-deck-link card-container-link" type="button" data-container-id="${escapeHtml(container.id || "")}">
+      ${containerIconHtml(container.storage_type)}
+      <span>
+        <strong>${escapeHtml(container.name || "Container")}</strong>
+        <small>${escapeHtml(containerTypeLabel(container.storage_type))}${container.location ? ` - ${escapeHtml(container.location)}` : ""} - Stored ${integer.format(container.quantity || 0)}</small>
+      </span>
+    </button>
+  `).join("");
+  for (const button of els.cardContainersList.querySelectorAll(".card-container-link")) {
+    button.addEventListener("click", () => {
+      const containerId = button.dataset.containerId;
+      if (!containerId) return;
+      closeCardContainersModal();
+      openContainerDetailModal(containerId).catch((error) => {
+        setStatus(error.message, "error");
+      });
+    });
+  }
+  els.cardContainersOverlay.hidden = false;
+  document.body.classList.add("modal-open");
+}
+
+function closeCardContainersModal() {
+  els.cardContainersOverlay.hidden = true;
+  document.body.classList.remove("modal-open");
+  els.cardContainersTitle.textContent = "Containers";
+  els.cardContainersList.innerHTML = "";
+}
+
+function closeCardDecksModal() {
+  els.cardDecksOverlay.hidden = true;
+  document.body.classList.remove("modal-open");
+  els.cardDecksTitle.textContent = "Decks";
+  els.cardDecksList.innerHTML = "";
+}
+
+function wireDeckMembershipButton(button, card, showIndicator) {
+  const decks = deckMemberships(card);
+  if (!button || !showIndicator || !decks.length) {
+    if (button) button.hidden = true;
+    return;
+  }
+  button.hidden = false;
+  button.title = `In ${decks.length} deck${decks.length === 1 ? "" : "s"}`;
+  button.setAttribute("aria-label", `Show decks containing ${cardTitle(card)}`);
+  button.addEventListener("click", () => openCardDecksModal(card));
+}
+
+function wireContainerMembershipButton(button, card, showIndicator) {
+  const containers = containerMemberships(card);
+  if (!button || !showIndicator || !containers.length) {
+    if (button) button.hidden = true;
+    return;
+  }
+  const firstType = containerType(containers[0].storage_type);
+  const icon = button.querySelector(".container-icon");
+  if (icon) {
+    icon.className = `container-icon ${firstType}-icon`;
+  }
+  button.hidden = false;
+  button.title = `Stored in ${containers.length} container${containers.length === 1 ? "" : "s"}`;
+  button.setAttribute("aria-label", `Show containers storing ${cardTitle(card)}`);
+  button.addEventListener("click", () => openCardContainersModal(card));
+}
+
 function closeShareModal() {
   els.shareOverlay.hidden = true;
   document.body.classList.remove("modal-open");
@@ -846,8 +997,29 @@ function openAddCardModal() {
   els.selectedAddCard.hidden = true;
   els.selectedAddCard.innerHTML = "";
   els.confirmAddCardButton.disabled = true;
+  els.confirmAddNewCardButton.disabled = true;
   els.addCardOverlay.hidden = false;
   document.body.classList.add("modal-open");
+  els.addSearchInput.focus();
+}
+
+function resetAddCardModalForNew() {
+  state.addResults = [];
+  state.selectedAddCard = null;
+  els.addSearchForm.reset();
+  els.addCardForm.reset();
+  els.addCardForm.scryfall_id.value = "";
+  els.addCardForm.quantity.value = "1";
+  els.addCardForm.paid_price.value = "0.01";
+  els.addCardForm.acquired_date.value = todayValue();
+  els.addCardForm.variant.innerHTML = "<option>Normal</option>";
+  els.addCardForm.card_condition.value = "Near Mint";
+  els.addCardForm.graded.checked = false;
+  els.addSearchResults.innerHTML = "";
+  els.selectedAddCard.hidden = true;
+  els.selectedAddCard.innerHTML = "";
+  els.confirmAddCardButton.disabled = true;
+  els.confirmAddNewCardButton.disabled = true;
   els.addSearchInput.focus();
 }
 
@@ -859,6 +1031,8 @@ function closeAddCardModal() {
   els.addSearchResults.innerHTML = "";
   els.selectedAddCard.innerHTML = "";
   els.addCardForm.reset();
+  els.confirmAddCardButton.disabled = true;
+  els.confirmAddNewCardButton.disabled = true;
 }
 
 function renderAddResults(cards) {
@@ -920,6 +1094,7 @@ function selectAddCard(card) {
     els.addCardForm.variant.appendChild(option);
   }
   els.confirmAddCardButton.disabled = false;
+  els.confirmAddNewCardButton.disabled = false;
   for (const result of els.addSearchResults.querySelectorAll(".add-result")) {
     result.classList.toggle("is-selected", result.dataset.cardId === card.scryfall_id);
   }
@@ -1027,10 +1202,110 @@ async function openDeckDetailModal(deckId) {
 }
 
 function closeDeckDetailModal() {
+  closeDeckCardSearchModal({ keepDeckOpen: false });
   els.deckDetailOverlay.hidden = true;
   document.body.classList.remove("modal-open");
   state.activeDeck = null;
   els.deckDetailCards.innerHTML = "";
+}
+
+function deckCardKey(card) {
+  return `${card.scryfall_id || card.card_id || ""}::${card.variant || "Normal"}`;
+}
+
+function activeDeckCardKeys() {
+  return new Set((state.activeDeck?.cards || []).map(deckCardKey));
+}
+
+function openDeckCardSearchModal() {
+  if (!state.activeDeck) return;
+  els.deckCardSearchForm.reset();
+  els.deckCardSearchResults.innerHTML = "";
+  els.deckCardSearchStatus.textContent = "Search owned cards not already in this deck.";
+  els.deckCardSearchTitle.textContent = `Add to ${state.activeDeck.name || "Deck"}`;
+  els.deckCardSearchOverlay.hidden = false;
+  document.body.classList.add("modal-open");
+  els.deckCardSearchInput.focus();
+}
+
+function closeDeckCardSearchModal(options = {}) {
+  els.deckCardSearchOverlay.hidden = true;
+  els.deckCardSearchResults.innerHTML = "";
+  els.deckCardSearchStatus.textContent = "";
+  els.deckCardSearchForm.reset();
+  if (!options.keepDeckOpen || els.deckDetailOverlay.hidden) {
+    document.body.classList.remove("modal-open");
+  }
+}
+
+function renderDeckCardSearchResults(cards) {
+  els.deckCardSearchResults.innerHTML = "";
+  if (!cards.length) {
+    els.deckCardSearchResults.innerHTML = '<div class="empty-state">No matching owned cards are available for this deck.</div>';
+    return;
+  }
+  for (const card of cards) {
+    const button = document.createElement("button");
+    button.className = "deck-card-search-result";
+    button.type = "button";
+    button.innerHTML = `
+      <img src="${escapeHtml(card.image_small || card.image_normal || "")}" alt="">
+      <span>
+        <strong>${escapeHtml(cardTitle(card))}</strong>
+        <small>${escapeHtml(card.set_name || "")} #${escapeHtml(card.collector_number || "")} - ${escapeHtml(card.variant || "Normal")}</small>
+      </span>
+      <b>Qty ${integer.format(card.quantity || 0)}</b>
+    `;
+    button.addEventListener("click", () => {
+      addOwnedCardToActiveDeck(card).catch((error) => {
+        els.deckCardSearchStatus.textContent = error.message;
+      });
+    });
+    els.deckCardSearchResults.appendChild(button);
+  }
+}
+
+async function searchOwnedCardsForDeck() {
+  if (!state.activeDeck) return;
+  const query = els.deckCardSearchInput.value.trim();
+  if (query.length < 2) {
+    els.deckCardSearchStatus.textContent = "Type at least 2 characters.";
+    els.deckCardSearchResults.innerHTML = "";
+    return;
+  }
+  els.deckCardSearchStatus.textContent = "Searching your collection...";
+  const params = new URLSearchParams({
+    search: query,
+    owned: "owned",
+    sort: "name",
+    limit: "250",
+  });
+  const data = await api(`/api/cards?${params.toString()}`);
+  const deckKeys = activeDeckCardKeys();
+  const cards = (data.cards || []).filter((card) => {
+    return Number(card.quantity || 0) > 0 && !deckKeys.has(deckCardKey(card));
+  });
+  els.deckCardSearchStatus.textContent = `${integer.format(cards.length)} available match${cards.length === 1 ? "" : "es"}.`;
+  renderDeckCardSearchResults(cards);
+}
+
+async function addOwnedCardToActiveDeck(card) {
+  if (!state.activeDeck) return;
+  const deckId = state.activeDeck.id;
+  await api(`/api/decks/${encodeURIComponent(deckId)}/cards`, {
+    method: "POST",
+    body: JSON.stringify({
+      cards: [{
+        card_id: card.scryfall_id || card.card_id,
+        variant: card.variant || "Normal",
+      }],
+    }),
+  });
+  const deck = await api(`/api/decks/${encodeURIComponent(deckId)}`);
+  renderDeckDetail(deck);
+  await loadDecks();
+  els.deckCardSearchStatus.textContent = `Added ${cardTitle(card)}.`;
+  await searchOwnedCardsForDeck();
 }
 
 async function removeCardFromActiveDeck(card) {
@@ -1123,8 +1398,8 @@ function renderContainers(containers) {
     item.setAttribute("aria-label", `Open ${container.name}`);
     item.innerHTML = `
       <div>
-        <p class="eyebrow">Container</p>
-        <h3>${escapeHtml(container.name)}</h3>
+        <p class="eyebrow">${escapeHtml(containerTypeLabel(container.storage_type))}</p>
+        <h3>${containerIconHtml(container.storage_type)}<span>${escapeHtml(container.name)}</span></h3>
         ${container.location ? `<span class="container-location">${escapeHtml(container.location)}</span>` : ""}
       </div>
       <strong>${integer.format(container.stored_quantity || 0)}</strong>
@@ -1143,7 +1418,7 @@ function renderContainerDetail(container) {
   const cards = container.cards || [];
   state.activeContainer = container;
   els.containerDetailTitle.textContent = container.name || "Container";
-  els.containerDetailMeta.textContent = [container.location, container.notes].filter(Boolean).join(" - ");
+  els.containerDetailMeta.textContent = [containerTypeLabel(container.storage_type), container.location, container.notes].filter(Boolean).join(" - ");
   els.containerDetailCards.innerHTML = "";
   if (!cards.length) {
     els.containerDetailCards.innerHTML = '<div class="empty-state">No cards stored in this container yet.</div>';
@@ -1222,7 +1497,29 @@ async function loadContainers() {
 }
 
 function openAddContainerModal() {
+  state.editingContainer = null;
   els.addContainerForm.reset();
+  els.addContainerForm.id.value = "";
+  els.addContainerForm.storage_type.value = "other";
+  els.addContainerEyebrow.textContent = "New container";
+  els.addContainerTitle.textContent = "Add Container";
+  els.saveContainerButton.textContent = "Add";
+  els.addContainerOverlay.hidden = false;
+  document.body.classList.add("modal-open");
+  els.addContainerForm.querySelector('[name="name"]').focus();
+}
+
+function openEditContainerModal(container) {
+  state.editingContainer = container;
+  els.addContainerForm.reset();
+  els.addContainerForm.id.value = container.id || "";
+  els.addContainerForm.name.value = container.name || "";
+  els.addContainerForm.storage_type.value = containerType(container.storage_type);
+  els.addContainerForm.location.value = container.location || "";
+  els.addContainerForm.notes.value = container.notes || "";
+  els.addContainerEyebrow.textContent = "Edit container";
+  els.addContainerTitle.textContent = "Edit Container";
+  els.saveContainerButton.textContent = "Save";
   els.addContainerOverlay.hidden = false;
   document.body.classList.add("modal-open");
   els.addContainerForm.querySelector('[name="name"]').focus();
@@ -1231,6 +1528,7 @@ function openAddContainerModal() {
 function closeAddContainerModal() {
   els.addContainerOverlay.hidden = true;
   document.body.classList.remove("modal-open");
+  state.editingContainer = null;
   els.addContainerForm.reset();
 }
 
@@ -1275,7 +1573,7 @@ async function openAssignContainerModal() {
     for (const container of containers) {
       const option = document.createElement("option");
       option.value = container.id;
-      option.textContent = `${container.name}${container.location ? ` - ${container.location}` : ""}`;
+      option.textContent = `${containerTypeLabel(container.storage_type)} - ${container.name}${container.location ? ` - ${container.location}` : ""}`;
       select.appendChild(option);
     }
   }
@@ -1551,6 +1849,7 @@ function wireEvents() {
     }
   });
   els.closeDeckDetailButton.addEventListener("click", closeDeckDetailModal);
+  els.addDeckCardButton.addEventListener("click", openDeckCardSearchModal);
   els.shareDeckButton.addEventListener("click", () => {
     if (state.activeDeck) {
       openDeckShareModal(state.activeDeck);
@@ -1564,6 +1863,26 @@ function wireEvents() {
   els.deckDetailOverlay.addEventListener("click", (event) => {
     if (event.target === els.deckDetailOverlay) {
       closeDeckDetailModal();
+    }
+  });
+  els.deckCardSearchForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    searchOwnedCardsForDeck().catch((error) => {
+      els.deckCardSearchStatus.textContent = error.message;
+    });
+  });
+  els.closeDeckCardSearchButton.addEventListener("click", () => {
+    closeDeckCardSearchModal({ keepDeckOpen: true });
+  });
+  els.deckCardSearchOverlay.addEventListener("click", (event) => {
+    if (event.target === els.deckCardSearchOverlay) {
+      closeDeckCardSearchModal({ keepDeckOpen: true });
+    }
+  });
+  els.closeCardDecksButton.addEventListener("click", closeCardDecksModal);
+  els.cardDecksOverlay.addEventListener("click", (event) => {
+    if (event.target === els.cardDecksOverlay) {
+      closeCardDecksModal();
     }
   });
   els.closeAddContainerButton.addEventListener("click", closeAddContainerModal);
@@ -1581,6 +1900,11 @@ function wireEvents() {
     }
   });
   els.closeContainerDetailButton.addEventListener("click", closeContainerDetailModal);
+  els.editContainerButton.addEventListener("click", () => {
+    if (state.activeContainer) {
+      openEditContainerModal(state.activeContainer);
+    }
+  });
   els.deleteContainerButton.addEventListener("click", () => {
     deleteActiveContainer().catch((error) => {
       els.containersStatus.textContent = error.message;
@@ -1589,6 +1913,12 @@ function wireEvents() {
   els.containerDetailOverlay.addEventListener("click", (event) => {
     if (event.target === els.containerDetailOverlay) {
       closeContainerDetailModal();
+    }
+  });
+  els.closeCardContainersButton.addEventListener("click", closeCardContainersModal);
+  els.cardContainersOverlay.addEventListener("click", (event) => {
+    if (event.target === els.cardContainersOverlay) {
+      closeCardContainersModal();
     }
   });
   els.closeShareButton.addEventListener("click", closeShareModal);
@@ -1617,8 +1947,15 @@ function wireEvents() {
     if (event.key === "Escape" && !els.assignDeckOverlay.hidden) {
       closeAssignDeckModal();
     }
+    if (event.key === "Escape" && !els.deckCardSearchOverlay.hidden) {
+      closeDeckCardSearchModal({ keepDeckOpen: true });
+      return;
+    }
     if (event.key === "Escape" && !els.deckDetailOverlay.hidden) {
       closeDeckDetailModal();
+    }
+    if (event.key === "Escape" && !els.cardDecksOverlay.hidden) {
+      closeCardDecksModal();
     }
     if (event.key === "Escape" && !els.addContainerOverlay.hidden) {
       closeAddContainerModal();
@@ -1628,6 +1965,9 @@ function wireEvents() {
     }
     if (event.key === "Escape" && !els.containerDetailOverlay.hidden) {
       closeContainerDetailModal();
+    }
+    if (event.key === "Escape" && !els.cardContainersOverlay.hidden) {
+      closeCardContainersModal();
     }
   });
   els.addSearchForm.addEventListener("submit", (event) => {
@@ -1654,18 +1994,26 @@ function wireEvents() {
     payload.expected_set_code = state.selectedAddCard.set_code || "";
     payload.expected_collector_number = state.selectedAddCard.collector_number || "";
     payload.expected_image_normal = state.selectedAddCard.image_normal || "";
+    const addAndNew = event.submitter === els.confirmAddNewCardButton;
+    const addedCardTitle = cardTitle(state.selectedAddCard);
     els.confirmAddCardButton.disabled = true;
+    els.confirmAddNewCardButton.disabled = true;
     try {
       const result = await api("/api/cards", {
         method: "POST",
         body: JSON.stringify(payload),
       });
-      setStatus(`Added ${cardTitle(state.selectedAddCard)} (${result.variant}).`);
-      closeAddCardModal();
+      setStatus(`Added ${addedCardTitle} (${result.variant}).`);
+      if (addAndNew) {
+        resetAddCardModalForNew();
+      } else {
+        closeAddCardModal();
+      }
       await refresh();
     } catch (error) {
       els.addSearchStatus.textContent = error.message;
       els.confirmAddCardButton.disabled = false;
+      els.confirmAddNewCardButton.disabled = false;
     }
   });
   els.settingsForm.addEventListener("submit", (event) => {
@@ -1693,14 +2041,20 @@ function wireEvents() {
   els.addContainerForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     const payload = Object.fromEntries(new FormData(els.addContainerForm).entries());
+    const containerId = payload.id;
+    delete payload.id;
     try {
-      const result = await api("/api/containers", {
-        method: "POST",
+      const result = await api(containerId ? `/api/containers/${encodeURIComponent(containerId)}` : "/api/containers", {
+        method: containerId ? "PUT" : "POST",
         body: JSON.stringify(payload),
       });
-      els.containersStatus.textContent = `Added ${result.container.name}.`;
+      els.containersStatus.textContent = `${containerId ? "Updated" : "Added"} ${result.container.name}.`;
       closeAddContainerModal();
       await loadContainers();
+      if (state.activeContainer && Number(state.activeContainer.id) === Number(result.container.id)) {
+        renderContainerDetail(result.container);
+      }
+      await loadCards();
     } catch (error) {
       els.containersStatus.textContent = error.message;
     }

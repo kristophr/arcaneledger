@@ -39,6 +39,8 @@ CARD_CONDITIONS = (
     "Damaged",
 )
 DEFAULT_CARD_CONDITION = "Near Mint"
+CONTAINER_TYPES = ("binder", "box", "other")
+DEFAULT_CONTAINER_TYPE = "other"
 
 
 def now_iso():
@@ -421,6 +423,7 @@ def init_db(conn):
         CREATE TABLE IF NOT EXISTS containers (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
+            storage_type TEXT NOT NULL DEFAULT 'other',
             location TEXT NOT NULL DEFAULT '',
             notes TEXT NOT NULL DEFAULT '',
             created_at TEXT NOT NULL,
@@ -449,6 +452,7 @@ def init_db(conn):
     migrate_sets_schema(conn)
     migrate_cards_schema(conn)
     migrate_collection_schema(conn)
+    migrate_containers_schema(conn)
     ensure_collection_share_ids(conn)
     ensure_deck_share_ids(conn)
     conn.commit()
@@ -512,6 +516,23 @@ def migrate_collection_schema(conn):
         FROM collection_old;
         DROP TABLE collection_old;
         """
+    )
+
+
+def migrate_containers_schema(conn):
+    columns = {col["name"] for col in conn.execute("PRAGMA table_info(containers)").fetchall()}
+    if "storage_type" not in columns:
+        conn.execute("ALTER TABLE containers ADD COLUMN storage_type TEXT NOT NULL DEFAULT 'other'")
+    placeholders = ", ".join("?" for _ in CONTAINER_TYPES)
+    conn.execute(
+        f"""
+        UPDATE containers
+        SET storage_type = ?
+        WHERE storage_type IS NULL
+           OR trim(storage_type) = ''
+           OR storage_type NOT IN ({placeholders})
+        """,
+        (DEFAULT_CONTAINER_TYPE, *CONTAINER_TYPES),
     )
 
 
@@ -1196,6 +1217,20 @@ def rows_to_dicts(rows):
     return [dict(row) for row in rows]
 
 
+def name_exists(conn, table, name, exclude_id=None):
+    if table not in {"decks", "containers"}:
+        raise ValueError("Unsupported name check.")
+    params = [name]
+    exclude_sql = ""
+    if exclude_id is not None:
+        exclude_sql = " AND id != ?"
+        params.append(exclude_id)
+    return conn.execute(
+        f"SELECT 1 FROM {table} WHERE lower(name) = lower(?) {exclude_sql} LIMIT 1",
+        params,
+    ).fetchone() is not None
+
+
 def list_decks(conn):
     rows = conn.execute(
         """
@@ -1216,6 +1251,8 @@ def create_deck(conn, payload):
         raise ValueError("Deck name is required.")
     if len(name) > 20:
         raise ValueError("Deck name must be 20 characters or fewer.")
+    if name_exists(conn, "decks", name):
+        raise ValueError("Deck name must be unique.")
     timestamp = now_iso()
     share_id = new_deck_share_id(conn)
     cursor = conn.execute(
@@ -1384,7 +1421,8 @@ def owned_quantity(conn, card_id, variant):
 def list_containers(conn):
     rows = conn.execute(
         """
-        SELECT c.id, c.name, c.location, c.notes, c.created_at, c.updated_at,
+        SELECT c.id, c.name, COALESCE(c.storage_type, 'other') AS storage_type,
+               c.location, c.notes, c.created_at, c.updated_at,
                COUNT(cc.card_id) AS card_count,
                COALESCE(SUM(cc.quantity), 0) AS stored_quantity
         FROM containers c
@@ -1405,8 +1443,16 @@ def clean_limited_text(payload, key, label, limit, required=False):
     return value
 
 
+def clean_container_type(value):
+    storage_type = (value or DEFAULT_CONTAINER_TYPE).strip().lower()
+    return storage_type if storage_type in CONTAINER_TYPES else DEFAULT_CONTAINER_TYPE
+
+
 def create_container(conn, payload):
     name = clean_limited_text(payload, "name", "Container name", 30, required=True)
+    if name_exists(conn, "containers", name):
+        raise ValueError("Container name must be unique.")
+    storage_type = clean_container_type(payload.get("storage_type"))
     location = clean_limited_text(payload, "location", "Container location", 30)
     notes = (payload.get("notes") or "").strip()
     if len(notes) > 500:
@@ -1414,10 +1460,10 @@ def create_container(conn, payload):
     timestamp = now_iso()
     cursor = conn.execute(
         """
-        INSERT INTO containers (name, location, notes, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO containers (name, storage_type, location, notes, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
         """,
-        (name, location, notes, timestamp, timestamp),
+        (name, storage_type, location, notes, timestamp, timestamp),
     )
     conn.commit()
     return {
@@ -1425,6 +1471,7 @@ def create_container(conn, payload):
         "container": {
             "id": cursor.lastrowid,
             "name": name,
+            "storage_type": storage_type,
             "location": location,
             "notes": notes,
             "created_at": timestamp,
@@ -1433,6 +1480,32 @@ def create_container(conn, payload):
             "stored_quantity": 0,
         },
     }
+
+
+def update_container(conn, container_id, payload):
+    exists = conn.execute("SELECT id FROM containers WHERE id = ?", (container_id,)).fetchone()
+    if not exists:
+        raise KeyError("Container not found")
+    name = clean_limited_text(payload, "name", "Container name", 30, required=True)
+    if name_exists(conn, "containers", name, exclude_id=container_id):
+        raise ValueError("Container name must be unique.")
+    storage_type = clean_container_type(payload.get("storage_type"))
+    location = clean_limited_text(payload, "location", "Container location", 30)
+    notes = (payload.get("notes") or "").strip()
+    if len(notes) > 500:
+        raise ValueError("Notes / Description must be 500 characters or fewer.")
+    timestamp = now_iso()
+    conn.execute(
+        """
+        UPDATE containers
+        SET name = ?, storage_type = ?, location = ?, notes = ?, updated_at = ?
+        WHERE id = ?
+        """,
+        (name, storage_type, location, notes, timestamp, container_id),
+    )
+    conn.commit()
+    container = container_detail(conn, container_id)
+    return {"ok": True, "container": container}
 
 
 def container_cards(conn, container_id):
@@ -1462,7 +1535,8 @@ def container_cards(conn, container_id):
 def container_detail(conn, container_id):
     container = conn.execute(
         """
-        SELECT c.id, c.name, c.location, c.notes, c.created_at, c.updated_at,
+        SELECT c.id, c.name, COALESCE(c.storage_type, 'other') AS storage_type,
+               c.location, c.notes, c.created_at, c.updated_at,
                COUNT(cc.card_id) AS card_count,
                COALESCE(SUM(cc.quantity), 0) AS stored_quantity
         FROM containers c
@@ -1614,7 +1688,51 @@ def list_cards(conn, query):
         """,
         values + [limit],
     ).fetchall()
-    return rows_to_dicts(rows)
+    cards = rows_to_dicts(rows)
+    memberships = {}
+    deck_rows = conn.execute(
+        """
+        SELECT dc.card_id, COALESCE(NULLIF(dc.variant, ''), 'Normal') AS variant,
+               d.id, d.share_id, d.name
+        FROM deck_cards dc
+        JOIN decks d ON d.id = dc.deck_id
+        ORDER BY d.name COLLATE NOCASE
+        """
+    ).fetchall()
+    for deck in deck_rows:
+        key = (deck["card_id"], deck["variant"])
+        memberships.setdefault(key, []).append({
+            "id": deck["id"],
+            "share_id": deck["share_id"],
+            "name": deck["name"],
+        })
+    for card in cards:
+        key = (card.get("scryfall_id"), card.get("variant") or "Normal")
+        card["deck_memberships"] = memberships.get(key, [])
+    container_memberships = {}
+    container_rows = conn.execute(
+        """
+        SELECT cc.card_id, COALESCE(NULLIF(cc.variant, ''), 'Normal') AS variant,
+               cc.quantity, c.id, c.name, COALESCE(c.storage_type, 'other') AS storage_type,
+               c.location
+        FROM container_cards cc
+        JOIN containers c ON c.id = cc.container_id
+        ORDER BY c.name COLLATE NOCASE
+        """
+    ).fetchall()
+    for container in container_rows:
+        key = (container["card_id"], container["variant"])
+        container_memberships.setdefault(key, []).append({
+            "id": container["id"],
+            "name": container["name"],
+            "storage_type": container["storage_type"],
+            "location": container["location"],
+            "quantity": container["quantity"],
+        })
+    for card in cards:
+        key = (card.get("scryfall_id"), card.get("variant") or "Normal")
+        card["container_memberships"] = container_memberships.get(key, [])
+    return cards
 
 
 def shared_card(conn, share_id):
@@ -1915,6 +2033,22 @@ class Handler(SimpleHTTPRequestHandler):
                     return self.send_json(update_favorite(conn, urllib.parse.unquote(match.group(1)), self.read_json()))
         except urllib.error.URLError as exc:
             return self.send_json({"error": f"Network error: {exc}"}, HTTPStatus.BAD_GATEWAY)
+        except KeyError as exc:
+            return self.send_json({"error": str(exc)}, HTTPStatus.NOT_FOUND)
+        except ValueError as exc:
+            return self.send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+        except Exception as exc:
+            return self.send_json({"error": str(exc)}, HTTPStatus.INTERNAL_SERVER_ERROR)
+        return self.send_json({"error": "Not found"}, HTTPStatus.NOT_FOUND)
+
+    def do_PUT(self):
+        parsed = urllib.parse.urlparse(self.path)
+        try:
+            with connect() as conn:
+                init_db(conn)
+                match = re.match(r"^/api/containers/([0-9]+)$", parsed.path)
+                if match:
+                    return self.send_json(update_container(conn, int(match.group(1)), self.read_json()))
         except KeyError as exc:
             return self.send_json({"error": str(exc)}, HTTPStatus.NOT_FOUND)
         except ValueError as exc:

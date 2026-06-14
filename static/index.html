@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>FoilFolio</title>
-    <link rel="stylesheet" href="/styles.css?v=39">
+    <link rel="stylesheet" href="/styles.css?v=43">
   </head>
   <body>
     <header class="topbar">
@@ -22,10 +22,10 @@
     <div class="app-shell">
       <aside class="command-menu" aria-label="App navigation">
         <nav>
-          <button class="nav-command is-active" type="button" data-page-target="dashboard">Dashboard</button>
-          <button class="nav-command" type="button" data-page-target="collection">Collection</button>
-          <button class="nav-command" type="button" data-page-target="decks">Decks</button>
-          <button class="nav-command" type="button" data-page-target="containers">Containers</button>
+          <button class="nav-command is-active" type="button" data-page-target="dashboard"><span class="dashboard-icon" aria-hidden="true"></span>Dashboard</button>
+          <button class="nav-command" type="button" data-page-target="collection"><span class="collection-icon" aria-hidden="true"></span>Collection</button>
+          <button class="nav-command" type="button" data-page-target="decks"><span class="deck-icon" aria-hidden="true"></span>Decks</button>
+          <button class="nav-command" type="button" data-page-target="containers"><span class="container-icon box-icon" aria-hidden="true"></span>Containers</button>
         </nav>
       </aside>
 
@@ -187,6 +187,14 @@
           </div>
         </div>
         <footer class="card-footer">
+          <div class="card-storage-actions">
+            <button class="deck-membership-button" type="button" aria-label="Show decks for this card" title="Show decks">
+              <span class="deck-icon" aria-hidden="true"></span>
+            </button>
+            <button class="container-membership-button" type="button" aria-label="Show containers for this card" title="Show container">
+              <span class="container-icon other-icon" aria-hidden="true"></span>
+            </button>
+          </div>
           <button class="share-button" type="button" aria-label="Share card" title="Share card">&#8599;</button>
         </footer>
       </article>
@@ -213,6 +221,12 @@
           <span class="condition-pill"></span>
         </div>
         <div class="list-actions">
+          <button class="deck-membership-button" type="button" aria-label="Show decks for this card" title="Show decks">
+            <span class="deck-icon" aria-hidden="true"></span>
+          </button>
+          <button class="container-membership-button" type="button" aria-label="Show containers for this card" title="Show container">
+            <span class="container-icon other-icon" aria-hidden="true"></span>
+          </button>
           <button class="share-button" type="button" aria-label="Share card" title="Share card">&#8599;</button>
           <button class="delete-card-button" type="button" aria-label="Delete card" title="Delete card">x</button>
         </div>
@@ -340,6 +354,7 @@
           </label>
           <div class="modal-actions">
             <button id="cancelAddCardButton" class="secondary-button" type="button">Cancel</button>
+            <button id="confirmAddNewCardButton" class="primary-button" type="submit" title="Add and New" disabled>Add +</button>
             <button id="confirmAddCardButton" class="primary-button" type="submit" disabled>Add</button>
           </div>
         </form>
@@ -455,15 +470,55 @@
             <p class="eyebrow">Deck cards</p>
             <h2 id="deckDetailTitle">Deck</h2>
           </div>
-          <div class="deck-modal-actions">
-            <button id="shareDeckButton" class="share-button" type="button" aria-label="Share deck" title="Share deck">&#8599;</button>
-            <button id="deleteDeckButton" class="danger-icon-button" type="button" aria-label="Delete deck" title="Delete deck">x</button>
-          </div>
+          <button id="closeDeckDetailButton" class="modal-close" type="button" aria-label="Close deck dialog" title="Close">x</button>
         </header>
         <div id="deckDetailCards" class="deck-detail-list"></div>
         <div class="modal-actions deck-detail-footer">
-          <button id="closeDeckDetailButton" class="secondary-button" type="button">Close</button>
+          <button id="deleteDeckButton" class="danger-action-button" type="button" aria-label="Delete deck" title="Delete deck">
+            <span class="trash-icon" aria-hidden="true"></span>
+            <span>Delete</span>
+          </button>
+          <div class="deck-footer-actions">
+            <button id="addDeckCardButton" class="share-button" type="button" aria-label="Add card to deck" title="Add card">+</button>
+            <button id="shareDeckButton" class="share-button" type="button" aria-label="Share deck" title="Share deck">&#8599;</button>
+          </div>
         </div>
+      </section>
+    </div>
+
+    <div id="deckCardSearchOverlay" class="modal-overlay modal-overlay-stacked" hidden>
+      <section class="settings-modal" role="dialog" aria-modal="true" aria-labelledby="deckCardSearchTitle">
+        <header class="edit-modal-head">
+          <div>
+            <p class="eyebrow">Owned cards</p>
+            <h2 id="deckCardSearchTitle">Add to Deck</h2>
+          </div>
+          <button id="closeDeckCardSearchButton" class="modal-close" type="button" aria-label="Close card search dialog">x</button>
+        </header>
+        <form id="deckCardSearchForm" class="add-search-form">
+          <label>
+            Search your collection
+            <div class="search-control">
+              <input id="deckCardSearchInput" type="search" autocomplete="off" placeholder="Card name">
+              <button id="deckCardSearchButton" class="search-button" type="submit" aria-label="Search owned cards">&#8981;</button>
+            </div>
+          </label>
+        </form>
+        <div id="deckCardSearchStatus" class="add-search-status" aria-live="polite"></div>
+        <div id="deckCardSearchResults" class="deck-card-search-results"></div>
+      </section>
+    </div>
+
+    <div id="cardDecksOverlay" class="modal-overlay" hidden>
+      <section class="settings-modal" role="dialog" aria-modal="true" aria-labelledby="cardDecksTitle">
+        <header class="edit-modal-head">
+          <div>
+            <p class="eyebrow">Deck membership</p>
+            <h2 id="cardDecksTitle">Decks</h2>
+          </div>
+          <button id="closeCardDecksButton" class="modal-close" type="button" aria-label="Close deck list dialog">x</button>
+        </header>
+        <div id="cardDecksList" class="card-decks-list"></div>
       </section>
     </div>
 
@@ -471,15 +526,24 @@
       <section class="settings-modal" role="dialog" aria-modal="true" aria-labelledby="addContainerTitle">
         <header class="edit-modal-head">
           <div>
-            <p class="eyebrow">New container</p>
+            <p id="addContainerEyebrow" class="eyebrow">New container</p>
             <h2 id="addContainerTitle">Add Container</h2>
           </div>
           <button id="closeAddContainerButton" class="modal-close" type="button" aria-label="Close add container dialog">x</button>
         </header>
         <form id="addContainerForm" class="settings-form">
+          <input name="id" type="hidden">
           <label>
             Container Name
             <input name="name" type="text" maxlength="30" required placeholder="30 characters max">
+          </label>
+          <label>
+            Storage Type
+            <select name="storage_type">
+              <option value="binder">Binder</option>
+              <option value="box">Box</option>
+              <option value="other">Other</option>
+            </select>
           </label>
           <label>
             Container Location
@@ -491,7 +555,7 @@
           </label>
           <div class="modal-actions">
             <button id="cancelAddContainerButton" class="secondary-button" type="button">Cancel</button>
-            <button class="primary-button" type="submit">Add</button>
+            <button id="saveContainerButton" class="primary-button" type="submit">Add</button>
           </div>
         </form>
       </section>
@@ -528,7 +592,10 @@
             <h2 id="containerDetailTitle">Container</h2>
             <span id="containerDetailMeta" class="modal-subtitle"></span>
           </div>
-          <button id="deleteContainerButton" class="danger-icon-button" type="button" aria-label="Delete container" title="Delete container">x</button>
+          <div class="deck-modal-actions">
+            <button id="editContainerButton" class="share-button" type="button" aria-label="Edit container" title="Edit container">...</button>
+            <button id="deleteContainerButton" class="danger-icon-button" type="button" aria-label="Delete container" title="Delete container">x</button>
+          </div>
         </header>
         <div id="containerDetailCards" class="deck-detail-list"></div>
         <div class="modal-actions deck-detail-footer">
@@ -537,6 +604,19 @@
       </section>
     </div>
 
-    <script src="/app.js?v=39"></script>
+    <div id="cardContainersOverlay" class="modal-overlay" hidden>
+      <section class="settings-modal" role="dialog" aria-modal="true" aria-labelledby="cardContainersTitle">
+        <header class="edit-modal-head">
+          <div>
+            <p class="eyebrow">Stored in</p>
+            <h2 id="cardContainersTitle">Containers</h2>
+          </div>
+          <button id="closeCardContainersButton" class="modal-close" type="button" aria-label="Close container list dialog">x</button>
+        </header>
+        <div id="cardContainersList" class="card-decks-list"></div>
+      </section>
+    </div>
+
+    <script src="/app.js?v=45"></script>
   </body>
 </html>
