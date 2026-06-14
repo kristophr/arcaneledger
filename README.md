@@ -42,6 +42,7 @@ Security defaults can also be adjusted in `.env`:
 ```env
 SESSION_IDLE_MINUTES=30
 EMAIL_VERIFICATION_MINUTES=30
+PASSWORD_RESET_MINUTES=30
 ```
 
 To run it in the background:

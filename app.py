@@ -70,6 +70,7 @@ SESSION_COOKIE = "foilfolio_session"
 SESSION_DAYS = int(os.environ.get("SESSION_DAYS", "30"))
 SESSION_IDLE_MINUTES = int(os.environ.get("SESSION_IDLE_MINUTES", "30") or 30)
 EMAIL_VERIFICATION_MINUTES = int(os.environ.get("EMAIL_VERIFICATION_MINUTES", "30") or 30)
+PASSWORD_RESET_MINUTES = int(os.environ.get("PASSWORD_RESET_MINUTES", str(EMAIL_VERIFICATION_MINUTES)) or EMAIL_VERIFICATION_MINUTES)
 SUPPORTED_SCRYFALL_LANGUAGES = {"en"}
 USER_AGENT = "foilfolio/0.1"
 COLOR_ORDER = ("W", "U", "B", "R", "G")
@@ -949,6 +950,16 @@ def init_db(conn):
             used_at TEXT
         );
 
+        CREATE TABLE IF NOT EXISTS password_resets (
+            token_hash TEXT PRIMARY KEY,
+            user_id INTEGER NOT NULL,
+            email TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            used_at TEXT,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+
         CREATE TABLE IF NOT EXISTS cards (
             scryfall_id TEXT PRIMARY KEY,
             oracle_id TEXT,
@@ -1728,11 +1739,22 @@ def migrate_user_schema(conn):
             expires_at TEXT NOT NULL,
             used_at TEXT
         );
+
+        CREATE TABLE IF NOT EXISTS password_resets (
+            token_hash TEXT PRIMARY KEY,
+            user_id INTEGER NOT NULL,
+            email TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            used_at TEXT,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
         """
     )
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id, expires_at)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_email_verifications_email ON email_verifications(email, expires_at)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_password_resets_user ON password_resets(user_id, expires_at)")
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_decks_user_name ON decks(user_id, lower(name))")
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_containers_user_name ON containers(user_id, lower(name))")
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_wishlists_user_name ON wishlists(user_id, lower(name))")
@@ -1832,6 +1854,10 @@ def verification_url(token):
     return f"{verification_base_url()}/verify-email/{urllib.parse.quote(token)}"
 
 
+def password_reset_url(token):
+    return f"{verification_base_url()}/reset-password/{urllib.parse.quote(token)}"
+
+
 def start_registration(conn, payload):
     email = validate_email(payload.get("email"))
     password = validate_password(payload.get("password"))
@@ -1869,6 +1895,10 @@ def request_registration_email(conn, payload):
 
 def cleanup_email_verifications(conn):
     conn.execute("DELETE FROM email_verifications WHERE used_at IS NOT NULL OR expires_at <= ?", (now_iso(),))
+
+
+def cleanup_password_resets(conn):
+    conn.execute("DELETE FROM password_resets WHERE used_at IS NOT NULL OR expires_at <= ?", (now_iso(),))
 
 
 def verification_from_token(conn, token):
@@ -1925,6 +1955,84 @@ def complete_registration(conn, payload):
     conn.commit()
     user = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
     return {"ok": True, "user": user_payload(user), "session_token": token, "expires_at": expires_at}
+
+
+def request_password_reset(conn, payload):
+    email = validate_email(payload.get("email"))
+    timestamp = now_iso()
+    cleanup_password_resets(conn)
+    user = conn.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
+    message = "If that email has a FoilFolio account, a password reset link has been sent."
+    if not user:
+        conn.commit()
+        return {"ok": True, "message": message}
+    token = secrets.token_urlsafe(36)
+    expires = (datetime.now(timezone.utc) + timedelta(minutes=PASSWORD_RESET_MINUTES)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    conn.execute("UPDATE password_resets SET used_at = ? WHERE user_id = ? AND used_at IS NULL", (timestamp, user["id"]))
+    conn.execute(
+        """
+        INSERT INTO password_resets (token_hash, user_id, email, created_at, expires_at, used_at)
+        VALUES (?, ?, ?, ?, ?, NULL)
+        """,
+        (session_hash(token), user["id"], email, timestamp, expires),
+    )
+    url = password_reset_url(token)
+    safe_url = html_lib.escape(url)
+    send_email(
+        email,
+        "Reset your FoilFolio password",
+        f"Reset your FoilFolio password:\n{url}\n\nThis link expires in {PASSWORD_RESET_MINUTES} minutes. If you did not request this, you can ignore this email.",
+        html=f"""
+        <p>Reset your FoilFolio password.</p>
+        <p><a href="{safe_url}">Choose a new password</a>.</p>
+        <p>This link expires in {PASSWORD_RESET_MINUTES} minutes. If you did not request this, you can ignore this email.</p>
+        """,
+        tags=["foilfolio", "password-reset"],
+    )
+    conn.commit()
+    return {"ok": True, "message": message}
+
+
+def password_reset_from_token(conn, token):
+    cleanup_password_resets(conn)
+    token_hash = session_hash(token)
+    row = conn.execute(
+        """
+        SELECT pr.*, u.email AS user_email
+        FROM password_resets pr
+        JOIN users u ON u.id = pr.user_id
+        WHERE pr.token_hash = ? AND pr.used_at IS NULL AND pr.expires_at > ?
+        """,
+        (token_hash, now_iso()),
+    ).fetchone()
+    if not row:
+        raise ValueError("Password reset link is invalid or expired.")
+    return row
+
+
+def verify_password_reset_token(conn, token):
+    row = password_reset_from_token(conn, token)
+    conn.commit()
+    return {"ok": True, "email": row["email"] or row["user_email"]}
+
+
+def complete_password_reset(conn, payload):
+    token = (payload.get("token") or "").strip()
+    if not token:
+        raise ValueError("Password reset token is required.")
+    reset = password_reset_from_token(conn, token)
+    password = validate_password(payload.get("password"))
+    timestamp = now_iso()
+    conn.execute(
+        "UPDATE users SET password_hash = ?, email_verified = 1, updated_at = ? WHERE id = ?",
+        (hash_password(password), timestamp, reset["user_id"]),
+    )
+    conn.execute("UPDATE password_resets SET used_at = ? WHERE token_hash = ?", (timestamp, session_hash(token)))
+    conn.execute("DELETE FROM sessions WHERE user_id = ?", (reset["user_id"],))
+    session_token, expires_at = create_session(conn, reset["user_id"])
+    conn.commit()
+    user = conn.execute("SELECT * FROM users WHERE id = ?", (reset["user_id"],)).fetchone()
+    return {"ok": True, "user": user_payload(user), "session_token": session_token, "expires_at": expires_at}
 
 
 def login_user(conn, payload):
@@ -4373,27 +4481,139 @@ def list_sale_cards(conn, query, user_id):
     return rows_to_dicts(rows)
 
 
-def shared_card(conn, share_id):
-    price_expr = current_price_sql("c")
+def shared_card_identity(conn, share_id):
     row = conn.execute(
-        f"""
-        SELECT c.*, col.share_id, col.quantity, col.paid_price, col.variant, col.acquired_date,
-               COALESCE(col.card_condition, 'Near Mint') AS card_condition,
-               COALESCE(col.graded, 0) AS graded,
-               col.notes, COALESCE(meta.favorite, 0) AS favorite,
-               ({price_expr}) AS display_price,
-               col.quantity * ({price_expr}) AS owned_value,
-               col.quantity * (({price_expr}) - col.paid_price) AS gain_loss
-        FROM collection col
-        JOIN cards c ON c.scryfall_id = col.card_id
-        LEFT JOIN card_meta meta ON meta.user_id = col.user_id AND meta.card_id = col.card_id AND meta.variant = col.variant
-        WHERE col.share_id = ? AND col.quantity > 0
+        """
+        SELECT card_id, COALESCE(NULLIF(variant, ''), 'Normal') AS variant
+        FROM collection
+        WHERE share_id = ?
         """,
         (share_id,),
     ).fetchone()
     if not row:
         raise KeyError("Shared card not found")
+    return row
+
+
+def shared_card(conn, share_id, user_id=None):
+    identity = shared_card_identity(conn, share_id)
+    if user_id:
+        card = card_detail(conn, user_id, identity["card_id"], identity["variant"])
+        if not card.get("share_id"):
+            card["share_id"] = share_id
+        card["shared_source_id"] = share_id
+        card["personalized"] = True
+        return card
+    row = conn.execute(
+        """
+        SELECT c.*, ? AS share_id, ? AS variant,
+               0 AS quantity,
+               CASE
+                   WHEN lower(?) LIKE '%etched%' AND c.current_usd_etched > 0 THEN c.current_usd_etched
+                   WHEN lower(?) LIKE '%foil%' AND c.current_usd_foil > 0 THEN c.current_usd_foil
+                   WHEN c.current_usd > 0 THEN c.current_usd
+                   WHEN c.current_usd_foil > 0 THEN c.current_usd_foil
+                   WHEN c.current_usd_etched > 0 THEN c.current_usd_etched
+                   ELSE 0
+               END AS display_price,
+               1 AS readonly
+        FROM cards c
+        WHERE c.scryfall_id = ?
+        """,
+        (share_id, identity["variant"], identity["variant"], identity["variant"], identity["card_id"]),
+    ).fetchone()
+    if not row:
+        raise KeyError("Shared card not found")
     return dict(row)
+
+
+def card_share_url(card):
+    share_id = card.get("share_id") if isinstance(card, dict) else card["share_id"]
+    return f"{verification_base_url()}/cards/{urllib.parse.quote(share_id)}"
+
+
+def card_public_url(card):
+    if isinstance(card, dict):
+        card_id = card.get("scryfall_id") or card.get("card_id") or ""
+        variant = card.get("variant") or "Normal"
+    else:
+        card_id = card["scryfall_id"]
+        variant = card["variant"] or "Normal"
+    return f"{verification_base_url()}/card/{urllib.parse.quote(card_id)}/{urllib.parse.quote(variant)}"
+
+
+def card_email_html(card, share_url, sender_name):
+    title = html_lib.escape(card_email_title(card))
+    safe_sender = html_lib.escape(sender_name or "A FoilFolio user")
+    safe_url = html_lib.escape(share_url)
+    set_text = html_lib.escape(" ".join(part for part in [
+        card.get("set_name") or "",
+        f"#{card.get('collector_number')}" if card.get("collector_number") else "",
+        card.get("variant") or "",
+    ] if part).strip())
+    type_text = html_lib.escape(card.get("type_line") or card.get("type_category") or "")
+    color_text = html_lib.escape(email_card_colors(card))
+    market = money(card.get("display_price"), fallback=0)
+    image_url = html_lib.escape(card.get("image_normal") or card.get("image_small") or "")
+    image_html = f'<p><img src="{image_url}" alt="{title}" style="max-width:260px;width:100%;border-radius:12px;"></p>' if image_url else ""
+    return f"""
+    <!doctype html>
+    <html>
+      <body style="margin:0;background:#f4f7f5;color:#111816;font-family:Arial,Helvetica,sans-serif;">
+        <div style="max-width:680px;margin:0 auto;padding:24px;">
+          <h1 style="margin:0 0 8px;font-size:28px;line-height:1.1;">{title}</h1>
+          <p style="margin:0 0 16px;color:#586661;">{safe_sender} shared this FoilFolio card with you.</p>
+          <p style="margin:0 0 20px;">
+            <a href="{safe_url}" style="display:inline-block;background:#111816;color:#ffffff;text-decoration:none;padding:10px 14px;border-radius:8px;font-weight:700;">Open card</a>
+          </p>
+          <p style="margin:0 0 16px;color:#303936;word-break:break-all;">{safe_url}</p>
+          {image_html}
+          <table role="presentation" cellspacing="0" cellpadding="0" style="width:100%;border-collapse:collapse;background:#ffffff;border:1px solid #d7dedb;border-radius:8px;overflow:hidden;">
+            <tbody>
+              <tr><th style="text-align:left;padding:10px 8px;background:#e9efec;">Set</th><td style="padding:10px 8px;">{set_text}</td></tr>
+              <tr><th style="text-align:left;padding:10px 8px;background:#e9efec;">Type</th><td style="padding:10px 8px;">{type_text}</td></tr>
+              <tr><th style="text-align:left;padding:10px 8px;background:#e9efec;">Colors</th><td style="padding:10px 8px;">{color_text}</td></tr>
+              <tr><th style="text-align:left;padding:10px 8px;background:#e9efec;">Market</th><td style="padding:10px 8px;">${market:.2f}</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </body>
+    </html>
+    """
+
+
+def card_email_text(card, share_url, sender_name):
+    set_text = " ".join(part for part in [
+        card.get("set_name") or "",
+        f"#{card.get('collector_number')}" if card.get("collector_number") else "",
+        card.get("variant") or "",
+    ] if part).strip()
+    return "\n".join([
+        f"{sender_name or 'A FoilFolio user'} shared this FoilFolio card with you: {card_email_title(card)}",
+        share_url,
+        "",
+        f"Set: {set_text}",
+        f"Type: {card.get('type_line') or card.get('type_category') or ''}",
+        f"Colors: {email_card_colors(card)}",
+        f"Market: ${money(card.get('display_price'), fallback=0):.2f}",
+    ])
+
+
+def email_card(conn, user, card_id, payload):
+    variant = payload.get("variant") or "Normal"
+    card = card_detail(conn, user["id"], card_id, variant)
+    recipient = validate_email(payload.get("email"))
+    share_url = card_public_url(card)
+    sender_name = user["name"] or user["email"]
+    subject = f"FoilFolio: {sender_name} sharing card: {card_email_title(card)}"
+    result = send_email(
+        recipient,
+        subject,
+        text=card_email_text(card, share_url, sender_name),
+        html=card_email_html(card, share_url, sender_name),
+        tags=["foilfolio", "card-share"],
+    )
+    return {"ok": True, "email": recipient, "provider": result.get("provider"), "status": result.get("status")}
 
 
 def purchase_history(conn, user_id, card_id, variant):
@@ -4522,6 +4742,31 @@ def card_detail(conn, user_id, card_id, variant="Normal"):
     card["deck_memberships"] = card_deck_memberships(conn, user_id, card_id, variant)
     card["container_memberships"] = card_container_memberships(conn, user_id, card_id, variant)
     return card
+
+
+def public_card_detail(conn, card_id, variant="Normal"):
+    variant = variant or "Normal"
+    row = conn.execute(
+        """
+        SELECT c.*, ? AS variant,
+               0 AS quantity,
+               CASE
+                   WHEN lower(?) LIKE '%etched%' AND c.current_usd_etched > 0 THEN c.current_usd_etched
+                   WHEN lower(?) LIKE '%foil%' AND c.current_usd_foil > 0 THEN c.current_usd_foil
+                   WHEN c.current_usd > 0 THEN c.current_usd
+                   WHEN c.current_usd_foil > 0 THEN c.current_usd_foil
+                   WHEN c.current_usd_etched > 0 THEN c.current_usd_etched
+                   ELSE 0
+               END AS display_price,
+               1 AS readonly
+        FROM cards c
+        WHERE c.scryfall_id = ?
+        """,
+        (variant, variant, variant, card_id),
+    ).fetchone()
+    if not row:
+        raise KeyError("Card not found")
+    return dict(row)
 
 
 def add_card_purchase(conn, user_id, card_id, payload):
@@ -5464,6 +5709,9 @@ class Handler(SimpleHTTPRequestHandler):
                 if parsed.path == "/api/auth/verification":
                     params = urllib.parse.parse_qs(parsed.query)
                     return self.send_json(verify_registration_token(conn, params.get("token", [""])[0]))
+                if parsed.path == "/api/auth/password-reset":
+                    params = urllib.parse.parse_qs(parsed.query)
+                    return self.send_json(verify_password_reset_token(conn, params.get("token", [""])[0]))
                 if parsed.path == "/api/dashboard":
                     user = self.require_user(conn)
                     return self.send_json(dashboard(conn, user["id"]))
@@ -5489,6 +5737,14 @@ class Handler(SimpleHTTPRequestHandler):
                 if parsed.path == "/api/cards":
                     user = self.require_user(conn)
                     return self.send_json({"cards": list_cards(conn, parsed.query, user["id"])})
+                match = re.match(r"^/api/cards/([^/]+)/public$", parsed.path)
+                if match:
+                    params = urllib.parse.parse_qs(parsed.query)
+                    return self.send_json(public_card_detail(
+                        conn,
+                        urllib.parse.unquote(match.group(1)),
+                        params.get("variant", ["Normal"])[0],
+                    ))
                 match = re.match(r"^/api/cards/([^/]+)/detail$", parsed.path)
                 if match:
                     user = self.require_user(conn)
@@ -5519,7 +5775,8 @@ class Handler(SimpleHTTPRequestHandler):
                     return self.send_json(set_detail(conn, user["id"], urllib.parse.unquote(match.group(1)).lower()))
                 match = re.match(r"^/api/shared/([^/]+)$", parsed.path)
                 if match:
-                    return self.send_json(shared_card(conn, urllib.parse.unquote(match.group(1))))
+                    user = self.current_user(conn)
+                    return self.send_json(shared_card(conn, urllib.parse.unquote(match.group(1)), user["id"] if user else None))
                 match = re.match(r"^/api/shared-decks/([^/]+)$", parsed.path)
                 if match:
                     return self.send_json(shared_deck(conn, urllib.parse.unquote(match.group(1))))
@@ -5579,6 +5836,7 @@ class Handler(SimpleHTTPRequestHandler):
             or re.match(r"^/card/[^/]+/[^/]+/?$", parsed.path)
             or re.match(r"^/favorites/shared/?$", parsed.path)
             or re.match(r"^/verify-email/[^/]+/?$", parsed.path)
+            or re.match(r"^/reset-password/[^/]+/?$", parsed.path)
             or re.match(r"^/(favorites|collection|decks|containers|missing-list|for-sale|wishlist|search|import)/?$", parsed.path)
         ):
             self.path = "/index.html"
@@ -5595,6 +5853,12 @@ class Handler(SimpleHTTPRequestHandler):
                     result = complete_registration(conn, self.read_json())
                     token = result.pop("session_token")
                     return self.send_json(result, HTTPStatus.CREATED, cookie=cookie_header(token, result.get("expires_at")))
+                if parsed.path == "/api/auth/password-reset-start":
+                    return self.send_json(request_password_reset(conn, self.read_json()))
+                if parsed.path == "/api/auth/password-reset-complete":
+                    result = complete_password_reset(conn, self.read_json())
+                    token = result.pop("session_token")
+                    return self.send_json(result, cookie=cookie_header(token, result.get("expires_at")))
                 if parsed.path == "/api/auth/register":
                     result = start_registration(conn, self.read_json())
                     token = result.pop("session_token")
@@ -5636,6 +5900,10 @@ class Handler(SimpleHTTPRequestHandler):
                 if parsed.path == "/api/cards/sold":
                     user = self.require_user(conn)
                     return self.send_json(mark_card_sold(conn, user["id"], self.read_json()))
+                match = re.match(r"^/api/cards/([^/]+)/email$", parsed.path)
+                if match:
+                    user = self.require_user(conn)
+                    return self.send_json(email_card(conn, user, urllib.parse.unquote(match.group(1)), self.read_json()))
                 match = re.match(r"^/api/cards/([^/]+)/purchases$", parsed.path)
                 if match:
                     user = self.require_user(conn)

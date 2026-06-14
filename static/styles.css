@@ -2908,6 +2908,17 @@ main {
   cursor: pointer;
 }
 
+.subtle-button {
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
+}
+
+.subtle-button:hover {
+  border-color: var(--line);
+  color: var(--ink);
+}
+
 .settings-form textarea {
   width: 100%;
   min-height: 104px;

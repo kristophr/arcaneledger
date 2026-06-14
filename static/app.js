@@ -195,6 +195,7 @@ const els = {
   authNameField: document.querySelector("#authNameField"),
   authPasswordField: document.querySelector("#authPasswordField"),
   togglePasswordVisibilityButton: document.querySelector("#togglePasswordVisibilityButton"),
+  forgotPasswordButton: document.querySelector("#forgotPasswordButton"),
   closeAuthButton: document.querySelector("#closeAuthButton"),
   toggleAuthModeButton: document.querySelector("#toggleAuthModeButton"),
   submitAuthButton: document.querySelector("#submitAuthButton"),
@@ -419,27 +420,50 @@ function authMode() {
 }
 
 function setAuthMode(mode) {
-  const nextMode = ["register", "complete"].includes(mode) ? mode : "login";
+  const nextMode = ["register", "complete", "reset-request", "reset-complete"].includes(mode) ? mode : "login";
   els.authForm.mode.value = nextMode;
   const isLogin = nextMode === "login";
   const isRegister = nextMode === "register";
   const isComplete = nextMode === "complete";
-  els.authTitle.textContent = isComplete ? "Finish Account" : isRegister ? "Create Account" : "Log In";
-  els.submitAuthButton.textContent = isComplete ? "Create Account" : isRegister ? "Send Verification Email" : "Log In";
+  const isResetRequest = nextMode === "reset-request";
+  const isResetComplete = nextMode === "reset-complete";
+  els.authTitle.textContent = isComplete
+    ? "Finish Account"
+    : isRegister
+      ? "Create Account"
+      : isResetRequest
+        ? "Reset Password"
+        : isResetComplete
+          ? "Choose New Password"
+          : "Log In";
+  els.submitAuthButton.textContent = isComplete
+    ? "Create Account"
+    : isRegister
+      ? "Send Verification Email"
+      : isResetRequest
+        ? "Send Reset Email"
+        : isResetComplete
+          ? "Update Password"
+          : "Log In";
   els.toggleAuthModeButton.textContent = isLogin ? "Create Account" : "Use Existing Account";
-  els.toggleAuthModeButton.hidden = isComplete;
+  els.toggleAuthModeButton.hidden = isComplete || isResetComplete;
+  els.forgotPasswordButton.hidden = !isLogin;
   els.authNameField.hidden = !isComplete;
-  els.authPasswordField.hidden = isRegister;
-  els.authForm.email.readOnly = isComplete;
+  els.authPasswordField.hidden = isRegister || isResetRequest;
+  els.authForm.email.readOnly = isComplete || isResetComplete;
   els.authForm.email.required = true;
   els.authForm.name.required = isComplete;
-  els.authForm.password.required = !isRegister;
+  els.authForm.password.required = !(isRegister || isResetRequest);
   els.authHint.textContent = isComplete
     ? "Email verified. Add your name and a strong password to finish creating your account."
     : isRegister
-      ? "Enter your email and we will send a verification link before you create a password."
-      : "Log in to manage your collection, decks, containers, favorites, and wishlist.";
-  els.authForm.password.autocomplete = isComplete ? "new-password" : "current-password";
+      ? "Enter your email and we will send a verification link before you create a password. Use this again to resend a verification email."
+      : isResetRequest
+        ? "Enter your account email and we will send a password reset link."
+        : isResetComplete
+          ? "Choose a new strong password for your FoilFolio account."
+          : "Log in to manage your collection, decks, containers, favorites, and wishlist.";
+  els.authForm.password.autocomplete = (isComplete || isResetComplete) ? "new-password" : "current-password";
   if (els.togglePasswordVisibilityButton) {
     els.togglePasswordVisibilityButton.textContent = "Show";
     els.authForm.password.type = "password";
@@ -455,6 +479,8 @@ function openAuthModal(mode = "login", message = "") {
   document.body.classList.add("modal-open");
   if (authMode() === "complete") {
     els.authForm.name.focus();
+  } else if (authMode() === "reset-complete") {
+    els.authForm.password.focus();
   } else {
     els.authForm.email.focus();
   }
@@ -477,6 +503,28 @@ async function submitAuthForm() {
     });
     els.authStatus.textContent = result.message || "Check your email for a verification link.";
     els.authStatus.dataset.tone = "";
+    els.submitAuthButton.textContent = "Resend Verification Email";
+    return;
+  }
+  if (mode === "reset-request") {
+    const result = await api("/api/auth/password-reset-start", {
+      method: "POST",
+      body: JSON.stringify({ email: payload.email }),
+    });
+    els.authStatus.textContent = result.message || "If that email has a FoilFolio account, a password reset link has been sent.";
+    els.authStatus.dataset.tone = "";
+    return;
+  }
+  if (mode === "reset-complete") {
+    const result = await api("/api/auth/password-reset-complete", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    state.user = result.user;
+    syncSettingsFromUser(state.user);
+    updateAuthUi();
+    closeAuthModal();
+    await activatePage("dashboard", { replace: true });
     return;
   }
   const endpoint = mode === "complete" ? "/api/auth/register-complete" : "/api/auth/login";
@@ -501,6 +549,19 @@ async function loadEmailVerification(token) {
     openAuthModal("complete", "");
   } catch (error) {
     openAuthModal("login", error.message);
+  }
+}
+
+async function loadPasswordReset(token) {
+  activatePage("search", { replace: true, promptLogin: false });
+  try {
+    const result = await api(`/api/auth/password-reset?token=${encodeURIComponent(token)}`);
+    els.authForm.reset();
+    els.authForm.token.value = token;
+    els.authForm.email.value = result.email || "";
+    openAuthModal("reset-complete", "");
+  } catch (error) {
+    openAuthModal("reset-request", error.message);
   }
 }
 
@@ -1138,6 +1199,11 @@ function verificationRouteToken() {
   return match ? decodeURIComponent(match[1]) : "";
 }
 
+function passwordResetRouteToken() {
+  const match = window.location.pathname.match(/^\/reset-password\/([^/]+)\/?$/);
+  return match ? decodeURIComponent(match[1]) : "";
+}
+
 function appPageRoute() {
   const normalized = window.location.pathname.replace(/\/+$/, "") || "/";
   return routePages[normalized] || "";
@@ -1642,12 +1708,14 @@ function closeAssignWishlistModal() {
 }
 
 function shareUrlForEntity(type, entity) {
+  if (type === "card") return shareUrlForCard(entity);
   if (type === "deck") return shareUrlForDeck(entity);
   if (type === "container") return shareUrlForContainer(entity);
   return shareUrlForWishlist(entity);
 }
 
 function emailEntityLabel(type) {
+  if (type === "card") return "Card";
   if (type === "deck") return "Deck";
   if (type === "container") return "Container";
   return "Wishlist";
@@ -1658,7 +1726,7 @@ function openEmailShareModal(type, entity) {
   state.emailingWishlist = type === "wishlist" ? entity : null;
   els.emailWishlistForm.reset();
   els.emailWishlistForm.entity_type.value = type;
-  els.emailWishlistForm.entity_id.value = entity.id || "";
+  els.emailWishlistForm.entity_id.value = entity.id || entity.scryfall_id || entity.card_id || "";
   const label = emailEntityLabel(type);
   els.emailWishlistTitle.textContent = `Email ${entity.name || label}`;
   els.emailWishlistStatus.textContent = shareUrlForEntity(type, entity);
@@ -1678,6 +1746,10 @@ function openEmailDeckModal(deck) {
 
 function openEmailContainerModal(container) {
   openEmailShareModal("container", container);
+}
+
+function openEmailCardModal(card) {
+  openEmailShareModal("card", card);
 }
 
 function closeEmailWishlistModal() {
@@ -2199,8 +2271,8 @@ function closeEditModal() {
 }
 
 function shareUrlForCard(card) {
-  if (!card || !card.share_id) return "";
-  return new URL(`/cards/${encodeURIComponent(card.share_id)}`, window.location.origin).toString();
+  if (!card || !(card.scryfall_id || card.card_id)) return "";
+  return new URL(cardDetailUrl(card), window.location.origin).toString();
 }
 
 function shareUrlForDeck(deck) {
@@ -2234,7 +2306,7 @@ function openShareUrl(title, url) {
 function openShareModal(card) {
   const url = shareUrlForCard(card);
   if (!url) {
-    setStatus("This collection entry does not have a share link yet.", "error");
+    setStatus("This card does not have a share link yet.", "error");
     return;
   }
   openShareUrl(cardTitle(card), url);
@@ -3425,23 +3497,22 @@ function renderSharedCard(card) {
             <dd>${escapeHtml(card.variant || "Normal")}</dd>
           </div>
           <div>
-            <dt>Owned</dt>
-            <dd>${integer.format(card.quantity || 0)}</dd>
-          </div>
-          <div>
-            <dt>Date Added</dt>
-            <dd>${escapeHtml(formatDate(card.acquired_date))}</dd>
-          </div>
-          <div>
             <dt>Market Price</dt>
             <dd>${dollars.format(card.market_price ?? card.display_price ?? 0)}</dd>
           </div>
           <div>
-            <dt>Total Value</dt>
-            <dd>${dollars.format(card.total_value ?? card.owned_value ?? 0)}</dd>
+            <dt>Type</dt>
+            <dd>${escapeHtml(cardTypeLabel(card))}</dd>
+          </div>
+          <div>
+            <dt>Colors</dt>
+            <dd>${escapeHtml(cardColorLabel(card))}</dd>
           </div>
         </dl>
       </div>
+      <aside class="card-detail-toolbar" aria-label="Card actions">
+        <a class="detail-action-button detail-scryfall-button" href="${escapeHtml(card.scryfall_uri || "#")}" target="_blank" rel="noreferrer" aria-label="View on Scryfall" title="View on Scryfall">S</a>
+      </aside>
     </article>
   `;
 }
@@ -3482,37 +3553,10 @@ function renderMovementHistory(movements) {
 function renderCardDetail(card) {
   state.activeCardDetail = card;
   const specialClass = isSpecialVariant(card.variant) ? " is-special" : "";
+  const owned = Number(card.quantity || 0) > 0;
   const hasDecks = deckMemberships(card).length > 0;
   const hasContainers = containerMemberships(card).length > 0;
-  els.cardDetailShell.innerHTML = `
-    <article class="shared-card editable-card-detail${specialClass}">
-      <div class="card-detail-media">
-        <a class="shared-card-art" href="${escapeHtml(card.scryfall_uri || "#")}" target="_blank" rel="noreferrer" title="Open on Scryfall">
-          <img src="${escapeHtml(card.image_normal || card.image_small || "")}" alt="${escapeHtml(cardTitle(card))}">
-        </a>
-        <div class="detail-storage-actions">
-          <button class="detail-storage-button detail-decks-button" type="button" aria-label="View decks" title="${hasDecks ? "View decks" : "Not in any decks"}" ${hasDecks ? "" : "disabled"}>
-            <span class="deck-icon" aria-hidden="true"></span>
-          </button>
-          <button class="detail-storage-button detail-containers-button" type="button" aria-label="View containers" title="${hasContainers ? "View containers" : "Not stored in a container"}" ${hasContainers ? "" : "disabled"}>
-            ${containerIconHtml((containerMemberships(card)[0] || {}).storage_type)}
-          </button>
-        </div>
-      </div>
-      <div class="shared-card-copy">
-        <p class="eyebrow">Collection card</p>
-        <h2>${escapeHtml(cardTitle(card))}</h2>
-        <div class="card-divider"></div>
-        <p>${escapeHtml(card.set_name)} #${escapeHtml(card.collector_number)} - ${escapeHtml(card.rarity || "unknown")}</p>
-        ${cardRulesName(card) ? `<p>Rules: ${escapeHtml(cardRulesName(card))}</p>` : ""}
-        <p>${escapeHtml(card.type_line || "")}</p>
-        <div class="detail-pill-row">
-          <span>${escapeHtml(card.variant || "Normal")}</span>
-          <span>${escapeHtml(conditionText(card))}</span>
-          <span>${escapeHtml(cardTypeLabel(card))}</span>
-          <span>${escapeHtml(cardColorLabel(card))}</span>
-        </div>
-        <dl class="shared-card-details">
+  const detailsHtml = owned ? `
           <div>
             <dt>Owned</dt>
             <dd>${integer.format(card.quantity || 0)}</dd>
@@ -3533,38 +3577,93 @@ function renderCardDetail(card) {
             <dt>Total Delta</dt>
             <dd class="${valueClass(card.gain_loss || 0)}">${dollars.format(card.gain_loss || 0)}</dd>
           </div>
+  ` : `
+          <div>
+            <dt>Status</dt>
+            <dd>Not in your collection</dd>
+          </div>
+          <div>
+            <dt>Market Price</dt>
+            <dd>${dollars.format(card.market_price ?? card.display_price ?? 0)}</dd>
+          </div>
+          <div>
+            <dt>Set</dt>
+            <dd>${escapeHtml(card.set_name || "")}</dd>
+          </div>
+  `;
+  els.cardDetailShell.innerHTML = `
+    <article class="shared-card editable-card-detail${specialClass}">
+      <div class="card-detail-media">
+        <a class="shared-card-art" href="${escapeHtml(card.scryfall_uri || "#")}" target="_blank" rel="noreferrer" title="Open on Scryfall">
+          <img src="${escapeHtml(card.image_normal || card.image_small || "")}" alt="${escapeHtml(cardTitle(card))}">
+        </a>
+        ${owned ? `<div class="detail-storage-actions">
+          <button class="detail-storage-button detail-decks-button" type="button" aria-label="View decks" title="${hasDecks ? "View decks" : "Not in any decks"}" ${hasDecks ? "" : "disabled"}>
+            <span class="deck-icon" aria-hidden="true"></span>
+          </button>
+          <button class="detail-storage-button detail-containers-button" type="button" aria-label="View containers" title="${hasContainers ? "View containers" : "Not stored in a container"}" ${hasContainers ? "" : "disabled"}>
+            ${containerIconHtml((containerMemberships(card)[0] || {}).storage_type)}
+          </button>
+        </div>` : ""}
+      </div>
+      <div class="shared-card-copy">
+        <p class="eyebrow">${owned ? "Collection card" : "Catalog card"}</p>
+        <h2>${escapeHtml(cardTitle(card))}</h2>
+        <div class="card-divider"></div>
+        <p>${escapeHtml(card.set_name)} #${escapeHtml(card.collector_number)} - ${escapeHtml(card.rarity || "unknown")}</p>
+        ${cardRulesName(card) ? `<p>Rules: ${escapeHtml(cardRulesName(card))}</p>` : ""}
+        <p>${escapeHtml(card.type_line || "")}</p>
+        <div class="detail-pill-row">
+          <span>${escapeHtml(card.variant || "Normal")}</span>
+          ${owned ? `<span>${escapeHtml(conditionText(card))}</span>` : ""}
+          <span>${escapeHtml(cardTypeLabel(card))}</span>
+          <span>${escapeHtml(cardColorLabel(card))}</span>
+        </div>
+        <dl class="shared-card-details">
+          ${detailsHtml}
         </dl>
         <div class="detail-actions">
-          <button id="addPurchaseButton" class="primary-button" type="button">Add Purchase</button>
+          ${owned
+            ? '<button id="addPurchaseButton" class="primary-button" type="button">Add Purchase</button>'
+            : '<button class="wishlist-button detail-wishlist-button" type="button" aria-label="Add to Wishlist" title="Add to Wishlist"></button>'}
         </div>
       </div>
       <aside class="card-detail-toolbar" aria-label="Card actions">
-        <button class="detail-action-button detail-edit-button" type="button" aria-label="Edit card" title="Edit card"><span class="edit-icon" aria-hidden="true"></span></button>
+        ${owned ? '<button class="detail-action-button detail-edit-button" type="button" aria-label="Edit card" title="Edit card"><span class="edit-icon" aria-hidden="true"></span></button>' : ""}
         <button class="detail-action-button detail-refresh-button" type="button" aria-label="Refresh from Scryfall" title="Refresh from Scryfall">&#8635;</button>
         <a class="detail-action-button detail-scryfall-button" href="${escapeHtml(card.scryfall_uri || "#")}" target="_blank" rel="noreferrer" aria-label="View on Scryfall" title="View on Scryfall">S</a>
         <button class="detail-action-button detail-share-button" type="button" aria-label="Share card" title="Share card">&#8599;</button>
-        <button class="detail-action-button detail-delete-button" type="button" aria-label="Delete card" title="Delete card"><span class="trash-icon" aria-hidden="true"></span></button>
+        <button class="detail-action-button detail-email-button" type="button" aria-label="Email card" title="Email card"><span class="send-icon" aria-hidden="true"></span></button>
+        ${owned ? '<button class="detail-action-button detail-delete-button" type="button" aria-label="Delete card" title="Delete card"><span class="trash-icon" aria-hidden="true"></span></button>' : ""}
       </aside>
     </article>
-    <section class="purchase-history-panel">
+    ${owned ? `<section class="purchase-history-panel">
       <div class="panel-head">
         <h2>Card History</h2>
         <span>${integer.format((card.movements || card.purchases || []).length)} entries</span>
       </div>
       ${renderMovementHistory(card.movements || card.purchases || [])}
-    </section>
+    </section>` : ""}
   `;
-  els.cardDetailShell.querySelector("#addPurchaseButton").addEventListener("click", () => openAddPurchaseModal(card));
-  els.cardDetailShell.querySelector(".detail-edit-button").addEventListener("click", () => openEditModal(card));
+  els.cardDetailShell.querySelector("#addPurchaseButton")?.addEventListener("click", () => openAddPurchaseModal(card));
+  els.cardDetailShell.querySelector(".detail-wishlist-button") && wireWishlistButton(els.cardDetailShell.querySelector(".detail-wishlist-button"), card, {
+    statusTarget: els.status,
+    afterWishlistChange: async () => {
+      await loadCardDetail(card.scryfall_id, card.variant || "Normal");
+      await loadWishlists();
+    },
+  });
+  els.cardDetailShell.querySelector(".detail-edit-button")?.addEventListener("click", () => openEditModal(card));
   els.cardDetailShell.querySelector(".detail-refresh-button").addEventListener("click", (event) => {
     refreshCardDetailMetadata(event.currentTarget, card).catch((error) => setStatus(error.message, "error"));
   });
   els.cardDetailShell.querySelector(".detail-share-button").addEventListener("click", () => openShareModal(card));
-  els.cardDetailShell.querySelector(".detail-delete-button").addEventListener("click", () => {
+  els.cardDetailShell.querySelector(".detail-email-button").addEventListener("click", () => openEmailCardModal(card));
+  els.cardDetailShell.querySelector(".detail-delete-button")?.addEventListener("click", () => {
     deleteCardFromDetail(card).catch((error) => setStatus(error.message, "error"));
   });
-  els.cardDetailShell.querySelector(".detail-decks-button").addEventListener("click", () => openCardDecksModal(card));
-  els.cardDetailShell.querySelector(".detail-containers-button").addEventListener("click", () => openCardContainersModal(card));
+  els.cardDetailShell.querySelector(".detail-decks-button")?.addEventListener("click", () => openCardDecksModal(card));
+  els.cardDetailShell.querySelector(".detail-containers-button")?.addEventListener("click", () => openCardContainersModal(card));
   els.cardDetailShell.querySelectorAll(".delete-movement-button").forEach((button) => {
     button.addEventListener("click", () => {
       deleteCardMovement(button).catch((error) => setStatus(error.message, "error"));
@@ -3580,6 +3679,17 @@ async function loadCardDetail(cardId, variant = "Normal") {
     renderCardDetail(card);
   } catch (error) {
     els.cardDetailShell.innerHTML = `<div class="empty-state">${escapeHtml(error.message)}</div>`;
+  }
+}
+
+async function loadPublicCardDetail(cardId, variant = "Normal") {
+  showPage("shared");
+  els.sharedCardShell.innerHTML = '<div class="empty-state">Loading card...</div>';
+  try {
+    const card = await api(`/api/cards/${encodeURIComponent(cardId)}/public?variant=${encodeURIComponent(variant)}`);
+    renderSharedCard(card);
+  } catch (error) {
+    els.sharedCardShell.innerHTML = `<div class="empty-state">${escapeHtml(error.message)}</div>`;
   }
 }
 
@@ -3604,12 +3714,18 @@ function closeAddPurchaseModal() {
 }
 
 async function loadSharedCard(shareId) {
-  showPage("shared");
-  els.sharedCardShell.innerHTML = '<div class="empty-state">Loading shared card...</div>';
   try {
     const card = await api(`/api/shared/${encodeURIComponent(shareId)}`);
+    if (state.user && card.personalized) {
+      showPage("card-detail");
+      renderCardDetail(card);
+      return;
+    }
+    showPage("shared");
+    els.sharedCardShell.innerHTML = '<div class="empty-state">Loading shared card...</div>';
     renderSharedCard(card);
   } catch (error) {
+    showPage("shared");
     els.sharedCardShell.innerHTML = `<div class="empty-state">${escapeHtml(error.message)}</div>`;
   }
 }
@@ -4087,6 +4203,12 @@ function wireEvents() {
     setAuthMode(authMode() === "login" ? "register" : "login");
     els.authStatus.textContent = "";
   });
+  els.forgotPasswordButton.addEventListener("click", () => {
+    setAuthMode("reset-request");
+    els.authStatus.textContent = "";
+    els.authStatus.dataset.tone = "";
+    els.authForm.email.focus();
+  });
   els.togglePasswordVisibilityButton.addEventListener("click", () => {
     const showing = els.authForm.password.type === "text";
     els.authForm.password.type = showing ? "password" : "text";
@@ -4556,6 +4678,7 @@ function wireEvents() {
     const type = payload.entity_type || state.emailingEntity?.type || "wishlist";
     const entityId = payload.entity_id || state.emailingEntity?.entity?.id || state.emailingWishlist?.id;
     const endpoints = {
+      card: "cards",
       deck: "decks",
       container: "containers",
       wishlist: "wishlists",
@@ -4574,11 +4697,15 @@ function wireEvents() {
     try {
       await api(`/api/${endpoint}/${encodeURIComponent(entityId)}/email`, {
         method: "POST",
-        body: JSON.stringify({ email: payload.email }),
+        body: JSON.stringify({
+          email: payload.email,
+          variant: state.emailingEntity?.entity?.variant || "Normal",
+          share_id: state.emailingEntity?.entity?.share_id || "",
+        }),
       });
       const recipient = payload.email;
       closeEmailWishlistModal();
-      const statusTarget = type === "deck" ? els.decksStatus : type === "container" ? els.containersStatus : els.wishlistStatus;
+      const statusTarget = type === "deck" ? els.decksStatus : type === "container" ? els.containersStatus : type === "wishlist" ? els.wishlistStatus : els.status;
       setStatus(`${label} emailed to ${recipient}.`, "success", statusTarget);
     } catch (error) {
       els.emailWishlistStatus.textContent = error.message;
@@ -4776,17 +4903,19 @@ async function boot() {
   const initialFavoritesShare = favoritesShareRoute();
   const initialCardDetail = cardDetailRoute();
   const initialVerificationToken = verificationRouteToken();
+  const initialPasswordResetToken = passwordResetRouteToken();
   const initialAppPage = appPageRoute();
-  const isShareOnlyRoute = Boolean(initialSharedId || initialDeckShareId || initialWishlistShareId || initialContainerShareId || initialFavoritesShare);
+  const isAlwaysShareOnlyRoute = Boolean(initialDeckShareId || initialWishlistShareId || initialContainerShareId || initialFavoritesShare);
   await loadSession().catch(() => {
     state.user = null;
     updateAuthUi();
   });
+  const isShareOnlyRoute = isAlwaysShareOnlyRoute || Boolean((initialSharedId || initialCardDetail) && !state.user);
   if (!isShareOnlyRoute) {
     wireEvents();
   }
   if (initialSharedId) {
-    document.body.classList.add("share-only");
+    document.body.classList.toggle("share-only", !state.user);
     loadSharedCard(initialSharedId);
   } else if (initialDeckShareId) {
     document.body.classList.add("share-only");
@@ -4802,6 +4931,8 @@ async function boot() {
     loadSharedFavorites();
   } else if (initialVerificationToken) {
     loadEmailVerification(initialVerificationToken);
+  } else if (initialPasswordResetToken) {
+    loadPasswordReset(initialPasswordResetToken);
   } else if (initialCardDetail) {
     if (state.user) {
       loadCardDetail(initialCardDetail.cardId, initialCardDetail.variant);
@@ -4810,8 +4941,8 @@ async function boot() {
         renderCollection();
       });
     } else {
-      activatePage("search");
-      openAuthModal("login", "Log in to view your card details.");
+      document.body.classList.add("share-only");
+      loadPublicCardDetail(initialCardDetail.cardId, initialCardDetail.variant);
     }
   } else if (initialSetCode) {
     if (state.user) {
