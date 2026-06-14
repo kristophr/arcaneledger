@@ -4,6 +4,7 @@ const state = {
   missingCards: [],
   saleCards: [],
   wishlistCards: [],
+  wishlists: [],
   catalogSearchResults: [],
   dashboard: null,
   searchTimer: null,
@@ -21,6 +22,11 @@ const state = {
   setCards: [],
   decks: [],
   activeDeck: null,
+  activeWishlist: null,
+  pendingWishlistCard: null,
+  pendingWishlistOptions: null,
+  emailingWishlist: null,
+  emailingEntity: null,
   containers: [],
   activeContainer: null,
   editingContainer: null,
@@ -91,6 +97,7 @@ const els = {
   missingGrid: document.querySelector("#missingGrid"),
   saleGrid: document.querySelector("#saleGrid"),
   wishlistGrid: document.querySelector("#wishlistGrid"),
+  wishlistsGrid: document.querySelector("#wishlistsGrid"),
   catalogSearchGrid: document.querySelector("#catalogSearchGrid"),
   status: document.querySelector("#status"),
   favoritesStatus: document.querySelector("#favoritesStatus"),
@@ -185,6 +192,9 @@ const els = {
   authTitle: document.querySelector("#authTitle"),
   authHint: document.querySelector("#authHint"),
   authStatus: document.querySelector("#authStatus"),
+  authNameField: document.querySelector("#authNameField"),
+  authPasswordField: document.querySelector("#authPasswordField"),
+  togglePasswordVisibilityButton: document.querySelector("#togglePasswordVisibilityButton"),
   closeAuthButton: document.querySelector("#closeAuthButton"),
   toggleAuthModeButton: document.querySelector("#toggleAuthModeButton"),
   submitAuthButton: document.querySelector("#submitAuthButton"),
@@ -193,6 +203,27 @@ const els = {
   addDeckForm: document.querySelector("#addDeckForm"),
   closeAddDeckButton: document.querySelector("#closeAddDeckButton"),
   cancelAddDeckButton: document.querySelector("#cancelAddDeckButton"),
+  addWishlistButton: document.querySelector("#addWishlistButton"),
+  addWishlistOverlay: document.querySelector("#addWishlistOverlay"),
+  addWishlistForm: document.querySelector("#addWishlistForm"),
+  closeAddWishlistButton: document.querySelector("#closeAddWishlistButton"),
+  cancelAddWishlistButton: document.querySelector("#cancelAddWishlistButton"),
+  assignWishlistOverlay: document.querySelector("#assignWishlistOverlay"),
+  assignWishlistForm: document.querySelector("#assignWishlistForm"),
+  assignWishlistPreview: document.querySelector("#assignWishlistPreview"),
+  closeAssignWishlistButton: document.querySelector("#closeAssignWishlistButton"),
+  cancelAssignWishlistButton: document.querySelector("#cancelAssignWishlistButton"),
+  wishlistDetailOverlay: document.querySelector("#wishlistDetailOverlay"),
+  wishlistDetailTitle: document.querySelector("#wishlistDetailTitle"),
+  closeWishlistDetailButton: document.querySelector("#closeWishlistDetailButton"),
+  closeWishlistDetailFooterButton: document.querySelector("#closeWishlistDetailFooterButton"),
+  deleteWishlistButton: document.querySelector("#deleteWishlistButton"),
+  emailWishlistOverlay: document.querySelector("#emailWishlistOverlay"),
+  emailWishlistForm: document.querySelector("#emailWishlistForm"),
+  emailWishlistTitle: document.querySelector("#emailWishlistTitle"),
+  emailWishlistStatus: document.querySelector("#emailWishlistStatus"),
+  closeEmailWishlistButton: document.querySelector("#closeEmailWishlistButton"),
+  cancelEmailWishlistButton: document.querySelector("#cancelEmailWishlistButton"),
   decksGrid: document.querySelector("#decksGrid"),
   decksStatus: document.querySelector("#decksStatus"),
   assignDeckOverlay: document.querySelector("#assignDeckOverlay"),
@@ -204,6 +235,7 @@ const els = {
   deckDetailTitle: document.querySelector("#deckDetailTitle"),
   deckDetailCards: document.querySelector("#deckDetailCards"),
   shareDeckButton: document.querySelector("#shareDeckButton"),
+  emailDeckButton: document.querySelector("#emailDeckButton"),
   deleteDeckButton: document.querySelector("#deleteDeckButton"),
   closeDeckDetailButton: document.querySelector("#closeDeckDetailButton"),
   addDeckCardButton: document.querySelector("#addDeckCardButton"),
@@ -250,6 +282,8 @@ const els = {
   containerDetailMeta: document.querySelector("#containerDetailMeta"),
   containerDetailCards: document.querySelector("#containerDetailCards"),
   editContainerButton: document.querySelector("#editContainerButton"),
+  shareContainerButton: document.querySelector("#shareContainerButton"),
+  emailContainerButton: document.querySelector("#emailContainerButton"),
   deleteContainerButton: document.querySelector("#deleteContainerButton"),
   closeContainerDetailButton: document.querySelector("#closeContainerDetailButton"),
   cardContainersOverlay: document.querySelector("#cardContainersOverlay"),
@@ -263,6 +297,8 @@ const els = {
   closeShareButton: document.querySelector("#closeShareButton"),
   sharedCardShell: document.querySelector("#sharedCardShell"),
   favoritesShareShell: document.querySelector("#favoritesShareShell"),
+  wishlistShareShell: document.querySelector("#wishlistShareShell"),
+  containerShareShell: document.querySelector("#containerShareShell"),
   cardDetailShell: document.querySelector("#cardDetailShell"),
   addPurchaseOverlay: document.querySelector("#addPurchaseOverlay"),
   addPurchaseForm: document.querySelector("#addPurchaseForm"),
@@ -383,15 +419,31 @@ function authMode() {
 }
 
 function setAuthMode(mode) {
-  const nextMode = mode === "register" ? "register" : "login";
+  const nextMode = ["register", "complete"].includes(mode) ? mode : "login";
   els.authForm.mode.value = nextMode;
-  els.authTitle.textContent = nextMode === "register" ? "Create Account" : "Log In";
-  els.submitAuthButton.textContent = nextMode === "register" ? "Create Account" : "Log In";
-  els.toggleAuthModeButton.textContent = nextMode === "register" ? "Use Existing Account" : "Create Account";
-  els.authHint.textContent = nextMode === "register"
-    ? "Use a strong password. Your collection, decks, containers, and lists will be private to this account."
-    : "Log in to manage your collection, decks, containers, favorites, and wishlist.";
-  els.authForm.password.autocomplete = nextMode === "register" ? "new-password" : "current-password";
+  const isLogin = nextMode === "login";
+  const isRegister = nextMode === "register";
+  const isComplete = nextMode === "complete";
+  els.authTitle.textContent = isComplete ? "Finish Account" : isRegister ? "Create Account" : "Log In";
+  els.submitAuthButton.textContent = isComplete ? "Create Account" : isRegister ? "Send Verification Email" : "Log In";
+  els.toggleAuthModeButton.textContent = isLogin ? "Create Account" : "Use Existing Account";
+  els.toggleAuthModeButton.hidden = isComplete;
+  els.authNameField.hidden = !isComplete;
+  els.authPasswordField.hidden = isRegister;
+  els.authForm.email.readOnly = isComplete;
+  els.authForm.email.required = true;
+  els.authForm.name.required = isComplete;
+  els.authForm.password.required = !isRegister;
+  els.authHint.textContent = isComplete
+    ? "Email verified. Add your name and a strong password to finish creating your account."
+    : isRegister
+      ? "Enter your email and we will send a verification link before you create a password."
+      : "Log in to manage your collection, decks, containers, favorites, and wishlist.";
+  els.authForm.password.autocomplete = isComplete ? "new-password" : "current-password";
+  if (els.togglePasswordVisibilityButton) {
+    els.togglePasswordVisibilityButton.textContent = "Show";
+    els.authForm.password.type = "password";
+  }
 }
 
 function openAuthModal(mode = "login", message = "") {
@@ -401,7 +453,11 @@ function openAuthModal(mode = "login", message = "") {
   els.authStatus.dataset.tone = message ? "error" : "";
   els.authOverlay.hidden = false;
   document.body.classList.add("modal-open");
-  els.authForm.email.focus();
+  if (authMode() === "complete") {
+    els.authForm.name.focus();
+  } else {
+    els.authForm.email.focus();
+  }
 }
 
 function closeAuthModal() {
@@ -414,7 +470,17 @@ function closeAuthModal() {
 async function submitAuthForm() {
   const payload = Object.fromEntries(new FormData(els.authForm).entries());
   const mode = authMode();
-  const result = await api(mode === "register" ? "/api/auth/register" : "/api/auth/login", {
+  if (mode === "register") {
+    const result = await api("/api/auth/register-start", {
+      method: "POST",
+      body: JSON.stringify({ email: payload.email }),
+    });
+    els.authStatus.textContent = result.message || "Check your email for a verification link.";
+    els.authStatus.dataset.tone = "";
+    return;
+  }
+  const endpoint = mode === "complete" ? "/api/auth/register-complete" : "/api/auth/login";
+  const result = await api(endpoint, {
     method: "POST",
     body: JSON.stringify(payload),
   });
@@ -425,15 +491,35 @@ async function submitAuthForm() {
   await activatePage(appPageRoute() || "dashboard", { replace: true });
 }
 
+async function loadEmailVerification(token) {
+  activatePage("search", { replace: true, promptLogin: false });
+  try {
+    const result = await api(`/api/auth/verification?token=${encodeURIComponent(token)}`);
+    els.authForm.reset();
+    els.authForm.token.value = token;
+    els.authForm.email.value = result.email || "";
+    openAuthModal("complete", "");
+  } catch (error) {
+    openAuthModal("login", error.message);
+  }
+}
+
 async function logout() {
   await api("/api/auth/logout", { method: "POST", body: JSON.stringify({}) });
   state.user = null;
+  state.cards = [];
+  state.favoriteCards = [];
+  state.missingCards = [];
+  state.saleCards = [];
+  state.wishlistCards = [];
+  state.wishlists = [];
+  state.activeWishlist = null;
   updateAuthUi();
   activatePage("search", { push: true });
 }
 
 function protectedPage(page) {
-  return !["search", "deck-share", "card-share", "favorites-share"].includes(page);
+  return !["search", "deck-share", "card-share", "favorites-share", "wishlist-share", "container-share"].includes(page);
 }
 
 function valueClass(value) {
@@ -637,12 +723,19 @@ function wireWishlistButton(button, card, options = {}) {
   if (owned) return;
   button.classList.toggle("is-wishlist", Boolean(card.wishlist));
   button.setAttribute("aria-pressed", card.wishlist ? "true" : "false");
-  button.title = card.wishlist ? "Remove from Wishlist" : "Add to Wishlist";
+  button.title = options.wishlistId ? "Remove from this Wishlist" : "Add to Wishlist";
   button.addEventListener("click", async (event) => {
     event.stopPropagation();
-    const nextWishlist = !Boolean(card.wishlist);
-    if (!nextWishlist && options.confirmUnwishlist) {
-      const confirmed = window.confirm(`Remove ${cardTitle(card)} from Wishlist? It will disappear from this page.`);
+    if (!state.user) {
+      openAuthModal("register", "Create an account or log in before saving cards to your Wishlist.");
+      return;
+    }
+    if (!options.wishlistId) {
+      openAssignWishlistModal(card, options).catch((error) => setStatus(error.message, "error", options.statusTarget || els.status));
+      return;
+    }
+    if (options.confirmUnwishlist) {
+      const confirmed = window.confirm(`Remove ${cardTitle(card)} from this Wishlist? It will disappear from this list.`);
       if (!confirmed) return;
     }
     try {
@@ -650,10 +743,11 @@ function wireWishlistButton(button, card, options = {}) {
         method: "POST",
         body: JSON.stringify({
           variant: card.variant || "Normal",
-          wishlist: nextWishlist,
+          wishlist_id: options.wishlistId,
+          wishlist: false,
         }),
       });
-      setStatus(nextWishlist ? `Added ${cardTitle(card)} to Wishlist.` : `Removed ${cardTitle(card)} from Wishlist.`, "", options.statusTarget || els.status);
+      setStatus(`Removed ${cardTitle(card)} from Wishlist.`, "", options.statusTarget || els.status);
       if (options.afterWishlistChange) {
         await options.afterWishlistChange();
       } else {
@@ -947,7 +1041,7 @@ function activatePage(pageName, options = {}) {
   }
   if (page === "wishlist") {
     clearSelectedCards();
-    loadWishlist().catch((error) => {
+    loadWishlists().catch((error) => {
       setStatus(error.message, "error", els.wishlistStatus);
     });
   }
@@ -993,7 +1087,10 @@ async function reloadVisibleCardPages() {
     tasks.push(loadSaleCards());
   }
   if (wishlistVisible) {
-    tasks.push(loadWishlist());
+    tasks.push(loadWishlists());
+    if (state.activeWishlist) {
+      tasks.push(loadWishlist());
+    }
   }
   await Promise.all(tasks);
 }
@@ -1013,6 +1110,16 @@ function deckRouteId() {
   return match ? decodeURIComponent(match[1]) : "";
 }
 
+function wishlistRouteId() {
+  const match = window.location.pathname.match(/^\/wishlists\/([^/]+)\/?$/);
+  return match ? decodeURIComponent(match[1]) : "";
+}
+
+function containerRouteId() {
+  const match = window.location.pathname.match(/^\/containers\/([^/]+)\/?$/);
+  return match ? decodeURIComponent(match[1]) : "";
+}
+
 function favoritesShareRoute() {
   return /^\/favorites\/shared\/?$/.test(window.location.pathname);
 }
@@ -1024,6 +1131,11 @@ function cardDetailRoute() {
     cardId: decodeURIComponent(match[1]),
     variant: decodeURIComponent(match[2]),
   };
+}
+
+function verificationRouteToken() {
+  const match = window.location.pathname.match(/^\/verify-email\/([^/]+)\/?$/);
+  return match ? decodeURIComponent(match[1]) : "";
 }
 
 function appPageRoute() {
@@ -1296,9 +1408,21 @@ async function loadMissingList() {
 }
 
 async function loadWishlist() {
-  const data = await api(`/api/cards/wishlist?${wishlistQuery()}`);
+  if (!state.activeWishlist) {
+    await loadWishlists();
+    return;
+  }
+  const data = await api(`/api/wishlists/${encodeURIComponent(state.activeWishlist.id)}?${wishlistQuery()}`);
+  state.activeWishlist = data;
   state.wishlistCards = data.cards || [];
   renderWishlist();
+}
+
+async function loadWishlists() {
+  const data = await api("/api/wishlists");
+  state.wishlists = data.wishlists || [];
+  renderWishlists();
+  return state.wishlists;
 }
 
 function scryfallQuoted(value) {
@@ -1386,14 +1510,16 @@ function renderFavorites() {
 }
 
 function renderWishlist() {
-  els.wishlistGrid.className = state.wishlistView === "list" ? "cards-list" : "cards-grid";
+  els.wishlistGrid.className = state.wishlistView === "list" ? "cards-list wishlist-detail-grid" : "cards-grid wishlist-detail-grid";
   els.wishlistTileViewButton.classList.toggle("is-active", state.wishlistView === "tiles");
   els.wishlistListViewButton.classList.toggle("is-active", state.wishlistView === "list");
   const options = {
+    wishlistId: state.activeWishlist?.id,
     confirmUnwishlist: true,
     statusTarget: els.wishlistStatus,
     afterWishlistChange: async () => {
       await loadWishlist();
+      await loadWishlists();
       await refresh();
     },
   };
@@ -1402,6 +1528,178 @@ function renderWishlist() {
   } else {
     renderCards(state.wishlistCards, els.wishlistGrid, options);
   }
+}
+
+function renderWishlists() {
+  els.wishlistsGrid.innerHTML = "";
+  if (!state.wishlists.length) {
+    els.wishlistsGrid.innerHTML = '<div class="empty-state">No wishlists yet.</div>';
+    return;
+  }
+  for (const wishlist of state.wishlists) {
+    const item = document.createElement("article");
+    item.className = "deck-card wishlist-list-card";
+    item.dataset.wishlistId = wishlist.id;
+    item.innerHTML = `
+      <button class="wishlist-open-button" type="button" aria-label="Open ${escapeHtml(wishlist.name)}">
+        <p class="eyebrow">Wishlist</p>
+        <h3><span class="wishlist-icon" aria-hidden="true"></span><span>${escapeHtml(wishlist.name)}</span></h3>
+      </button>
+      <strong>${integer.format(wishlist.item_count || 0)}</strong>
+      <span>${integer.format(wishlist.unique_card_count || 0)} unique cards saved</span>
+      <div class="wishlist-card-actions">
+        <button class="share-button wishlist-share-button" type="button" aria-label="Share ${escapeHtml(wishlist.name)}" title="Share wishlist">&#8599;</button>
+        <button class="share-button wishlist-email-button" type="button" aria-label="Email ${escapeHtml(wishlist.name)}" title="Email wishlist"><span class="send-icon" aria-hidden="true"></span></button>
+      </div>
+    `;
+    item.querySelector(".wishlist-open-button").addEventListener("click", () => {
+      openWishlistDetailModal(wishlist.id).catch((error) => {
+        els.wishlistStatus.textContent = error.message;
+      });
+    });
+    item.querySelector(".wishlist-share-button").addEventListener("click", () => openWishlistShareModal(wishlist));
+    item.querySelector(".wishlist-email-button").addEventListener("click", () => openEmailWishlistModal(wishlist));
+    els.wishlistsGrid.appendChild(item);
+  }
+}
+
+async function openWishlistDetailModal(wishlistId) {
+  const data = await api(`/api/wishlists/${encodeURIComponent(wishlistId)}?${wishlistQuery()}`);
+  state.activeWishlist = data;
+  state.wishlistCards = data.cards || [];
+  els.wishlistDetailTitle.textContent = data.name || "Wishlist";
+  renderWishlist();
+  els.wishlistDetailOverlay.hidden = false;
+  document.body.classList.add("modal-open");
+}
+
+function closeWishlistDetailModal() {
+  els.wishlistDetailOverlay.hidden = true;
+  document.body.classList.remove("modal-open");
+  state.activeWishlist = null;
+  state.wishlistCards = [];
+  els.wishlistGrid.innerHTML = "";
+  els.wishlistSearchInput.value = "";
+}
+
+function openAddWishlistModal() {
+  els.addWishlistForm.reset();
+  els.addWishlistOverlay.hidden = false;
+  document.body.classList.add("modal-open");
+  els.addWishlistForm.querySelector('[name="name"]').focus();
+}
+
+function closeAddWishlistModal() {
+  els.addWishlistOverlay.hidden = true;
+  document.body.classList.remove("modal-open");
+  els.addWishlistForm.reset();
+}
+
+async function openAssignWishlistModal(card, options = {}) {
+  if (!state.user) {
+    openAuthModal("register", "Create an account or log in before saving cards to your Wishlist.");
+    return;
+  }
+  const wishlists = await loadWishlists();
+  const select = els.assignWishlistForm.wishlist_id;
+  select.innerHTML = "";
+  if (!wishlists.length) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "Create a wishlist first";
+    select.appendChild(option);
+  } else {
+    for (const wishlist of wishlists) {
+      const option = document.createElement("option");
+      option.value = wishlist.id;
+      option.textContent = `${wishlist.name} (${integer.format(wishlist.item_count || 0)})`;
+      select.appendChild(option);
+    }
+  }
+  state.pendingWishlistCard = card;
+  state.pendingWishlistOptions = options;
+  els.assignWishlistPreview.innerHTML = `
+    <article class="assign-wishlist-card">
+      <img src="${escapeHtml(card.image_small || card.image_normal || "")}" alt="">
+      <div>
+        <strong>${escapeHtml(cardTitle(card))}</strong>
+        <span>${escapeHtml(card.set_name || "")} #${escapeHtml(card.collector_number || "")}</span>
+      </div>
+    </article>
+  `;
+  els.assignWishlistOverlay.hidden = false;
+  document.body.classList.add("modal-open");
+  select.focus();
+}
+
+function closeAssignWishlistModal() {
+  els.assignWishlistOverlay.hidden = true;
+  document.body.classList.remove("modal-open");
+  els.assignWishlistForm.reset();
+  els.assignWishlistPreview.innerHTML = "";
+  state.pendingWishlistCard = null;
+  state.pendingWishlistOptions = null;
+}
+
+function shareUrlForEntity(type, entity) {
+  if (type === "deck") return shareUrlForDeck(entity);
+  if (type === "container") return shareUrlForContainer(entity);
+  return shareUrlForWishlist(entity);
+}
+
+function emailEntityLabel(type) {
+  if (type === "deck") return "Deck";
+  if (type === "container") return "Container";
+  return "Wishlist";
+}
+
+function openEmailShareModal(type, entity) {
+  state.emailingEntity = { type, entity };
+  state.emailingWishlist = type === "wishlist" ? entity : null;
+  els.emailWishlistForm.reset();
+  els.emailWishlistForm.entity_type.value = type;
+  els.emailWishlistForm.entity_id.value = entity.id || "";
+  const label = emailEntityLabel(type);
+  els.emailWishlistTitle.textContent = `Email ${entity.name || label}`;
+  els.emailWishlistStatus.textContent = shareUrlForEntity(type, entity);
+  els.emailWishlistStatus.dataset.tone = "";
+  els.emailWishlistOverlay.hidden = false;
+  document.body.classList.add("modal-open");
+  els.emailWishlistForm.email.focus();
+}
+
+function openEmailWishlistModal(wishlist) {
+  openEmailShareModal("wishlist", wishlist);
+}
+
+function openEmailDeckModal(deck) {
+  openEmailShareModal("deck", deck);
+}
+
+function openEmailContainerModal(container) {
+  openEmailShareModal("container", container);
+}
+
+function closeEmailWishlistModal() {
+  els.emailWishlistOverlay.hidden = true;
+  document.body.classList.remove("modal-open");
+  els.emailWishlistForm.reset();
+  els.emailWishlistStatus.textContent = "";
+  els.emailWishlistStatus.dataset.tone = "";
+  state.emailingWishlist = null;
+  state.emailingEntity = null;
+}
+
+async function deleteActiveWishlist() {
+  if (!state.activeWishlist) return;
+  const confirmed = window.confirm(`Delete wishlist "${state.activeWishlist.name}"? This only removes the wishlist metadata.`);
+  if (!confirmed) return;
+  const wishlistName = state.activeWishlist.name;
+  await api(`/api/wishlists/${encodeURIComponent(state.activeWishlist.id)}`, { method: "DELETE" });
+  closeWishlistDetailModal();
+  els.wishlistStatus.textContent = `Deleted ${wishlistName}.`;
+  await loadWishlists();
+  await refresh();
 }
 
 function renderCatalogSearchResults() {
@@ -1442,16 +1740,16 @@ function renderCatalogSearchResults() {
         openAuthModal("register", "Create an account or log in before saving cards to your Wishlist.");
         return;
       }
-      const nextWishlist = !Boolean(card.wishlist);
       try {
-        await api(`/api/cards/${encodeURIComponent(card.scryfall_id)}/wishlist`, {
-          method: "POST",
-          body: JSON.stringify({ variant: "Normal", wishlist: nextWishlist, card }),
-          promptLogin: true,
+        await openAssignWishlistModal(card, {
+          statusTarget: els.catalogSearchStatus,
+          afterWishlistChange: async () => {
+            card.wishlist = 1;
+            renderCatalogSearchResults();
+            await loadWishlists();
+            await refresh();
+          },
         });
-        card.wishlist = nextWishlist ? 1 : 0;
-        setStatus(nextWishlist ? `Added ${cardTitle(card)} to Wishlist.` : `Removed ${cardTitle(card)} from Wishlist.`, "", els.catalogSearchStatus);
-        renderCatalogSearchResults();
       } catch (error) {
         setStatus(error.message, "error", els.catalogSearchStatus);
       }
@@ -1910,6 +2208,16 @@ function shareUrlForDeck(deck) {
   return new URL(`/decks/${encodeURIComponent(deck.share_id)}`, window.location.origin).toString();
 }
 
+function shareUrlForWishlist(wishlist) {
+  if (!wishlist || !wishlist.share_id) return "";
+  return new URL(`/wishlists/${encodeURIComponent(wishlist.share_id)}`, window.location.origin).toString();
+}
+
+function shareUrlForContainer(container) {
+  if (!container || !container.share_id) return "";
+  return new URL(`/containers/${encodeURIComponent(container.share_id)}`, window.location.origin).toString();
+}
+
 function shareUrlForFavorites() {
   return new URL("/favorites/shared", window.location.origin).toString();
 }
@@ -1939,6 +2247,24 @@ function openDeckShareModal(deck) {
     return;
   }
   openShareUrl(deck.name || "Deck", url);
+}
+
+function openWishlistShareModal(wishlist) {
+  const url = shareUrlForWishlist(wishlist);
+  if (!url) {
+    els.wishlistStatus.textContent = "This wishlist does not have a share link yet.";
+    return;
+  }
+  openShareUrl(wishlist.name || "Wishlist", url);
+}
+
+function openContainerShareModal(container) {
+  const url = shareUrlForContainer(container);
+  if (!url) {
+    els.containersStatus.textContent = "This container does not have a share link yet.";
+    return;
+  }
+  openShareUrl(container.name || "Container", url);
 }
 
 function openFavoritesShareModal() {
@@ -3389,7 +3715,41 @@ function deckRowsHtml(cards, emptyMessage = "No cards in this deck yet.") {
         <span>${escapeHtml(card.set_name || "")} #${escapeHtml(card.collector_number || "")} - ${escapeHtml(card.variant || "Normal")}</span>
         <div class="deck-card-tags">${cardMetadataPillsHtml(card)}</div>
       </div>
-      <b>Qty ${integer.format(card.quantity || 0)}</b>
+      <b>Qty ${integer.format(deckQuantity(card))}</b>
+    </article>
+  `).join("");
+}
+
+function containerRowsHtml(cards) {
+  if (!cards.length) {
+    return '<div class="empty-state">No cards in this container yet.</div>';
+  }
+  return cards.map((card) => `
+    <article class="deck-card-row container-shared-row">
+      <img src="${escapeHtml(card.image_small || card.image_normal || "")}" alt="">
+      <div>
+        <strong>${escapeHtml(cardTitle(card))}</strong>
+        <span>${escapeHtml(card.set_name || "")} #${escapeHtml(card.collector_number || "")} - ${escapeHtml(card.variant || "Normal")}</span>
+        <div class="deck-card-tags">${cardMetadataPillsHtml(card)}</div>
+      </div>
+      <b>Stored ${integer.format(card.stored_quantity || 0)}</b>
+    </article>
+  `).join("");
+}
+
+function wishlistRowsHtml(cards) {
+  if (!cards.length) {
+    return '<div class="empty-state">No cards in this wishlist yet.</div>';
+  }
+  return cards.map((card) => `
+    <article class="deck-card-row wishlist-shared-row">
+      <img src="${escapeHtml(card.image_small || card.image_normal || "")}" alt="">
+      <div>
+        <strong>${escapeHtml(cardTitle(card))}</strong>
+        <span>${escapeHtml(card.set_name || "")} #${escapeHtml(card.collector_number || "")} - ${escapeHtml(card.variant || "Normal")}</span>
+        <div class="deck-card-tags">${cardMetadataPillsHtml(card)}</div>
+      </div>
+      <b>${dollars.format(card.display_price || 0)}</b>
     </article>
   `).join("");
 }
@@ -3413,6 +3773,45 @@ function renderSharedDeck(deck) {
   `;
 }
 
+function renderSharedWishlist(wishlist) {
+  const cards = wishlist.cards || [];
+  els.wishlistShareShell.innerHTML = `
+    <section class="shared-deck-card">
+      <div class="shared-deck-head">
+        <div>
+          <p class="eyebrow">Shared wishlist</p>
+          <h2>${escapeHtml(wishlist.name || "Wishlist")}</h2>
+          <span>${integer.format(cards.length)} card${cards.length === 1 ? "" : "s"}</span>
+        </div>
+      </div>
+      <div class="deck-detail-list">
+        ${wishlistRowsHtml(cards)}
+      </div>
+    </section>
+  `;
+}
+
+function renderSharedContainer(container) {
+  const cards = container.cards || [];
+  const storedCount = Number(container.stored_quantity || cards.reduce((total, card) => total + Number(card.stored_quantity || 0), 0));
+  const meta = [containerTypeLabel(container.storage_type), container.location].filter(Boolean).join(" - ");
+  els.containerShareShell.innerHTML = `
+    <section class="shared-deck-card">
+      <div class="shared-deck-head">
+        <div>
+          <p class="eyebrow">Shared container</p>
+          <h2>${escapeHtml(container.name || "Container")}</h2>
+          <span>${integer.format(storedCount)} stored cards${meta ? ` - ${escapeHtml(meta)}` : ""}</span>
+        </div>
+      </div>
+      ${container.notes ? `<p class="shared-card-note">${escapeHtml(container.notes)}</p>` : ""}
+      <div class="deck-detail-list">
+        ${containerRowsHtml(cards)}
+      </div>
+    </section>
+  `;
+}
+
 function renderSharedFavorites(payload) {
   const cards = payload.cards || [];
   els.favoritesShareShell.innerHTML = `
@@ -3431,6 +3830,17 @@ function renderSharedFavorites(payload) {
   `;
 }
 
+async function loadSharedWishlist(shareId) {
+  showPage("wishlist-share");
+  els.wishlistShareShell.innerHTML = '<div class="empty-state">Loading shared wishlist...</div>';
+  try {
+    const wishlist = await api(`/api/shared-wishlists/${encodeURIComponent(shareId)}`);
+    renderSharedWishlist(wishlist);
+  } catch (error) {
+    els.wishlistShareShell.innerHTML = `<div class="empty-state">${escapeHtml(error.message)}</div>`;
+  }
+}
+
 async function loadSharedDeck(shareId) {
   showPage("deck-share");
   els.deckShareShell.innerHTML = '<div class="empty-state">Loading shared deck...</div>';
@@ -3439,6 +3849,17 @@ async function loadSharedDeck(shareId) {
     renderSharedDeck(deck);
   } catch (error) {
     els.deckShareShell.innerHTML = `<div class="empty-state">${escapeHtml(error.message)}</div>`;
+  }
+}
+
+async function loadSharedContainer(shareId) {
+  showPage("container-share");
+  els.containerShareShell.innerHTML = '<div class="empty-state">Loading shared container...</div>';
+  try {
+    const container = await api(`/api/shared-containers/${encodeURIComponent(shareId)}`);
+    renderSharedContainer(container);
+  } catch (error) {
+    els.containerShareShell.innerHTML = `<div class="empty-state">${escapeHtml(error.message)}</div>`;
   }
 }
 
@@ -3600,6 +4021,7 @@ function wireEvents() {
     }
   });
   els.addDeckButton.addEventListener("click", openAddDeckModal);
+  els.addWishlistButton.addEventListener("click", openAddWishlistModal);
   els.addContainerButton.addEventListener("click", openAddContainerModal);
   els.closeAddPurchaseButton.addEventListener("click", closeAddPurchaseModal);
   els.cancelAddPurchaseButton.addEventListener("click", closeAddPurchaseModal);
@@ -3665,6 +4087,11 @@ function wireEvents() {
     setAuthMode(authMode() === "login" ? "register" : "login");
     els.authStatus.textContent = "";
   });
+  els.togglePasswordVisibilityButton.addEventListener("click", () => {
+    const showing = els.authForm.password.type === "text";
+    els.authForm.password.type = showing ? "password" : "text";
+    els.togglePasswordVisibilityButton.textContent = showing ? "Show" : "Hide";
+  });
   els.authOverlay.addEventListener("click", (event) => {
     if (event.target === els.authOverlay) {
       closeAuthModal();
@@ -3684,6 +4111,39 @@ function wireEvents() {
       closeAddDeckModal();
     }
   });
+  els.closeAddWishlistButton.addEventListener("click", closeAddWishlistModal);
+  els.cancelAddWishlistButton.addEventListener("click", closeAddWishlistModal);
+  els.addWishlistOverlay.addEventListener("click", (event) => {
+    if (event.target === els.addWishlistOverlay) {
+      closeAddWishlistModal();
+    }
+  });
+  els.closeAssignWishlistButton.addEventListener("click", closeAssignWishlistModal);
+  els.cancelAssignWishlistButton.addEventListener("click", closeAssignWishlistModal);
+  els.assignWishlistOverlay.addEventListener("click", (event) => {
+    if (event.target === els.assignWishlistOverlay) {
+      closeAssignWishlistModal();
+    }
+  });
+  els.closeWishlistDetailButton.addEventListener("click", closeWishlistDetailModal);
+  els.closeWishlistDetailFooterButton.addEventListener("click", closeWishlistDetailModal);
+  els.deleteWishlistButton.addEventListener("click", () => {
+    deleteActiveWishlist().catch((error) => {
+      els.wishlistStatus.textContent = error.message;
+    });
+  });
+  els.wishlistDetailOverlay.addEventListener("click", (event) => {
+    if (event.target === els.wishlistDetailOverlay) {
+      closeWishlistDetailModal();
+    }
+  });
+  els.closeEmailWishlistButton.addEventListener("click", closeEmailWishlistModal);
+  els.cancelEmailWishlistButton.addEventListener("click", closeEmailWishlistModal);
+  els.emailWishlistOverlay.addEventListener("click", (event) => {
+    if (event.target === els.emailWishlistOverlay) {
+      closeEmailWishlistModal();
+    }
+  });
   els.closeAssignDeckButton.addEventListener("click", closeAssignDeckModal);
   els.cancelAssignDeckButton.addEventListener("click", closeAssignDeckModal);
   els.assignDeckForm.deck_id.addEventListener("change", () => {
@@ -3698,6 +4158,11 @@ function wireEvents() {
   });
   els.closeDeckDetailButton.addEventListener("click", closeDeckDetailModal);
   els.addDeckCardButton.addEventListener("click", openDeckCardSearchModal);
+  els.emailDeckButton.addEventListener("click", () => {
+    if (state.activeDeck) {
+      openEmailDeckModal(state.activeDeck);
+    }
+  });
   els.shareDeckButton.addEventListener("click", () => {
     if (state.activeDeck) {
       openDeckShareModal(state.activeDeck);
@@ -3802,6 +4267,16 @@ function wireEvents() {
       openEditContainerModal(state.activeContainer);
     }
   });
+  els.emailContainerButton.addEventListener("click", () => {
+    if (state.activeContainer) {
+      openEmailContainerModal(state.activeContainer);
+    }
+  });
+  els.shareContainerButton.addEventListener("click", () => {
+    if (state.activeContainer) {
+      openContainerShareModal(state.activeContainer);
+    }
+  });
   els.deleteContainerButton.addEventListener("click", () => {
     deleteActiveContainer().catch((error) => {
       els.containersStatus.textContent = error.message;
@@ -3859,6 +4334,18 @@ function wireEvents() {
     }
     if (event.key === "Escape" && !els.addDeckOverlay.hidden) {
       closeAddDeckModal();
+    }
+    if (event.key === "Escape" && !els.addWishlistOverlay.hidden) {
+      closeAddWishlistModal();
+    }
+    if (event.key === "Escape" && !els.assignWishlistOverlay.hidden) {
+      closeAssignWishlistModal();
+    }
+    if (event.key === "Escape" && !els.wishlistDetailOverlay.hidden) {
+      closeWishlistDetailModal();
+    }
+    if (event.key === "Escape" && !els.emailWishlistOverlay.hidden) {
+      closeEmailWishlistModal();
     }
     if (event.key === "Escape" && !els.assignDeckOverlay.hidden) {
       closeAssignDeckModal();
@@ -3974,6 +4461,8 @@ function wireEvents() {
       state.missingCards = [];
       state.saleCards = [];
       state.wishlistCards = [];
+      state.wishlists = [];
+      state.activeWishlist = null;
       await refresh();
     } catch (error) {
       setStatus(error.message, "error", els.settingsPageStatus);
@@ -4007,6 +4496,95 @@ function wireEvents() {
       await loadDecks();
     } catch (error) {
       els.decksStatus.textContent = error.message;
+    }
+  });
+  els.addWishlistForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const payload = Object.fromEntries(new FormData(els.addWishlistForm).entries());
+    try {
+      const result = await api("/api/wishlists", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      els.wishlistStatus.textContent = `Added ${result.wishlist.name}.`;
+      closeAddWishlistModal();
+      await loadWishlists();
+    } catch (error) {
+      els.wishlistStatus.textContent = error.message;
+    }
+  });
+  els.assignWishlistForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const wishlistId = els.assignWishlistForm.wishlist_id.value;
+    const card = state.pendingWishlistCard;
+    const options = state.pendingWishlistOptions || {};
+    if (!wishlistId) {
+      setStatus("Create a wishlist first.", "error", options.statusTarget || els.wishlistStatus);
+      return;
+    }
+    if (!card) {
+      setStatus("Choose a card first.", "error", options.statusTarget || els.wishlistStatus);
+      return;
+    }
+    try {
+      await api(`/api/cards/${encodeURIComponent(card.scryfall_id)}/wishlist`, {
+        method: "POST",
+        body: JSON.stringify({
+          variant: card.variant || "Normal",
+          wishlist_id: wishlistId,
+          wishlist: true,
+          card,
+        }),
+        promptLogin: true,
+      });
+      card.wishlist = 1;
+      setStatus(`Added ${cardTitle(card)} to Wishlist.`, "success", options.statusTarget || els.wishlistStatus);
+      closeAssignWishlistModal();
+      if (options.afterWishlistChange) {
+        await options.afterWishlistChange();
+      } else {
+        await loadWishlists();
+        await refresh();
+      }
+    } catch (error) {
+      setStatus(error.message, "error", options.statusTarget || els.wishlistStatus);
+    }
+  });
+  els.emailWishlistForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const payload = Object.fromEntries(new FormData(els.emailWishlistForm).entries());
+    const type = payload.entity_type || state.emailingEntity?.type || "wishlist";
+    const entityId = payload.entity_id || state.emailingEntity?.entity?.id || state.emailingWishlist?.id;
+    const endpoints = {
+      deck: "decks",
+      container: "containers",
+      wishlist: "wishlists",
+    };
+    const endpoint = endpoints[type];
+    const label = emailEntityLabel(type);
+    if (!endpoint || !entityId) {
+      els.emailWishlistStatus.textContent = `Choose a ${label.toLowerCase()} first.`;
+      els.emailWishlistStatus.dataset.tone = "error";
+      return;
+    }
+    const submitButton = els.emailWishlistForm.querySelector('button[type="submit"]');
+    submitButton.disabled = true;
+    els.emailWishlistStatus.textContent = `Sending ${label.toLowerCase()}...`;
+    els.emailWishlistStatus.dataset.tone = "";
+    try {
+      await api(`/api/${endpoint}/${encodeURIComponent(entityId)}/email`, {
+        method: "POST",
+        body: JSON.stringify({ email: payload.email }),
+      });
+      const recipient = payload.email;
+      closeEmailWishlistModal();
+      const statusTarget = type === "deck" ? els.decksStatus : type === "container" ? els.containersStatus : els.wishlistStatus;
+      setStatus(`${label} emailed to ${recipient}.`, "success", statusTarget);
+    } catch (error) {
+      els.emailWishlistStatus.textContent = error.message;
+      els.emailWishlistStatus.dataset.tone = "error";
+    } finally {
+      submitButton.disabled = false;
     }
   });
   els.addContainerForm.addEventListener("submit", async (event) => {
@@ -4193,10 +4771,13 @@ async function boot() {
   const initialSharedId = sharedRouteId();
   const initialSetCode = setRouteCode();
   const initialDeckShareId = deckRouteId();
+  const initialWishlistShareId = wishlistRouteId();
+  const initialContainerShareId = containerRouteId();
   const initialFavoritesShare = favoritesShareRoute();
   const initialCardDetail = cardDetailRoute();
+  const initialVerificationToken = verificationRouteToken();
   const initialAppPage = appPageRoute();
-  const isShareOnlyRoute = Boolean(initialSharedId || initialDeckShareId || initialFavoritesShare);
+  const isShareOnlyRoute = Boolean(initialSharedId || initialDeckShareId || initialWishlistShareId || initialContainerShareId || initialFavoritesShare);
   await loadSession().catch(() => {
     state.user = null;
     updateAuthUi();
@@ -4210,9 +4791,17 @@ async function boot() {
   } else if (initialDeckShareId) {
     document.body.classList.add("share-only");
     loadSharedDeck(initialDeckShareId);
+  } else if (initialWishlistShareId) {
+    document.body.classList.add("share-only");
+    loadSharedWishlist(initialWishlistShareId);
+  } else if (initialContainerShareId) {
+    document.body.classList.add("share-only");
+    loadSharedContainer(initialContainerShareId);
   } else if (initialFavoritesShare) {
     document.body.classList.add("share-only");
     loadSharedFavorites();
+  } else if (initialVerificationToken) {
+    loadEmailVerification(initialVerificationToken);
   } else if (initialCardDetail) {
     if (state.user) {
       loadCardDetail(initialCardDetail.cardId, initialCardDetail.variant);

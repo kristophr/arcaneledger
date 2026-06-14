@@ -31,6 +31,19 @@ docker compose up -d --build
 
 The app still listens on `8000` inside the container; `HOST_PORT` only changes the port you use from your browser.
 
+Set the public URL used for email verification links:
+
+```env
+APP_BASE_URL=https://foilfolio.example.com
+```
+
+Security defaults can also be adjusted in `.env`:
+
+```env
+SESSION_IDLE_MINUTES=30
+EMAIL_VERIFICATION_MINUTES=30
+```
+
 To run it in the background:
 
 ```bash

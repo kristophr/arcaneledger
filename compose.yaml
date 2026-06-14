@@ -11,6 +11,9 @@ services:
       PORT: "8000"
       DATA_DIR: /app/data
       DEFAULT_IMPORT: /imports/export.csv
+      APP_BASE_URL: ${APP_BASE_URL:-}
+      SESSION_IDLE_MINUTES: ${SESSION_IDLE_MINUTES:-30}
+      EMAIL_VERIFICATION_MINUTES: ${EMAIL_VERIFICATION_MINUTES:-30}
       SCRYFALL_QUERY: game:paper
       SCRYFALL_LANGUAGE: en
       SMTP_HOST: ${SMTP_HOST:-}
