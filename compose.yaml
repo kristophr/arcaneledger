@@ -7,7 +7,7 @@ services:
     env_file:
       - .env
     ports:
-      - "${PORT:-8000}:8000"
+      - "${HOST_PORT:-8000}:8000"
     environment:
       HOST: 0.0.0.0
       PORT: 8000

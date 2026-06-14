@@ -313,12 +313,13 @@ function setStatus(message, tone = "", target = els.status) {
 }
 
 async function api(path, options = {}) {
+  const { promptLogin = false, ...fetchOptions } = options;
   const response = await fetch(path, {
     headers: {
       "Content-Type": "application/json",
-      ...(options.headers || {}),
+      ...(fetchOptions.headers || {}),
     },
-    ...options,
+    ...fetchOptions,
   });
   const contentType = response.headers.get("content-type") || "";
   const payload = contentType.includes("application/json") ? await response.json() : await response.text();
@@ -327,7 +328,9 @@ async function api(path, options = {}) {
     if (response.status === 401) {
       state.user = null;
       updateAuthUi();
-      openAuthModal("login", message);
+      if (promptLogin) {
+        openAuthModal("login", message);
+      }
     }
     throw new Error(message);
   }
@@ -873,17 +876,30 @@ function pushPageRoute(pageName) {
   }
 }
 
+function replacePageRoute(pageName) {
+  const nextPath = pagePath(pageName);
+  if (window.location.pathname !== nextPath) {
+    window.history.replaceState({}, "", nextPath);
+  }
+}
+
 function activatePage(pageName, options = {}) {
   const page = pageRoutes[pageName] ? pageName : "dashboard";
   if (protectedPage(page) && !state.user) {
-    if (options.push) {
+    if (options.replace) {
+      replacePageRoute("search");
+    } else if (options.push) {
       pushPageRoute("search");
     }
     showPage("search");
-    openAuthModal("login", "Log in or create an account to use that feature.");
+    if (options.promptLogin !== false) {
+      openAuthModal("login", "Log in or create an account to use that feature.");
+    }
     return;
   }
-  if (options.push) {
+  if (options.replace) {
+    replacePageRoute(page);
+  } else if (options.push) {
     pushPageRoute(page);
   }
   showPage(page);
@@ -1413,11 +1429,16 @@ function renderCatalogSearchResults() {
     const wishlistButton = item.querySelector(".wishlist-button");
     wishlistButton.addEventListener("click", async () => {
       if (owned) return;
+      if (!state.user) {
+        openAuthModal("register", "Create an account or log in before saving cards to your Wishlist.");
+        return;
+      }
       const nextWishlist = !Boolean(card.wishlist);
       try {
         await api(`/api/cards/${encodeURIComponent(card.scryfall_id)}/wishlist`, {
           method: "POST",
           body: JSON.stringify({ variant: "Normal", wishlist: nextWishlist, card }),
+          promptLogin: true,
         });
         card.wishlist = nextWishlist ? 1 : 0;
         setStatus(nextWishlist ? `Added ${cardTitle(card)} to Wishlist.` : `Removed ${cardTitle(card)} from Wishlist.`, "", els.catalogSearchStatus);
@@ -1426,7 +1447,13 @@ function renderCatalogSearchResults() {
         setStatus(error.message, "error", els.catalogSearchStatus);
       }
     });
-    item.querySelector(".catalog-add-button").addEventListener("click", () => openAddCardModal(card));
+    item.querySelector(".catalog-add-button").addEventListener("click", () => {
+      if (!state.user) {
+        openAuthModal("register", "Create an account or log in before adding cards to your Collection.");
+        return;
+      }
+      openAddCardModal(card);
+    });
     els.catalogSearchGrid.appendChild(item);
   }
 }
@@ -2074,6 +2101,10 @@ function variantsForCard(card) {
 }
 
 function openAddCardModal(preselectedCard = null) {
+  if (!state.user) {
+    openAuthModal("register", "Create an account or log in before adding cards to your Collection.");
+    return;
+  }
   state.addResults = [];
   state.selectedAddCard = null;
   els.addSearchForm.reset();
@@ -3883,6 +3914,7 @@ function wireEvents() {
       const result = await api("/api/cards", {
         method: "POST",
         body: JSON.stringify(payload),
+        promptLogin: true,
       });
       setStatus(`Added ${addedCardTitle} (${result.variant}).`);
       if (addAndNew) {
@@ -4191,9 +4223,13 @@ async function boot() {
       openAuthModal("login", "Log in to view set progress.");
     }
   } else if (initialAppPage) {
-    activatePage(initialAppPage);
+    if (!state.user && protectedPage(initialAppPage)) {
+      activatePage("search", { replace: true, promptLogin: false });
+    } else {
+      activatePage(initialAppPage);
+    }
   } else {
-    activatePage(state.user ? "dashboard" : "search");
+    activatePage(state.user ? "dashboard" : "search", { replace: !state.user, promptLogin: false });
   }
 }
 

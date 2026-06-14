@@ -16,6 +16,21 @@ Then open:
 http://127.0.0.1:8000
 ```
 
+To expose the app on a different host port, set `HOST_PORT` in `.env`:
+
+```env
+HOST_PORT=8088
+```
+
+Then restart with:
+
+```bash
+docker compose down
+docker compose up -d --build
+```
+
+The app still listens on `8000` inside the container; `HOST_PORT` only changes the port you use from your browser.
+
 To run it in the background:
 
 ```bash
