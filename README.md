@@ -107,7 +107,7 @@ MAILGUN_FROM_NAME=FoilFolio
 
 For EU Mailgun API accounts, set `MAILGUN_API_BASE=https://api.eu.mailgun.net/v3`.
 
-Do not commit `.env`; it is ignored by Git. Docker Compose loads `.env` into the app container through `env_file`, so keep real email credentials there instead of in `compose.yaml` or the Dockerfile.
+Do not commit `.env`; it is ignored by Git. Docker Compose reads `.env` for variable substitution, and `compose.yaml` explicitly passes only the app settings FoilFolio needs.
 
 To check whether the app sees the email settings:
 
