@@ -16,7 +16,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from email.message import EmailMessage
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -103,7 +103,7 @@ LOGGER = configure_logging()
 
 
 def now_iso():
-    return datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def today_iso():
@@ -1341,7 +1341,7 @@ def session_hash(token):
 def create_session(conn, user_id):
     token = secrets.token_urlsafe(32)
     created = now_iso()
-    expires = (datetime.utcnow() + timedelta(days=SESSION_DAYS)).replace(microsecond=0).isoformat() + "Z"
+    expires = (datetime.now(timezone.utc) + timedelta(days=SESSION_DAYS)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     conn.execute(
         "INSERT INTO sessions (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
         (session_hash(token), user_id, created, expires),
@@ -4431,6 +4431,8 @@ class Handler(SimpleHTTPRequestHandler):
         try:
             with connect() as conn:
                 init_db(conn)
+                if parsed.path == "/api/health":
+                    return self.send_json({"ok": True, "status": "healthy"})
                 if parsed.path == "/api/auth/session":
                     user = self.current_user(conn)
                     return self.send_json({"authenticated": bool(user), "user": user_payload(user)})
