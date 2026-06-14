@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>FoilFolio</title>
-    <link rel="stylesheet" href="/styles.css?v=44">
+    <link rel="stylesheet" href="/styles.css?v=70">
   </head>
   <body>
     <header class="topbar">
@@ -14,8 +14,7 @@
       </div>
       <div class="actions">
         <button id="addCardButton" class="icon-button" type="button" title="Add a card">+ Add New Card</button>
-        <button id="importButton" class="icon-button" type="button" title="Import cards">+ Import</button>
-        <button id="settingsButton" class="gear-button" type="button" aria-label="Settings" title="Settings">&#9881;</button>
+        <button id="accountButton" class="icon-button" type="button" title="Log in">Log In</button>
       </div>
     </header>
 
@@ -23,9 +22,19 @@
       <aside class="command-menu" aria-label="App navigation">
         <nav>
           <button class="nav-command is-active" type="button" data-page-target="dashboard"><span class="dashboard-icon" aria-hidden="true"></span>Dashboard</button>
+          <button class="nav-command" type="button" data-page-target="favorites"><span class="favorites-icon" aria-hidden="true"></span>Favorites</button>
           <button class="nav-command" type="button" data-page-target="collection"><span class="collection-icon" aria-hidden="true"></span>Collection</button>
           <button class="nav-command" type="button" data-page-target="decks"><span class="deck-icon" aria-hidden="true"></span>Decks</button>
           <button class="nav-command" type="button" data-page-target="containers"><span class="container-icon box-icon" aria-hidden="true"></span>Containers</button>
+          <button class="nav-command" type="button" data-page-target="missing-list"><span class="missing-icon" aria-hidden="true"></span>Missing List</button>
+          <button class="nav-command" type="button" data-page-target="for-sale"><span class="sale-icon" aria-hidden="true"></span>For Sale</button>
+          <button class="nav-command" type="button" data-page-target="wishlist"><span class="wishlist-icon" aria-hidden="true"></span>Wishlist</button>
+          <button class="nav-command" type="button" data-page-target="search"><span class="catalog-search-icon" aria-hidden="true"></span>Search</button>
+          <button class="nav-command" type="button" data-page-target="import"><span class="import-icon" aria-hidden="true"></span>Import</button>
+        </nav>
+        <nav class="nav-bottom">
+          <button class="nav-command" type="button" data-page-target="settings"><span class="settings-icon" aria-hidden="true"></span>Settings</button>
+          <button id="logoutButton" class="nav-command" type="button"><span class="logout-icon" aria-hidden="true"></span>Logout</button>
         </nav>
       </aside>
 
@@ -47,6 +56,44 @@
           <article class="metric">
             <span>Owned cards</span>
             <strong id="ownedCards">0</strong>
+          </article>
+        </div>
+
+        <div class="metric-grid action-metric-grid">
+          <article class="metric">
+            <span>Favorited cards</span>
+            <strong id="favoriteCount">0</strong>
+          </article>
+          <article class="metric">
+            <span>Wishlisted cards</span>
+            <strong id="wishlistCount">0</strong>
+          </article>
+          <article class="metric">
+            <span>Cards for sale</span>
+            <strong id="saleCount">0</strong>
+          </article>
+          <article class="metric">
+            <span>Total asking price</span>
+            <strong id="saleAskingTotal">$0.00</strong>
+          </article>
+        </div>
+
+        <div class="metric-grid metadata-metric-grid">
+          <article class="metric">
+            <span>Decks</span>
+            <strong id="deckCount">0</strong>
+          </article>
+          <article class="metric">
+            <span>Cards in decks</span>
+            <strong id="cardsInDecks">0</strong>
+          </article>
+          <article class="metric">
+            <span>Containers</span>
+            <strong id="containerCount">0</strong>
+          </article>
+          <article class="metric">
+            <span>Not in containers</span>
+            <strong id="uncontainedCards">0</strong>
           </article>
         </div>
 
@@ -75,6 +122,39 @@
             <div id="setCompletion" class="set-completion-list"></div>
           </section>
         </div>
+      </section>
+
+      <section class="collection-band app-page" data-page="favorites" hidden>
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Starred cards</p>
+            <h2>Favorites</h2>
+          </div>
+          <div class="filters">
+            <input id="favoriteSearchInput" type="search" placeholder="Search favorite cards">
+            <select id="favoriteSortSelect" aria-label="Sort favorite cards">
+              <option value="value">Owned value</option>
+              <option value="price">Card price</option>
+              <option value="gain">Gain/loss</option>
+              <option value="acquired">Acquired date</option>
+              <option value="set">Set order</option>
+              <option value="name">Name</option>
+            </select>
+            <div class="view-toggle" aria-label="Favorites view">
+              <button id="favoriteTileViewButton" class="is-active" type="button">Tiles</button>
+              <button id="favoriteListViewButton" type="button">List</button>
+            </div>
+            <button id="shareFavoritesButton" class="share-filter-button" type="button" aria-label="Share favorites" title="Share favorites">&#8599;</button>
+          </div>
+        </div>
+
+        <div id="favoritesBulkBar" class="bulk-bar" hidden>
+          <span id="favoriteSelectedCardsCount">0 selected</span>
+          <button id="favoriteAddToDeckButton" class="primary-button" type="button">Add to Deck</button>
+          <button id="favoriteAddToContainerButton" class="primary-button" type="button">Add to Container</button>
+        </div>
+        <div id="favoritesStatus" class="status" aria-live="polite"></div>
+        <div id="favoritesGrid" class="cards-grid"></div>
       </section>
 
       <section class="collection-band app-page" data-page="collection" hidden>
@@ -111,6 +191,7 @@
           <span id="selectedCardsCount">0 selected</span>
           <button id="addToDeckButton" class="primary-button" type="button">Add to Deck</button>
           <button id="addToContainerButton" class="primary-button" type="button">Add to Container</button>
+          <button id="markForSaleButton" class="primary-button" type="button">Sale</button>
         </div>
         <div id="status" class="status" aria-live="polite"></div>
         <div id="cardsGrid" class="cards-grid"></div>
@@ -140,8 +221,244 @@
         <div id="containersGrid" class="decks-grid containers-grid"></div>
       </section>
 
+      <section class="missing-band app-page" data-page="missing-list" hidden>
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Cards to find</p>
+            <h2>Missing List</h2>
+          </div>
+          <div class="filters">
+            <input id="missingSearchInput" type="search" placeholder="Search missing cards">
+            <select id="missingSortSelect" aria-label="Sort missing cards">
+              <option value="set">Set order</option>
+              <option value="name">Name</option>
+              <option value="price">Card price</option>
+            </select>
+          </div>
+        </div>
+        <div class="missing-page-intro">
+          <strong>Find cards you have explicitly added to your Missing List.</strong>
+          <span>Marketplace links open searches in a new tab using the card title, rules name when available, set, and collector number.</span>
+        </div>
+        <div id="missingStatus" class="status" aria-live="polite"></div>
+        <div id="missingGrid" class="missing-list-grid"></div>
+      </section>
+
+      <section class="sale-band app-page" data-page="for-sale" hidden>
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Listings maintenance</p>
+            <h2>For Sale</h2>
+          </div>
+          <div class="filters">
+            <input id="saleSearchInput" type="search" placeholder="Search cards for sale">
+            <select id="saleSortSelect" aria-label="Sort cards for sale">
+              <option value="value">Owned value</option>
+              <option value="price">Card price</option>
+              <option value="set">Set order</option>
+              <option value="name">Name</option>
+            </select>
+          </div>
+        </div>
+        <div id="saleStatus" class="status" aria-live="polite"></div>
+        <div id="saleGrid" class="sale-list-grid"></div>
+      </section>
+
+      <section class="collection-band app-page" data-page="wishlist" hidden>
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Cards you want</p>
+            <h2>Wishlist</h2>
+          </div>
+          <div class="filters">
+            <input id="wishlistSearchInput" type="search" placeholder="Search wishlist cards">
+            <select id="wishlistSortSelect" aria-label="Sort wishlist cards">
+              <option value="set">Set order</option>
+              <option value="name">Name</option>
+              <option value="price">Card price</option>
+            </select>
+            <div class="view-toggle" aria-label="Wishlist view">
+              <button id="wishlistTileViewButton" class="is-active" type="button">Tiles</button>
+              <button id="wishlistListViewButton" type="button">List</button>
+            </div>
+          </div>
+        </div>
+        <div id="wishlistStatus" class="status" aria-live="polite"></div>
+        <div id="wishlistGrid" class="cards-grid"></div>
+      </section>
+
+      <section class="catalog-search-band app-page" data-page="search" hidden>
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Scryfall catalog</p>
+            <h2>Search</h2>
+          </div>
+        </div>
+        <form id="catalogSearchForm" class="catalog-search-panel">
+          <label class="catalog-search-main">
+            Card search
+            <div class="search-control">
+              <input id="catalogSearchInput" type="search" autocomplete="off" placeholder="Name, text, artist, or Scryfall syntax">
+              <button id="catalogSearchButton" class="search-button" type="submit" aria-label="Search Scryfall">&#128269;</button>
+            </div>
+          </label>
+          <div class="catalog-advanced-grid">
+            <label>
+              Rules text
+              <input id="catalogOracleInput" type="search" placeholder="draw a card, flying">
+            </label>
+            <label>
+              Set code
+              <input id="catalogSetInput" type="text" maxlength="8" placeholder="fin, fic, mh3">
+            </label>
+            <label>
+              Color
+              <select id="catalogColorSelect">
+                <option value="">Any color</option>
+                <option value="w">White</option>
+                <option value="u">Blue</option>
+                <option value="b">Black</option>
+                <option value="r">Red</option>
+                <option value="g">Green</option>
+                <option value="multi">Multicolor</option>
+                <option value="colorless">Colorless</option>
+              </select>
+            </label>
+            <label>
+              Type
+              <select id="catalogTypeSelect">
+                <option value="">Any type</option>
+                <option value="creature">Creature</option>
+                <option value="instant">Instant</option>
+                <option value="sorcery">Sorcery</option>
+                <option value="artifact">Artifact</option>
+                <option value="enchantment">Enchantment</option>
+                <option value="planeswalker">Planeswalker</option>
+                <option value="land">Land</option>
+              </select>
+            </label>
+            <label>
+              Rarity
+              <select id="catalogRaritySelect">
+                <option value="">Any rarity</option>
+                <option value="common">Common</option>
+                <option value="uncommon">Uncommon</option>
+                <option value="rare">Rare</option>
+                <option value="mythic">Mythic</option>
+              </select>
+            </label>
+            <label>
+              Legal in
+              <select id="catalogFormatSelect">
+                <option value="">Any format</option>
+                <option value="commander">Commander</option>
+                <option value="standard">Standard</option>
+                <option value="modern">Modern</option>
+                <option value="legacy">Legacy</option>
+                <option value="pauper">Pauper</option>
+              </select>
+            </label>
+            <label>
+              Sort
+              <select id="catalogSortSelect">
+                <option value="released">Newest</option>
+                <option value="name">Name</option>
+                <option value="set">Set order</option>
+                <option value="usd">Price</option>
+                <option value="edhrec">EDHREC</option>
+              </select>
+            </label>
+          </div>
+        </form>
+        <div id="catalogSearchStatus" class="status" aria-live="polite"></div>
+        <div id="catalogSearchGrid" class="catalog-results-grid"></div>
+      </section>
+
+      <section class="import-band app-page" data-page="import" hidden>
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Validate before saving</p>
+            <h2>Import</h2>
+          </div>
+        </div>
+        <div id="importStatus" class="status" aria-live="polite"></div>
+        <div class="import-grid">
+          <article class="import-panel">
+            <span class="import-icon" aria-hidden="true"></span>
+            <h3>JSON Import</h3>
+            <p>Only FoilFolio JSON exports are accepted. Use this when moving data between FoilFolio installs.</p>
+            <input id="jsonImportFile" type="file" accept="application/json,.json">
+            <button id="previewJsonImportButton" class="primary-button" type="button">Preview JSON</button>
+          </article>
+          <article class="import-panel">
+            <span class="collection-icon" aria-hidden="true"></span>
+            <h3>CSV Import</h3>
+            <p>CSV files need a header row. Recommended columns: Name, Set, Card Number, Quantity, Price Paid, Date Acquired, Variant, Condition, Graded, Notes.</p>
+            <input id="csvImportFile" type="file" accept="text/csv,.csv">
+            <button id="previewCsvImportButton" class="primary-button" type="button">Preview CSV</button>
+          </article>
+        </div>
+      </section>
+
+      <section class="settings-band app-page" data-page="settings" hidden>
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Profile</p>
+            <h2>Settings</h2>
+          </div>
+        </div>
+        <div class="settings-page-grid">
+          <section class="panel">
+            <div class="panel-head">
+              <h2>Preferences</h2>
+              <span id="settingsAccountEmail"></span>
+            </div>
+            <form id="settingsPageForm" class="settings-form">
+              <label>
+                Language
+                <select name="language">
+                  <option value="en">English (EN)</option>
+                </select>
+              </label>
+              <label>
+                Theme
+                <select name="theme">
+                  <option value="light">Light Mode</option>
+                  <option value="dark">Dark Mode</option>
+                  <option value="retro">Retro</option>
+                  <option value="neon">Neon</option>
+                  <option value="red">Magic Red</option>
+                  <option value="blue">Magic Blue</option>
+                  <option value="black">Magic Black</option>
+                  <option value="green">Magic Green</option>
+                  <option value="pride">Pride</option>
+                </select>
+              </label>
+              <div class="modal-actions">
+                <button class="primary-button" type="submit">Save Settings</button>
+              </div>
+            </form>
+            <div id="settingsPageStatus" class="status" aria-live="polite"></div>
+          </section>
+          <section class="panel danger-panel">
+            <div class="panel-head">
+              <h2>Account Data</h2>
+            </div>
+            <p class="settings-help">Clear database removes your collection, decks, containers, wishlist, favorites, missing list, sale listings, and card history. Delete profile removes all of that plus your login.</p>
+            <div class="settings-danger-actions">
+              <button id="clearDatabaseButton" class="secondary-button" type="button">Clear Database</button>
+              <button id="deleteProfileButton" class="danger-action-button" type="button"><span class="trash-icon" aria-hidden="true"></span>Delete Profile</button>
+            </div>
+          </section>
+        </div>
+      </section>
+
       <section class="shared-card-band app-page" data-page="shared" hidden>
         <div id="sharedCardShell" class="shared-card-shell"></div>
+      </section>
+
+      <section class="card-detail-band app-page" data-page="card-detail" hidden>
+        <div id="cardDetailShell" class="card-detail-shell"></div>
       </section>
 
       <section class="set-band app-page" data-page="set" hidden>
@@ -150,6 +467,10 @@
 
       <section class="deck-share-band app-page" data-page="deck-share" hidden>
         <div id="deckShareShell" class="deck-share-shell"></div>
+      </section>
+
+      <section class="favorites-share-band app-page" data-page="favorites-share" hidden>
+        <div id="favoritesShareShell" class="deck-share-shell"></div>
       </section>
       </main>
     </div>
@@ -166,7 +487,7 @@
           </div>
           <div class="card-actions">
             <button class="favorite-button" type="button" aria-label="Favorite card" title="Favorite"></button>
-            <button class="edit-button" type="button" aria-label="Edit card" title="Edit card">...</button>
+            <button class="wishlist-button" type="button" aria-label="Wishlist card" title="Wishlist"></button>
           </div>
         </header>
         <div class="card-divider"></div>
@@ -180,6 +501,8 @@
           <div class="card-stats">
             <span class="variant-pill"></span>
             <span class="condition-pill"></span>
+            <span class="type-pill"></span>
+            <span class="color-pill"></span>
             <span class="stats-break" aria-hidden="true"></span>
             <strong class="owned-value"></strong>
             <span class="delta"></span>
@@ -195,7 +518,12 @@
               <span class="container-icon other-icon" aria-hidden="true"></span>
             </button>
           </div>
-          <button class="share-button" type="button" aria-label="Share card" title="Share card">&#8599;</button>
+          <div class="card-primary-actions">
+            <button class="edit-button" type="button" aria-label="Edit card" title="Edit card"><span class="edit-icon" aria-hidden="true"></span></button>
+            <a class="scryfall-button" aria-label="Open on Scryfall" title="Open on Scryfall" target="_blank" rel="noreferrer">S</a>
+            <button class="refresh-card-button" type="button" aria-label="Refresh card metadata" title="Refresh from Scryfall">&#8635;</button>
+            <button class="share-button" type="button" aria-label="Share card" title="Share card">&#8599;</button>
+          </div>
         </footer>
       </article>
     </template>
@@ -219,6 +547,8 @@
           <span class="detail-quantity"></span>
           <span class="detail-variant"></span>
           <span class="condition-pill"></span>
+          <span class="type-pill"></span>
+          <span class="color-pill"></span>
         </div>
         <div class="list-actions">
           <button class="deck-membership-button" type="button" aria-label="Show decks for this card" title="Show decks">
@@ -227,8 +557,12 @@
           <button class="container-membership-button" type="button" aria-label="Show containers for this card" title="Show container">
             <span class="container-icon other-icon" aria-hidden="true"></span>
           </button>
+          <a class="scryfall-button" aria-label="Open on Scryfall" title="Open on Scryfall" target="_blank" rel="noreferrer">S</a>
+          <button class="refresh-card-button" type="button" aria-label="Refresh card metadata" title="Refresh from Scryfall">&#8635;</button>
+          <button class="edit-button" type="button" aria-label="Edit card" title="Edit card"><span class="edit-icon" aria-hidden="true"></span></button>
           <button class="share-button" type="button" aria-label="Share card" title="Share card">&#8599;</button>
-          <button class="delete-card-button" type="button" aria-label="Delete card" title="Delete card">x</button>
+          <button class="wishlist-button" type="button" aria-label="Wishlist card" title="Wishlist"></button>
+          <button class="delete-card-button" type="button" aria-label="Delete card" title="Delete card"><span class="trash-icon" aria-hidden="true"></span></button>
         </div>
       </article>
     </template>
@@ -399,6 +733,77 @@
       </section>
     </div>
 
+    <div id="authOverlay" class="modal-overlay" hidden>
+      <section class="settings-modal" role="dialog" aria-modal="true" aria-labelledby="authTitle">
+        <header class="edit-modal-head">
+          <div>
+            <p class="eyebrow">Account required</p>
+            <h2 id="authTitle">Log In</h2>
+          </div>
+          <button id="closeAuthButton" class="modal-close" type="button" aria-label="Close account dialog">x</button>
+        </header>
+        <form id="authForm" class="settings-form">
+          <input name="mode" type="hidden" value="login">
+          <label>
+            Email
+            <input name="email" type="email" autocomplete="email" required>
+          </label>
+          <label>
+            Password
+            <input name="password" type="password" autocomplete="current-password" minlength="12" required>
+          </label>
+          <p id="authHint" class="settings-help">Log in to manage your collection, decks, containers, favorites, and wishlist.</p>
+          <div class="modal-actions">
+            <button id="toggleAuthModeButton" class="secondary-button" type="button">Create Account</button>
+            <button id="submitAuthButton" class="primary-button" type="submit">Log In</button>
+          </div>
+          <div id="authStatus" class="status" aria-live="polite"></div>
+        </form>
+      </section>
+    </div>
+
+    <div id="addPurchaseOverlay" class="modal-overlay" hidden>
+      <section class="edit-modal" role="dialog" aria-modal="true" aria-labelledby="addPurchaseTitle">
+        <header class="edit-modal-head">
+          <div>
+            <p class="eyebrow">Purchase history</p>
+            <h2 id="addPurchaseTitle">Add Purchase</h2>
+          </div>
+          <button id="closeAddPurchaseButton" class="modal-close" type="button" aria-label="Close purchase dialog">x</button>
+        </header>
+        <form id="addPurchaseForm" class="edit-form">
+          <input name="card_id" type="hidden">
+          <input name="variant" type="hidden">
+          <label>
+            Quantity bought
+            <input name="quantity" type="number" min="1" step="1" value="1">
+          </label>
+          <label>
+            Condition
+            <select name="card_condition">
+              <option>Near Mint</option>
+              <option>Lightly Played</option>
+              <option>Moderately Played</option>
+              <option>Heavily Played</option>
+              <option>Damaged</option>
+            </select>
+          </label>
+          <label>
+            Date bought
+            <input name="purchase_date" type="date">
+          </label>
+          <label>
+            Total purchase price
+            <input name="total_price" type="number" min="0.01" step="0.01" value="0.01">
+          </label>
+          <div class="modal-actions">
+            <button id="cancelAddPurchaseButton" class="secondary-button" type="button">Cancel</button>
+            <button class="primary-button" type="submit">Add Purchase</button>
+          </div>
+        </form>
+      </section>
+    </div>
+
     <div id="shareOverlay" class="modal-overlay" hidden>
       <section class="share-modal" role="dialog" aria-modal="true" aria-labelledby="shareTitle">
         <header class="edit-modal-head">
@@ -456,6 +861,7 @@
             Deck
             <select name="deck_id" required></select>
           </label>
+          <div id="assignDeckCards" class="assign-deck-cards"></div>
           <div class="modal-actions">
             <button id="cancelAssignDeckButton" class="secondary-button" type="button">Cancel</button>
             <button class="primary-button" type="submit">Add to Deck</button>
@@ -585,6 +991,59 @@
       </section>
     </div>
 
+    <div id="saleOverlay" class="modal-overlay" hidden>
+      <section class="sale-modal" role="dialog" aria-modal="true" aria-labelledby="saleTitle">
+        <header class="edit-modal-head">
+          <div>
+            <p class="eyebrow">Prepare listings</p>
+            <h2 id="saleTitle">Mark for Sale</h2>
+          </div>
+          <button id="closeSaleButton" class="modal-close" type="button" aria-label="Close sale dialog">x</button>
+        </header>
+        <form id="saleForm" class="settings-form">
+          <div id="saleCards" class="sale-cards"></div>
+          <div class="modal-actions">
+            <button id="cancelSaleButton" class="secondary-button" type="button">Discard</button>
+            <button class="primary-button" type="submit">Mark for Sale</button>
+          </div>
+        </form>
+      </section>
+    </div>
+
+    <div id="soldOverlay" class="modal-overlay" hidden>
+      <section class="settings-modal" role="dialog" aria-modal="true" aria-labelledby="soldTitle">
+        <header class="edit-modal-head">
+          <div>
+            <p class="eyebrow">Confirm sale</p>
+            <h2 id="soldTitle">Mark Sold</h2>
+            <span id="soldSubtitle" class="modal-subtitle"></span>
+          </div>
+          <button id="closeSoldButton" class="modal-close" type="button" aria-label="Close sold dialog">x</button>
+        </header>
+        <form id="soldForm" class="settings-form">
+          <input type="hidden" name="card_id">
+          <input type="hidden" name="variant">
+          <input type="hidden" name="card_condition">
+          <label>
+            Quantity Sold
+            <input name="quantity" type="number" min="1" step="1" required>
+          </label>
+          <label>
+            Date Sold
+            <input name="sold_date" type="date" required>
+          </label>
+          <label>
+            Sold For Per Card
+            <input name="sold_price_each" type="number" min="0.01" step="0.01" required>
+          </label>
+          <div class="modal-actions">
+            <button id="cancelSoldButton" class="secondary-button" type="button">Discard</button>
+            <button class="primary-button" type="submit">Mark Sold</button>
+          </div>
+        </form>
+      </section>
+    </div>
+
     <div id="containerDetailOverlay" class="modal-overlay" hidden>
       <section class="deck-detail-modal" role="dialog" aria-modal="true" aria-labelledby="containerDetailTitle">
         <header class="edit-modal-head">
@@ -595,7 +1054,7 @@
           </div>
           <div class="deck-modal-actions">
             <button id="editContainerButton" class="share-button" type="button" aria-label="Edit container" title="Edit container">...</button>
-            <button id="deleteContainerButton" class="danger-icon-button" type="button" aria-label="Delete container" title="Delete container">x</button>
+            <button id="deleteContainerButton" class="danger-icon-button" type="button" aria-label="Delete container" title="Delete container"><span class="trash-icon" aria-hidden="true"></span></button>
           </div>
         </header>
         <div id="containerDetailCards" class="deck-detail-list"></div>
@@ -618,6 +1077,28 @@
       </section>
     </div>
 
-    <script src="/app.js?v=45"></script>
+    <div id="importReviewOverlay" class="modal-overlay" hidden>
+      <section class="import-review-modal" role="dialog" aria-modal="true" aria-labelledby="importReviewTitle">
+        <header class="edit-modal-head">
+          <div>
+            <p class="eyebrow">Confirm matches</p>
+            <h2 id="importReviewTitle">Import Preview</h2>
+          </div>
+          <button id="closeImportReviewButton" class="modal-close" type="button" aria-label="Close import preview">x</button>
+        </header>
+        <div class="import-review-summary">
+          <strong id="importReviewCount">0 rows</strong>
+          <span id="importIssueCount">0 issues</span>
+        </div>
+        <div id="importIssues" class="import-issues"></div>
+        <div id="importReviewRows" class="import-review-rows"></div>
+        <div class="modal-actions import-review-actions">
+          <button id="cancelImportReviewButton" class="secondary-button" type="button">Cancel</button>
+          <button id="commitImportButton" class="primary-button" type="button">Import</button>
+        </div>
+      </section>
+    </div>
+
+    <script src="/app.js?v=74"></script>
   </body>
 </html>

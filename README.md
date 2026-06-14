@@ -58,6 +58,39 @@ cp "/path/to/new-export.csv" imports/export.csv
 docker compose exec foilfolio python app.py import /imports/export.csv
 ```
 
+## Email With Mailgun
+
+FoilFolio has Mailgun plumbing ready for future account confirmation and share-by-email features. Copy the example env file, then fill in your Mailgun values:
+
+```bash
+cp .env.example .env
+```
+
+Required values:
+
+```text
+MAILGUN_API_KEY=key-your-mailgun-api-key
+MAILGUN_DOMAIN=mg.yourdomain.com
+MAILGUN_FROM_EMAIL=noreply@yourdomain.com
+MAILGUN_FROM_NAME=FoilFolio
+```
+
+For EU Mailgun accounts, set `MAILGUN_API_BASE=https://api.eu.mailgun.net/v3`.
+
+Do not commit `.env`; it is ignored by Git. Docker Compose reads it automatically when you run the app.
+
+To check whether the app sees the Mailgun settings:
+
+```bash
+docker compose run --rm foilfolio python app.py email-status
+```
+
+To send a smoke-test email after Mailgun DNS and credentials are ready:
+
+```bash
+docker compose run --rm foilfolio python app.py email-test you@example.com
+```
+
 ## Local Python Run
 
 ```bash
@@ -78,6 +111,8 @@ python3 app.py sync
 python3 app.py import "/Users/kristophr/Downloads/export(1).csv"
 python3 app.py seed "/Users/kristophr/Downloads/export(1).csv"
 python3 app.py serve 8000
+python3 app.py email-status
+python3 app.py email-test you@example.com
 ```
 
 ## Data

@@ -1,11 +1,22 @@
 const state = {
   cards: [],
+  favoriteCards: [],
+  missingCards: [],
+  saleCards: [],
+  wishlistCards: [],
+  catalogSearchResults: [],
   dashboard: null,
   searchTimer: null,
+  favoriteSearchTimer: null,
+  missingSearchTimer: null,
+  saleSearchTimer: null,
+  wishlistSearchTimer: null,
+  catalogSearchTimer: null,
   editingCard: null,
   addResults: [],
   selectedAddCard: null,
   sharedCard: null,
+  activeCardDetail: null,
   activeSet: null,
   setCards: [],
   decks: [],
@@ -13,8 +24,15 @@ const state = {
   containers: [],
   activeContainer: null,
   editingContainer: null,
+  activeSaleCard: null,
+  importRows: [],
+  importIssues: [],
   selectedCards: new Map(),
+  selectedSetMissingCards: new Map(),
+  user: null,
   collectionView: localStorage.getItem("foilfolio.collectionView") || "tiles",
+  favoritesView: localStorage.getItem("foilfolio.favoritesView") || "tiles",
+  wishlistView: localStorage.getItem("foilfolio.wishlistView") || "tiles",
   settings: null,
 };
 
@@ -34,12 +52,34 @@ const compactDollars = new Intl.NumberFormat("en-US", {
 
 const integer = new Intl.NumberFormat("en-US");
 const cardConditions = ["Near Mint", "Lightly Played", "Moderately Played", "Heavily Played", "Damaged"];
+const pageRoutes = {
+  dashboard: "/",
+  favorites: "/favorites",
+  collection: "/collection",
+  decks: "/decks",
+  containers: "/containers",
+  "missing-list": "/missing-list",
+  "for-sale": "/for-sale",
+  wishlist: "/wishlist",
+  search: "/search",
+  settings: "/settings",
+  import: "/import",
+};
+const routePages = Object.fromEntries(Object.entries(pageRoutes).map(([page, path]) => [path, page]));
 
 const els = {
   currentValue: document.querySelector("#currentValue"),
   paidTotal: document.querySelector("#paidTotal"),
   gainLoss: document.querySelector("#gainLoss"),
   ownedCards: document.querySelector("#ownedCards"),
+  favoriteCount: document.querySelector("#favoriteCount"),
+  wishlistCount: document.querySelector("#wishlistCount"),
+  saleCount: document.querySelector("#saleCount"),
+  saleAskingTotal: document.querySelector("#saleAskingTotal"),
+  deckCount: document.querySelector("#deckCount"),
+  cardsInDecks: document.querySelector("#cardsInDecks"),
+  containerCount: document.querySelector("#containerCount"),
+  uncontainedCards: document.querySelector("#uncontainedCards"),
   historyCount: document.querySelector("#historyCount"),
   historyChart: document.querySelector("#historyChart"),
   topCount: document.querySelector("#topCount"),
@@ -47,19 +87,71 @@ const els = {
   setCompletionCount: document.querySelector("#setCompletionCount"),
   setCompletion: document.querySelector("#setCompletion"),
   cardsGrid: document.querySelector("#cardsGrid"),
+  favoritesGrid: document.querySelector("#favoritesGrid"),
+  missingGrid: document.querySelector("#missingGrid"),
+  saleGrid: document.querySelector("#saleGrid"),
+  wishlistGrid: document.querySelector("#wishlistGrid"),
+  catalogSearchGrid: document.querySelector("#catalogSearchGrid"),
   status: document.querySelector("#status"),
+  favoritesStatus: document.querySelector("#favoritesStatus"),
+  missingStatus: document.querySelector("#missingStatus"),
+  saleStatus: document.querySelector("#saleStatus"),
+  wishlistStatus: document.querySelector("#wishlistStatus"),
+  catalogSearchStatus: document.querySelector("#catalogSearchStatus"),
   searchInput: document.querySelector("#searchInput"),
+  favoriteSearchInput: document.querySelector("#favoriteSearchInput"),
+  missingSearchInput: document.querySelector("#missingSearchInput"),
+  saleSearchInput: document.querySelector("#saleSearchInput"),
+  wishlistSearchInput: document.querySelector("#wishlistSearchInput"),
+  catalogSearchForm: document.querySelector("#catalogSearchForm"),
+  catalogSearchInput: document.querySelector("#catalogSearchInput"),
+  catalogSearchButton: document.querySelector("#catalogSearchButton"),
+  catalogOracleInput: document.querySelector("#catalogOracleInput"),
+  catalogSetInput: document.querySelector("#catalogSetInput"),
+  catalogColorSelect: document.querySelector("#catalogColorSelect"),
+  catalogTypeSelect: document.querySelector("#catalogTypeSelect"),
+  catalogRaritySelect: document.querySelector("#catalogRaritySelect"),
+  catalogFormatSelect: document.querySelector("#catalogFormatSelect"),
   ownedFilter: document.querySelector("#ownedFilter"),
   sortSelect: document.querySelector("#sortSelect"),
+  favoriteSortSelect: document.querySelector("#favoriteSortSelect"),
+  missingSortSelect: document.querySelector("#missingSortSelect"),
+  saleSortSelect: document.querySelector("#saleSortSelect"),
+  wishlistSortSelect: document.querySelector("#wishlistSortSelect"),
+  catalogSortSelect: document.querySelector("#catalogSortSelect"),
   tileViewButton: document.querySelector("#tileViewButton"),
   listViewButton: document.querySelector("#listViewButton"),
+  favoriteTileViewButton: document.querySelector("#favoriteTileViewButton"),
+  favoriteListViewButton: document.querySelector("#favoriteListViewButton"),
+  wishlistTileViewButton: document.querySelector("#wishlistTileViewButton"),
+  wishlistListViewButton: document.querySelector("#wishlistListViewButton"),
+  shareFavoritesButton: document.querySelector("#shareFavoritesButton"),
   collectionBulkBar: document.querySelector("#collectionBulkBar"),
+  favoritesBulkBar: document.querySelector("#favoritesBulkBar"),
   selectedCardsCount: document.querySelector("#selectedCardsCount"),
+  favoriteSelectedCardsCount: document.querySelector("#favoriteSelectedCardsCount"),
   addToDeckButton: document.querySelector("#addToDeckButton"),
   addToContainerButton: document.querySelector("#addToContainerButton"),
+  markForSaleButton: document.querySelector("#markForSaleButton"),
+  favoriteAddToDeckButton: document.querySelector("#favoriteAddToDeckButton"),
+  favoriteAddToContainerButton: document.querySelector("#favoriteAddToContainerButton"),
   addCardButton: document.querySelector("#addCardButton"),
-  importButton: document.querySelector("#importButton"),
-  settingsButton: document.querySelector("#settingsButton"),
+  accountButton: document.querySelector("#accountButton"),
+  logoutButton: document.querySelector("#logoutButton"),
+  importStatus: document.querySelector("#importStatus"),
+  jsonImportFile: document.querySelector("#jsonImportFile"),
+  csvImportFile: document.querySelector("#csvImportFile"),
+  previewJsonImportButton: document.querySelector("#previewJsonImportButton"),
+  previewCsvImportButton: document.querySelector("#previewCsvImportButton"),
+  importReviewOverlay: document.querySelector("#importReviewOverlay"),
+  importReviewTitle: document.querySelector("#importReviewTitle"),
+  importReviewCount: document.querySelector("#importReviewCount"),
+  importIssueCount: document.querySelector("#importIssueCount"),
+  importIssues: document.querySelector("#importIssues"),
+  importReviewRows: document.querySelector("#importReviewRows"),
+  closeImportReviewButton: document.querySelector("#closeImportReviewButton"),
+  cancelImportReviewButton: document.querySelector("#cancelImportReviewButton"),
+  commitImportButton: document.querySelector("#commitImportButton"),
   template: document.querySelector("#cardTemplate"),
   listTemplate: document.querySelector("#cardListTemplate"),
   editOverlay: document.querySelector("#editOverlay"),
@@ -83,6 +175,19 @@ const els = {
   settingsForm: document.querySelector("#settingsForm"),
   closeSettingsButton: document.querySelector("#closeSettingsButton"),
   cancelSettingsButton: document.querySelector("#cancelSettingsButton"),
+  settingsPageForm: document.querySelector("#settingsPageForm"),
+  settingsAccountEmail: document.querySelector("#settingsAccountEmail"),
+  settingsPageStatus: document.querySelector("#settingsPageStatus"),
+  clearDatabaseButton: document.querySelector("#clearDatabaseButton"),
+  deleteProfileButton: document.querySelector("#deleteProfileButton"),
+  authOverlay: document.querySelector("#authOverlay"),
+  authForm: document.querySelector("#authForm"),
+  authTitle: document.querySelector("#authTitle"),
+  authHint: document.querySelector("#authHint"),
+  authStatus: document.querySelector("#authStatus"),
+  closeAuthButton: document.querySelector("#closeAuthButton"),
+  toggleAuthModeButton: document.querySelector("#toggleAuthModeButton"),
+  submitAuthButton: document.querySelector("#submitAuthButton"),
   addDeckButton: document.querySelector("#addDeckButton"),
   addDeckOverlay: document.querySelector("#addDeckOverlay"),
   addDeckForm: document.querySelector("#addDeckForm"),
@@ -92,6 +197,7 @@ const els = {
   decksStatus: document.querySelector("#decksStatus"),
   assignDeckOverlay: document.querySelector("#assignDeckOverlay"),
   assignDeckForm: document.querySelector("#assignDeckForm"),
+  assignDeckCards: document.querySelector("#assignDeckCards"),
   closeAssignDeckButton: document.querySelector("#closeAssignDeckButton"),
   cancelAssignDeckButton: document.querySelector("#cancelAssignDeckButton"),
   deckDetailOverlay: document.querySelector("#deckDetailOverlay"),
@@ -128,6 +234,17 @@ const els = {
   assignContainerCards: document.querySelector("#assignContainerCards"),
   closeAssignContainerButton: document.querySelector("#closeAssignContainerButton"),
   cancelAssignContainerButton: document.querySelector("#cancelAssignContainerButton"),
+  saleOverlay: document.querySelector("#saleOverlay"),
+  saleForm: document.querySelector("#saleForm"),
+  saleCards: document.querySelector("#saleCards"),
+  closeSaleButton: document.querySelector("#closeSaleButton"),
+  cancelSaleButton: document.querySelector("#cancelSaleButton"),
+  soldOverlay: document.querySelector("#soldOverlay"),
+  soldForm: document.querySelector("#soldForm"),
+  soldTitle: document.querySelector("#soldTitle"),
+  soldSubtitle: document.querySelector("#soldSubtitle"),
+  closeSoldButton: document.querySelector("#closeSoldButton"),
+  cancelSoldButton: document.querySelector("#cancelSoldButton"),
   containerDetailOverlay: document.querySelector("#containerDetailOverlay"),
   containerDetailTitle: document.querySelector("#containerDetailTitle"),
   containerDetailMeta: document.querySelector("#containerDetailMeta"),
@@ -145,6 +262,13 @@ const els = {
   copyShareButton: document.querySelector("#copyShareButton"),
   closeShareButton: document.querySelector("#closeShareButton"),
   sharedCardShell: document.querySelector("#sharedCardShell"),
+  favoritesShareShell: document.querySelector("#favoritesShareShell"),
+  cardDetailShell: document.querySelector("#cardDetailShell"),
+  addPurchaseOverlay: document.querySelector("#addPurchaseOverlay"),
+  addPurchaseForm: document.querySelector("#addPurchaseForm"),
+  addPurchaseTitle: document.querySelector("#addPurchaseTitle"),
+  closeAddPurchaseButton: document.querySelector("#closeAddPurchaseButton"),
+  cancelAddPurchaseButton: document.querySelector("#cancelAddPurchaseButton"),
   setPageShell: document.querySelector("#setPageShell"),
   navCommands: document.querySelectorAll(".nav-command"),
   pages: document.querySelectorAll(".app-page"),
@@ -176,11 +300,16 @@ function applySettings() {
   const settings = state.settings || defaultSettings();
   document.documentElement.lang = settings.language || "en";
   document.documentElement.dataset.theme = settings.theme || "light";
+  if (els.settingsPageForm) {
+    els.settingsPageForm.language.value = settings.language || "en";
+    els.settingsPageForm.theme.value = settings.theme || "light";
+  }
 }
 
-function setStatus(message, tone = "") {
-  els.status.textContent = message;
-  els.status.dataset.tone = tone;
+function setStatus(message, tone = "", target = els.status) {
+  if (!target) return;
+  target.textContent = message;
+  target.dataset.tone = tone;
 }
 
 async function api(path, options = {}) {
@@ -195,9 +324,104 @@ async function api(path, options = {}) {
   const payload = contentType.includes("application/json") ? await response.json() : await response.text();
   if (!response.ok) {
     const message = payload && payload.error ? payload.error : `Request failed: ${response.status}`;
+    if (response.status === 401) {
+      state.user = null;
+      updateAuthUi();
+      openAuthModal("login", message);
+    }
     throw new Error(message);
   }
   return payload;
+}
+
+function updateAuthUi() {
+  const loggedIn = Boolean(state.user);
+  document.body.classList.toggle("is-authenticated", loggedIn);
+  if (els.accountButton) {
+    els.accountButton.textContent = loggedIn ? state.user.email : "Log In";
+    els.accountButton.title = loggedIn ? "Account settings" : "Log in";
+  }
+  if (els.logoutButton) {
+    els.logoutButton.hidden = !loggedIn;
+  }
+  if (els.settingsAccountEmail) {
+    els.settingsAccountEmail.textContent = loggedIn ? state.user.email : "Not logged in";
+  }
+}
+
+function syncSettingsFromUser(user) {
+  if (!user) return;
+  state.settings = { ...defaultSettings(), language: user.language || "en", theme: user.theme || "light" };
+  localStorage.setItem(settingsKey, JSON.stringify(state.settings));
+  applySettings();
+}
+
+async function loadSession() {
+  const payload = await api("/api/auth/session");
+  state.user = payload.user || null;
+  if (state.user) {
+    syncSettingsFromUser(state.user);
+  }
+  updateAuthUi();
+  return state.user;
+}
+
+function authMode() {
+  return els.authForm?.mode.value || "login";
+}
+
+function setAuthMode(mode) {
+  const nextMode = mode === "register" ? "register" : "login";
+  els.authForm.mode.value = nextMode;
+  els.authTitle.textContent = nextMode === "register" ? "Create Account" : "Log In";
+  els.submitAuthButton.textContent = nextMode === "register" ? "Create Account" : "Log In";
+  els.toggleAuthModeButton.textContent = nextMode === "register" ? "Use Existing Account" : "Create Account";
+  els.authHint.textContent = nextMode === "register"
+    ? "Use a strong password. Your collection, decks, containers, and lists will be private to this account."
+    : "Log in to manage your collection, decks, containers, favorites, and wishlist.";
+  els.authForm.password.autocomplete = nextMode === "register" ? "new-password" : "current-password";
+}
+
+function openAuthModal(mode = "login", message = "") {
+  if (!els.authOverlay) return;
+  setAuthMode(mode);
+  els.authStatus.textContent = message;
+  els.authStatus.dataset.tone = message ? "error" : "";
+  els.authOverlay.hidden = false;
+  document.body.classList.add("modal-open");
+  els.authForm.email.focus();
+}
+
+function closeAuthModal() {
+  if (!els.authOverlay) return;
+  els.authOverlay.hidden = true;
+  document.body.classList.remove("modal-open");
+  els.authStatus.textContent = "";
+}
+
+async function submitAuthForm() {
+  const payload = Object.fromEntries(new FormData(els.authForm).entries());
+  const mode = authMode();
+  const result = await api(mode === "register" ? "/api/auth/register" : "/api/auth/login", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  state.user = result.user;
+  syncSettingsFromUser(state.user);
+  updateAuthUi();
+  closeAuthModal();
+  await activatePage(appPageRoute() || "dashboard", { replace: true });
+}
+
+async function logout() {
+  await api("/api/auth/logout", { method: "POST", body: JSON.stringify({}) });
+  state.user = null;
+  updateAuthUi();
+  activatePage("search", { push: true });
+}
+
+function protectedPage(page) {
+  return !["search", "deck-share", "card-share", "favorites-share"].includes(page);
 }
 
 function valueClass(value) {
@@ -223,22 +447,98 @@ function conditionText(card) {
   return cardConditions.includes(card.card_condition) ? card.card_condition : "Near Mint";
 }
 
+function parseListField(value) {
+  if (Array.isArray(value)) return value;
+  if (value === null || value === undefined || value === "") return null;
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : null;
+  } catch (error) {
+    return String(value).split(",").map((item) => item.trim()).filter(Boolean);
+  }
+}
+
+function primaryCardType(typeLine) {
+  const text = String(typeLine || "").toLowerCase();
+  if (!text) return "Unknown";
+  const checks = [
+    ["token", "Token"],
+    ["land", "Land"],
+    ["creature", "Creature"],
+    ["planeswalker", "Planeswalker"],
+    ["battle", "Battle"],
+    ["artifact", "Artifact"],
+    ["enchantment", "Enchantment"],
+    ["instant", "Instant"],
+    ["sorcery", "Sorcery"],
+  ];
+  const match = checks.find(([needle]) => text.includes(needle));
+  return match ? match[1] : String(typeLine).split("—", 1)[0].trim() || "Other";
+}
+
+function cardTypeLabel(card) {
+  return card.type_category || primaryCardType(card.type_line);
+}
+
+function colorCodes(card) {
+  const colors = parseListField(card.colors);
+  if (colors && colors.length) return colors;
+  const identity = parseListField(card.color_identity);
+  if (identity && identity.length) return identity;
+  if (colors || identity) return [];
+  return null;
+}
+
+function cardColorLabel(card) {
+  const colors = colorCodes(card);
+  if (colors === null) return "Unknown";
+  if (!colors.length) return "Colorless";
+  return colors.join(" ");
+}
+
+function cardMetadataPillsHtml(card) {
+  return `
+    <span class="type-pill">${escapeHtml(cardTypeLabel(card))}</span>
+    <span class="color-pill">${escapeHtml(cardColorLabel(card))}</span>
+  `;
+}
+
 function cardSelectionKey(card) {
   return `${card.scryfall_id}::${card.variant || "Normal"}`;
 }
 
 function updateBulkBar() {
   const count = state.selectedCards.size;
-  els.collectionBulkBar.hidden = count === 0;
-  els.selectedCardsCount.textContent = `${integer.format(count)} selected`;
+  for (const bar of [els.collectionBulkBar, els.favoritesBulkBar]) {
+    if (bar) bar.hidden = count === 0;
+  }
+  for (const countEl of [els.selectedCardsCount, els.favoriteSelectedCardsCount]) {
+    if (countEl) countEl.textContent = `${integer.format(count)} selected`;
+  }
 }
 
 function clearSelectedCards() {
   state.selectedCards.clear();
-  for (const checkbox of els.cardsGrid.querySelectorAll(".select-card-checkbox")) {
+  for (const checkbox of document.querySelectorAll(".select-card-checkbox")) {
     checkbox.checked = false;
   }
   updateBulkBar();
+}
+
+function updateSetMissingBar() {
+  const bar = els.setPageShell?.querySelector("#setMissingBulkBar");
+  const countEl = els.setPageShell?.querySelector("#setMissingSelectedCount");
+  const count = state.selectedSetMissingCards.size;
+  if (bar) bar.hidden = count === 0;
+  if (countEl) countEl.textContent = `${integer.format(count)} selected`;
+}
+
+function clearSetMissingSelection() {
+  state.selectedSetMissingCards.clear();
+  for (const checkbox of els.setPageShell?.querySelectorAll(".select-card-checkbox") || []) {
+    checkbox.checked = false;
+  }
+  updateSetMissingBar();
 }
 
 function wireCardSelection(selectWrap, selectCheckbox, card, options = {}) {
@@ -256,6 +556,13 @@ function wireCardSelection(selectWrap, selectCheckbox, card, options = {}) {
         name: cardTitle(card),
         quantity: Number(card.quantity || 0),
         unassigned_quantity: Number(card.unassigned_quantity ?? card.quantity ?? 0),
+        saleable_quantity: Number(card.saleable_quantity ?? card.quantity ?? 0),
+        deck_quantity: Number(card.deck_quantity || 0),
+        display_price: Number(card.display_price || card.market_price || 0),
+        sale_quantity: Number(card.sale_quantity || 0),
+        sale_price: Number(card.sale_price || card.display_price || card.market_price || 0),
+        card_condition: conditionText(card),
+        condition_inventory: Array.isArray(card.condition_inventory) ? card.condition_inventory : [],
         image_small: card.image_small || "",
         image_normal: card.image_normal || "",
       });
@@ -263,6 +570,30 @@ function wireCardSelection(selectWrap, selectCheckbox, card, options = {}) {
       state.selectedCards.delete(key);
     }
     updateBulkBar();
+  });
+}
+
+function wireSetMissingSelection(selectWrap, selectCheckbox, card) {
+  const owned = Number(card.quantity || 0) > 0;
+  const alreadyMissing = Boolean(Number(card.missing_list || 0));
+  const selectable = !owned && !alreadyMissing;
+  selectWrap.hidden = owned;
+  selectCheckbox.disabled = !selectable;
+  selectWrap.title = alreadyMissing ? "Already on Missing List" : "Select missing card";
+  selectCheckbox.setAttribute("aria-label", `Select ${cardTitle(card)} for Missing List`);
+  selectCheckbox.checked = state.selectedSetMissingCards.has(cardSelectionKey(card));
+  selectCheckbox.addEventListener("change", () => {
+    const key = cardSelectionKey(card);
+    if (selectCheckbox.checked) {
+      state.selectedSetMissingCards.set(key, {
+        card_id: card.scryfall_id,
+        variant: card.variant || "Normal",
+        name: cardTitle(card),
+      });
+    } else {
+      state.selectedSetMissingCards.delete(key);
+    }
+    updateSetMissingBar();
   });
 }
 
@@ -277,6 +608,140 @@ function wireDeleteCardButton(button, card) {
   button.addEventListener("click", () => {
     deleteCollectionCard(card).catch((error) => setStatus(error.message, "error"));
   });
+}
+
+function wireRefreshCardButton(button, card) {
+  if (!button) return;
+  button.addEventListener("click", () => {
+    refreshCardMetadata(button, card).catch((error) => setStatus(error.message, "error"));
+  });
+}
+
+function wireWishlistButton(button, card, options = {}) {
+  if (!button) return;
+  const owned = Number(card.quantity || 0) > 0;
+  button.hidden = owned;
+  button.disabled = owned;
+  if (owned) return;
+  button.classList.toggle("is-wishlist", Boolean(card.wishlist));
+  button.setAttribute("aria-pressed", card.wishlist ? "true" : "false");
+  button.title = card.wishlist ? "Remove from Wishlist" : "Add to Wishlist";
+  button.addEventListener("click", async (event) => {
+    event.stopPropagation();
+    const nextWishlist = !Boolean(card.wishlist);
+    if (!nextWishlist && options.confirmUnwishlist) {
+      const confirmed = window.confirm(`Remove ${cardTitle(card)} from Wishlist? It will disappear from this page.`);
+      if (!confirmed) return;
+    }
+    try {
+      await api(`/api/cards/${encodeURIComponent(card.scryfall_id)}/wishlist`, {
+        method: "POST",
+        body: JSON.stringify({
+          variant: card.variant || "Normal",
+          wishlist: nextWishlist,
+        }),
+      });
+      setStatus(nextWishlist ? `Added ${cardTitle(card)} to Wishlist.` : `Removed ${cardTitle(card)} from Wishlist.`, "", options.statusTarget || els.status);
+      if (options.afterWishlistChange) {
+        await options.afterWishlistChange();
+      } else {
+        await reloadVisibleCardPages();
+      }
+    } catch (error) {
+      setStatus(error.message, "error", options.statusTarget || els.status);
+    }
+  });
+}
+
+function openCardDetail(card) {
+  if (!card || !card.scryfall_id) return;
+  window.history.pushState({}, "", cardDetailUrl(card));
+  loadCardDetail(card.scryfall_id, card.variant || "Normal").catch((error) => {
+    setStatus(error.message, "error");
+  });
+}
+
+function wireCardDetailNavigation(node, card) {
+  node.addEventListener("click", (event) => {
+    if (event.target.closest("button, a, input, label, select, textarea")) return;
+    openCardDetail(card);
+  });
+}
+
+function wireScryfallButton(button, card) {
+  if (!button) return;
+  button.href = card.scryfall_uri || "#";
+  button.hidden = !card.scryfall_uri;
+  button.addEventListener("click", (event) => {
+    event.stopPropagation();
+  });
+}
+
+async function refreshCardMetadata(button, card) {
+  button.disabled = true;
+  button.classList.add("is-spinning");
+  setStatus(`Refreshing ${cardTitle(card)} from Scryfall...`);
+  try {
+    await api(`/api/cards/${encodeURIComponent(card.scryfall_id)}/refresh`, { method: "POST" });
+    setStatus(`Refreshed ${cardTitle(card)} from Scryfall.`);
+    await refresh();
+  } finally {
+    button.disabled = false;
+    button.classList.remove("is-spinning");
+  }
+}
+
+async function refreshCardDetailMetadata(button, card) {
+  button.disabled = true;
+  button.classList.add("is-spinning");
+  setStatus(`Refreshing ${cardTitle(card)} from Scryfall...`);
+  try {
+    await api(`/api/cards/${encodeURIComponent(card.scryfall_id)}/refresh`, { method: "POST" });
+    await Promise.all([
+      loadCardDetail(card.scryfall_id, card.variant || "Normal"),
+      refresh(),
+    ]);
+    setStatus(`Refreshed ${cardTitle(card)} from Scryfall.`);
+  } finally {
+    button.disabled = false;
+    button.classList.remove("is-spinning");
+  }
+}
+
+async function deleteCardFromDetail(card) {
+  await deleteCollectionCard(card);
+  window.history.pushState({}, "", "/");
+  showPage("collection");
+}
+
+async function deleteCardMovement(button) {
+  const card = state.activeCardDetail;
+  if (!card) return;
+  const movementType = button.dataset.movementType;
+  const movementId = button.dataset.movementId;
+  const isSale = movementType === "sell";
+  const confirmed = window.confirm(
+    isSale
+      ? "Delete this sold entry? This will undo the sale, restore inventory, and put the card back on For Sale."
+      : "Delete this purchase entry? This will reduce inventory. This is blocked if sold entries still depend on it."
+  );
+  if (!confirmed) return;
+  const result = await api(`/api/cards/${encodeURIComponent(card.scryfall_id)}/movements`, {
+    method: "DELETE",
+    body: JSON.stringify({
+      variant: card.variant || "Normal",
+      movement_type: movementType,
+      movement_id: movementId,
+    }),
+  });
+  if (result.card) {
+    renderCardDetail(result.card);
+  } else {
+    await loadCardDetail(card.scryfall_id, card.variant || "Normal");
+  }
+  await loadCards();
+  await loadSaleCards();
+  setStatus("Card history entry deleted.");
 }
 
 async function deleteCollectionCard(card) {
@@ -299,6 +764,22 @@ function setCollectionView(view) {
   renderCollection();
 }
 
+function setFavoritesView(view) {
+  state.favoritesView = view === "list" ? "list" : "tiles";
+  localStorage.setItem("foilfolio.favoritesView", state.favoritesView);
+  els.favoriteTileViewButton.classList.toggle("is-active", state.favoritesView === "tiles");
+  els.favoriteListViewButton.classList.toggle("is-active", state.favoritesView === "list");
+  renderFavorites();
+}
+
+function setWishlistView(view) {
+  state.wishlistView = view === "list" ? "list" : "tiles";
+  localStorage.setItem("foilfolio.wishlistView", state.wishlistView);
+  els.wishlistTileViewButton.classList.toggle("is-active", state.wishlistView === "tiles");
+  els.wishlistListViewButton.classList.toggle("is-active", state.wishlistView === "list");
+  renderWishlist();
+}
+
 function renderDashboard(data) {
   state.dashboard = data;
   els.currentValue.textContent = dollars.format(data.current_total || 0);
@@ -306,6 +787,14 @@ function renderDashboard(data) {
   els.gainLoss.textContent = `${dollars.format(data.gain_loss || 0)} (${(data.gain_loss_percent || 0).toFixed(1)}%)`;
   els.gainLoss.className = valueClass(data.gain_loss || 0);
   els.ownedCards.textContent = `${integer.format(data.owned_cards || 0)} cards`;
+  els.favoriteCount.textContent = integer.format(data.favorite_count || 0);
+  els.wishlistCount.textContent = integer.format(data.wishlist_count || 0);
+  els.saleCount.textContent = integer.format(data.sale_count || 0);
+  els.saleAskingTotal.textContent = dollars.format(data.sale_asking_total || 0);
+  els.deckCount.textContent = integer.format(data.deck_count || 0);
+  els.cardsInDecks.textContent = integer.format(data.cards_in_decks || 0);
+  els.containerCount.textContent = integer.format(data.container_count || 0);
+  els.uncontainedCards.textContent = integer.format(data.uncontained_cards || 0);
   els.historyCount.textContent = `${(data.history || []).length} months`;
   els.topCount.textContent = `${integer.format(data.owned_unique || 0)} owned prints`;
   renderTopCards(data.top_cards || []);
@@ -322,9 +811,7 @@ function renderTopCards(cards) {
   for (const card of cards) {
     const item = document.createElement("a");
     item.className = "top-item";
-    item.href = card.scryfall_uri || "#";
-    item.target = "_blank";
-    item.rel = "noreferrer";
+    item.href = cardDetailUrl(card);
     item.innerHTML = `
       <img src="${card.image_small || ""}" alt="">
       <div>
@@ -375,6 +862,117 @@ function showPage(pageName) {
   }
 }
 
+function pagePath(pageName) {
+  return pageRoutes[pageName] || "/";
+}
+
+function pushPageRoute(pageName) {
+  const nextPath = pagePath(pageName);
+  if (window.location.pathname !== nextPath) {
+    window.history.pushState({}, "", nextPath);
+  }
+}
+
+function activatePage(pageName, options = {}) {
+  const page = pageRoutes[pageName] ? pageName : "dashboard";
+  if (protectedPage(page) && !state.user) {
+    if (options.push) {
+      pushPageRoute("search");
+    }
+    showPage("search");
+    openAuthModal("login", "Log in or create an account to use that feature.");
+    return;
+  }
+  if (options.push) {
+    pushPageRoute(page);
+  }
+  showPage(page);
+  if (page === "settings") {
+    renderSettingsPage();
+  }
+  if (page === "dashboard") {
+    refresh().catch((error) => {
+      setStatus(error.message, "error");
+      renderCollection();
+    });
+  }
+  if (page === "favorites") {
+    clearSelectedCards();
+    loadFavorites().catch((error) => {
+      setStatus(error.message, "error", els.favoritesStatus);
+    });
+  }
+  if (page === "collection") {
+    loadCards().catch((error) => {
+      setStatus(error.message, "error");
+      renderCollection();
+    });
+  }
+  if (page === "missing-list") {
+    clearSelectedCards();
+    loadMissingList().catch((error) => {
+      setStatus(error.message, "error", els.missingStatus);
+    });
+  }
+  if (page === "for-sale") {
+    clearSelectedCards();
+    loadSaleCards().catch((error) => {
+      setStatus(error.message, "error", els.saleStatus);
+    });
+  }
+  if (page === "wishlist") {
+    clearSelectedCards();
+    loadWishlist().catch((error) => {
+      setStatus(error.message, "error", els.wishlistStatus);
+    });
+  }
+  if (page === "search") {
+    clearSelectedCards();
+    renderCatalogSearchResults();
+  }
+  if (page === "decks") {
+    loadDecks().catch((error) => {
+      els.decksStatus.textContent = error.message;
+    });
+  }
+  if (page === "containers") {
+    loadContainers().catch((error) => {
+      els.containersStatus.textContent = error.message;
+    });
+  }
+}
+
+function activeStatusTarget() {
+  const visiblePage = Array.from(els.pages).find((page) => !page.hidden)?.dataset.page || "";
+  if (visiblePage === "favorites") return els.favoritesStatus;
+  if (visiblePage === "missing-list") return els.missingStatus;
+  if (visiblePage === "for-sale") return els.saleStatus;
+  if (visiblePage === "wishlist") return els.wishlistStatus;
+  if (visiblePage === "search") return els.catalogSearchStatus;
+  return els.status;
+}
+
+async function reloadVisibleCardPages() {
+  const tasks = [loadCards()];
+  const favoritesVisible = Array.from(els.pages).some((page) => page.dataset.page === "favorites" && !page.hidden);
+  const missingVisible = Array.from(els.pages).some((page) => page.dataset.page === "missing-list" && !page.hidden);
+  const saleVisible = Array.from(els.pages).some((page) => page.dataset.page === "for-sale" && !page.hidden);
+  const wishlistVisible = Array.from(els.pages).some((page) => page.dataset.page === "wishlist" && !page.hidden);
+  if (favoritesVisible) {
+    tasks.push(loadFavorites());
+  }
+  if (missingVisible) {
+    tasks.push(loadMissingList());
+  }
+  if (saleVisible) {
+    tasks.push(loadSaleCards());
+  }
+  if (wishlistVisible) {
+    tasks.push(loadWishlist());
+  }
+  await Promise.all(tasks);
+}
+
 function sharedRouteId() {
   const match = window.location.pathname.match(/^\/cards\/([^/]+)\/?$/);
   return match ? decodeURIComponent(match[1]) : "";
@@ -388,6 +986,28 @@ function setRouteCode() {
 function deckRouteId() {
   const match = window.location.pathname.match(/^\/decks\/([^/]+)\/?$/);
   return match ? decodeURIComponent(match[1]) : "";
+}
+
+function favoritesShareRoute() {
+  return /^\/favorites\/shared\/?$/.test(window.location.pathname);
+}
+
+function cardDetailRoute() {
+  const match = window.location.pathname.match(/^\/card\/([^/]+)\/([^/]+)\/?$/);
+  if (!match) return null;
+  return {
+    cardId: decodeURIComponent(match[1]),
+    variant: decodeURIComponent(match[2]),
+  };
+}
+
+function appPageRoute() {
+  const normalized = window.location.pathname.replace(/\/+$/, "") || "/";
+  return routePages[normalized] || "";
+}
+
+function cardDetailUrl(card) {
+  return `/card/${encodeURIComponent(card.scryfall_id || card.card_id || "")}/${encodeURIComponent(card.variant || "Normal")}`;
 }
 
 function renderChart(points) {
@@ -590,10 +1210,123 @@ function cardQuery() {
   return params.toString();
 }
 
+function favoriteQuery() {
+  const params = new URLSearchParams({
+    search: els.favoriteSearchInput.value.trim(),
+    owned: "owned",
+    favorite: "1",
+    sort: els.favoriteSortSelect.value,
+    limit: "250",
+  });
+  return params.toString();
+}
+
+function missingQuery() {
+  const params = new URLSearchParams({
+    search: els.missingSearchInput.value.trim(),
+    owned: "missing",
+    missing_list: "1",
+    sort: els.missingSortSelect.value,
+    limit: "5000",
+  });
+  return params.toString();
+}
+
+function wishlistQuery() {
+  const params = new URLSearchParams({
+    search: els.wishlistSearchInput.value.trim(),
+    owned: "missing",
+    wishlist: "1",
+    sort: els.wishlistSortSelect.value,
+    limit: "5000",
+  });
+  return params.toString();
+}
+
+function saleQuery() {
+  const params = new URLSearchParams({
+    search: els.saleSearchInput.value.trim(),
+    sort: els.saleSortSelect.value,
+    limit: "5000",
+  });
+  return params.toString();
+}
+
 async function loadCards() {
   const data = await api(`/api/cards?${cardQuery()}`);
   state.cards = data.cards || [];
   renderCollection();
+}
+
+async function loadFavorites() {
+  const data = await api(`/api/cards?${favoriteQuery()}`);
+  state.favoriteCards = data.cards || [];
+  renderFavorites();
+}
+
+async function loadMissingList() {
+  const data = await api(`/api/cards?${missingQuery()}`);
+  state.missingCards = data.cards || [];
+  renderMissingList();
+}
+
+async function loadWishlist() {
+  const data = await api(`/api/cards/wishlist?${wishlistQuery()}`);
+  state.wishlistCards = data.cards || [];
+  renderWishlist();
+}
+
+function scryfallQuoted(value) {
+  return `"${String(value || "").replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+}
+
+function buildCatalogSearchQuery() {
+  const parts = [];
+  const text = els.catalogSearchInput.value.trim();
+  const oracle = els.catalogOracleInput.value.trim();
+  const setCode = els.catalogSetInput.value.trim().toLowerCase();
+  const color = els.catalogColorSelect.value;
+  const type = els.catalogTypeSelect.value;
+  const rarity = els.catalogRaritySelect.value;
+  const format = els.catalogFormatSelect.value;
+  if (text) parts.push(text);
+  if (oracle) parts.push(`o:${scryfallQuoted(oracle)}`);
+  if (setCode) parts.push(`e:${setCode}`);
+  if (color === "multi") parts.push("c>=2");
+  else if (color === "colorless") parts.push("c:c");
+  else if (color) parts.push(`c:${color}`);
+  if (type) parts.push(`t:${type}`);
+  if (rarity) parts.push(`r:${rarity}`);
+  if (format) parts.push(`legal:${format}`);
+  return parts.join(" ").trim();
+}
+
+async function searchCatalog() {
+  const query = buildCatalogSearchQuery();
+  if (query.length < 2) {
+    els.catalogSearchStatus.textContent = "Enter a card search or choose at least one filter.";
+    return;
+  }
+  els.catalogSearchButton.disabled = true;
+  els.catalogSearchStatus.textContent = "Searching Scryfall...";
+  try {
+    const language = (state.settings && state.settings.language) || "en";
+    const order = els.catalogSortSelect.value || "released";
+    const result = await api(`/api/scryfall/search?q=${encodeURIComponent(query)}&lang=${encodeURIComponent(language)}&order=${encodeURIComponent(order)}`);
+    state.catalogSearchResults = result.cards || [];
+    renderCatalogSearchResults();
+    els.catalogSearchStatus.textContent = `${integer.format(state.catalogSearchResults.length)} result${state.catalogSearchResults.length === 1 ? "" : "s"}`;
+  } catch (error) {
+    els.catalogSearchStatus.textContent = error.message;
+  } finally {
+    els.catalogSearchButton.disabled = false;
+  }
+}
+
+async function loadSaleCards() {
+  const data = await api(`/api/cards/for-sale?${saleQuery()}`);
+  state.saleCards = data.cards || [];
+  renderSaleList();
 }
 
 function renderCollection() {
@@ -607,15 +1340,308 @@ function renderCollection() {
   }
 }
 
+function renderFavorites() {
+  els.favoritesGrid.className = state.favoritesView === "list" ? "cards-list" : "cards-grid";
+  els.favoriteTileViewButton.classList.toggle("is-active", state.favoritesView === "tiles");
+  els.favoriteListViewButton.classList.toggle("is-active", state.favoritesView === "list");
+  const options = {
+    selectable: true,
+    confirmUnfavorite: true,
+    statusTarget: els.favoritesStatus,
+    afterFavoriteChange: async () => {
+      await loadFavorites();
+      await refresh();
+    },
+  };
+  if (state.favoritesView === "list") {
+    renderCardList(state.favoriteCards, els.favoritesGrid, options);
+  } else {
+    renderCards(state.favoriteCards, els.favoritesGrid, options);
+  }
+}
+
+function renderWishlist() {
+  els.wishlistGrid.className = state.wishlistView === "list" ? "cards-list" : "cards-grid";
+  els.wishlistTileViewButton.classList.toggle("is-active", state.wishlistView === "tiles");
+  els.wishlistListViewButton.classList.toggle("is-active", state.wishlistView === "list");
+  const options = {
+    confirmUnwishlist: true,
+    statusTarget: els.wishlistStatus,
+    afterWishlistChange: async () => {
+      await loadWishlist();
+      await refresh();
+    },
+  };
+  if (state.wishlistView === "list") {
+    renderCardList(state.wishlistCards, els.wishlistGrid, options);
+  } else {
+    renderCards(state.wishlistCards, els.wishlistGrid, options);
+  }
+}
+
+function renderCatalogSearchResults() {
+  els.catalogSearchGrid.innerHTML = "";
+  if (!state.catalogSearchResults.length) {
+    els.catalogSearchGrid.innerHTML = '<div class="empty-state">Search Scryfall to add cards to Wishlist or Collection.</div>';
+    return;
+  }
+  for (const card of state.catalogSearchResults) {
+    const owned = Number(card.owned_quantity || 0) > 0;
+    const item = document.createElement("article");
+    item.className = "catalog-result-card";
+    item.classList.toggle("is-owned", owned);
+    item.innerHTML = `
+      <a class="catalog-result-art" href="${escapeHtml(card.scryfall_uri || "#")}" target="_blank" rel="noreferrer" title="Open on Scryfall">
+        <img src="${escapeHtml(card.image_normal || card.image_small || "")}" alt="${escapeHtml(cardTitle(card))}">
+      </a>
+      <div class="catalog-result-copy">
+        <h3>${escapeHtml(cardTitle(card))}</h3>
+        <p>${escapeHtml(card.set_name || "")} #${escapeHtml(card.collector_number || "")} - ${escapeHtml(card.rarity || "unknown")}</p>
+        <p>${escapeHtml(card.type_line || "")}</p>
+        <div class="catalog-result-pills">
+          <span>${escapeHtml(cardTypeLabel(card))}</span>
+          <span>${escapeHtml(cardColorLabel(card))}</span>
+          <span>${dollars.format(priceForVariant(card, "Normal"))}</span>
+          <span>Owned ${integer.format(card.owned_quantity || 0)}</span>
+        </div>
+      </div>
+      <div class="catalog-result-actions">
+        <button class="wishlist-button ${card.wishlist ? "is-wishlist" : ""}" type="button" aria-label="${card.wishlist ? "Remove from Wishlist" : "Add to Wishlist"}" title="${owned ? "Owned cards are not available for Wishlist" : card.wishlist ? "Remove from Wishlist" : "Add to Wishlist"}" ${owned ? "disabled" : ""}></button>
+        <button class="primary-button catalog-add-button" type="button">Add to Collection</button>
+      </div>
+    `;
+    const wishlistButton = item.querySelector(".wishlist-button");
+    wishlistButton.addEventListener("click", async () => {
+      if (owned) return;
+      const nextWishlist = !Boolean(card.wishlist);
+      try {
+        await api(`/api/cards/${encodeURIComponent(card.scryfall_id)}/wishlist`, {
+          method: "POST",
+          body: JSON.stringify({ variant: "Normal", wishlist: nextWishlist, card }),
+        });
+        card.wishlist = nextWishlist ? 1 : 0;
+        setStatus(nextWishlist ? `Added ${cardTitle(card)} to Wishlist.` : `Removed ${cardTitle(card)} from Wishlist.`, "", els.catalogSearchStatus);
+        renderCatalogSearchResults();
+      } catch (error) {
+        setStatus(error.message, "error", els.catalogSearchStatus);
+      }
+    });
+    item.querySelector(".catalog-add-button").addEventListener("click", () => openAddCardModal(card));
+    els.catalogSearchGrid.appendChild(item);
+  }
+}
+
+function renderMissingList() {
+  els.missingGrid.className = "missing-list-grid";
+  els.missingGrid.innerHTML = "";
+  if (!state.missingCards.length) {
+    els.missingGrid.innerHTML = '<div class="empty-state">No cards are on your Missing List yet.</div>';
+    return;
+  }
+  for (const card of state.missingCards) {
+    const row = document.createElement("article");
+    row.className = "missing-card-row";
+    row.innerHTML = `
+      <a class="missing-card-art" href="${escapeHtml(cardDetailUrl(card))}">
+        <img src="${escapeHtml(card.image_small || card.image_normal || "")}" alt="${escapeHtml(cardTitle(card))}">
+      </a>
+      <div class="missing-card-main">
+        <div class="missing-card-title-row">
+          <div>
+            <h3>${escapeHtml(cardTitle(card))}</h3>
+            <p>${escapeHtml(card.set_name || "")} #${escapeHtml(card.collector_number || "")}${cardRulesName(card) ? ` - Rules: ${escapeHtml(cardRulesName(card))}` : ""}</p>
+          </div>
+          <div class="missing-card-pills">
+            <span>${escapeHtml(card.rarity || "unknown")}</span>
+            <span>${escapeHtml(cardTypeLabel(card))}</span>
+            <span>${escapeHtml(cardColorLabel(card))}</span>
+          </div>
+        </div>
+        <div class="missing-market-links">
+          ${marketplaceLinksHtml(card)}
+        </div>
+      </div>
+      <div class="missing-row-actions">
+        <button class="wishlist-button" type="button" aria-label="Wishlist card" title="Wishlist"></button>
+        <button class="remove-missing-button" type="button" aria-label="Remove from Missing List" title="Remove from Missing List">
+          <span class="remove-list-icon" aria-hidden="true"></span>
+        </button>
+      </div>
+    `;
+    wireWishlistButton(row.querySelector(".wishlist-button"), card, {
+      statusTarget: els.missingStatus,
+      afterWishlistChange: async () => {
+        await loadMissingList();
+        await loadWishlist();
+      },
+    });
+    row.querySelector(".remove-missing-button").addEventListener("click", () => {
+      removeFromMissingList(card).catch((error) => setStatus(error.message, "error", els.missingStatus));
+    });
+    els.missingGrid.appendChild(row);
+  }
+}
+
+function marketplaceSearchQuery(card) {
+  const parts = [
+    cardTitle(card),
+    cardRulesName(card),
+    card.set_name,
+    card.collector_number ? `#${card.collector_number}` : "",
+  ].filter(Boolean);
+  return parts.join(" ");
+}
+
+function marketplaceLinks(card) {
+  const query = marketplaceSearchQuery(card);
+  const encoded = encodeURIComponent(query);
+  return [
+    ["eBay", `https://www.ebay.com/sch/i.html?_nkw=${encoded}`],
+    ["TCGplayer", `https://www.tcgplayer.com/search/magic/product?productLineName=magic&q=${encoded}&view=grid`],
+    ["Cardmarket", `https://www.cardmarket.com/en/Magic/Products/Search?searchString=${encoded}`],
+    ["Cardhoarder", `https://www.cardhoarder.com/cards?data%5Bsearch%5D=${encoded}`],
+  ];
+}
+
+function marketplaceLinksHtml(card) {
+  return marketplaceLinks(card).map(([label, url]) => `
+    <a href="${escapeHtml(url)}" target="_blank" rel="noreferrer">${escapeHtml(label)}</a>
+  `).join("");
+}
+
+async function removeFromMissingList(card) {
+  const confirmed = window.confirm(`Remove ${cardTitle(card)} from your Missing List?`);
+  if (!confirmed) return;
+  const result = await api("/api/cards/missing-list", {
+    method: "POST",
+    body: JSON.stringify({
+      missing_list: false,
+      cards: [{
+        card_id: card.scryfall_id,
+        variant: card.variant || "Normal",
+      }],
+    }),
+  });
+  setStatus(`Removed ${cardTitle(card)} from Missing List.`, "success", els.missingStatus);
+  await loadMissingList();
+  if (result.updated === 0) {
+    await refresh();
+  }
+}
+
+function renderSaleList() {
+  els.saleGrid.className = "sale-list-grid";
+  els.saleGrid.innerHTML = "";
+  if (!state.saleCards.length) {
+    els.saleGrid.innerHTML = '<div class="empty-state">No cards are marked for sale yet.</div>';
+    return;
+  }
+  for (const card of state.saleCards) {
+    const row = document.createElement("article");
+    row.className = "sale-card-row";
+    row.dataset.cardId = card.scryfall_id;
+    row.dataset.variant = card.variant || "Normal";
+    row.dataset.condition = conditionText(card);
+    row.innerHTML = `
+      <a class="sale-card-art" href="${escapeHtml(cardDetailUrl(card))}">
+        <img src="${escapeHtml(card.image_small || card.image_normal || "")}" alt="${escapeHtml(cardTitle(card))}">
+      </a>
+      <div class="sale-card-copy">
+        <h3>${escapeHtml(cardTitle(card))}</h3>
+        <p>${escapeHtml(card.set_name || "")} #${escapeHtml(card.collector_number || "")} - ${escapeHtml(card.variant || "Normal")} - ${escapeHtml(conditionText(card))}</p>
+      </div>
+      <span class="sale-available">Available ${integer.format(card.quantity || 0)}</span>
+      <span class="sale-value-pill">${dollars.format(card.display_price || 0)} market</span>
+      <label class="sale-inline-field">
+        Qty
+        <input name="quantity" type="number" min="1" max="${Number(card.quantity || 0)}" step="1" value="${Number(card.sale_quantity || 1)}">
+      </label>
+      <label class="sale-inline-field">
+        Asking
+        <input name="asking_price" type="number" min="0.01" step="0.01" value="${Number(card.sale_price || card.display_price || 0.01).toFixed(2)}">
+      </label>
+      <button class="mark-sold-button" type="button" aria-label="Mark sold" title="Mark sold">
+        <span class="sold-icon" aria-hidden="true">$$</span>
+      </button>
+      <button class="remove-sale-button" type="button" aria-label="Remove from sale" title="Remove from sale">
+        <span class="remove-list-icon" aria-hidden="true"></span>
+      </button>
+    `;
+    row.querySelectorAll("input").forEach((input) => {
+      input.addEventListener("change", () => {
+        saveSaleRow(row).catch((error) => setStatus(error.message, "error", els.saleStatus));
+      });
+    });
+    row.querySelector(".remove-sale-button").addEventListener("click", () => {
+      removeFromSale(card).catch((error) => setStatus(error.message, "error", els.saleStatus));
+    });
+    row.querySelector(".mark-sold-button").addEventListener("click", () => openSoldModal(card));
+    els.saleGrid.appendChild(row);
+  }
+}
+
+function salePayloadFromRow(row) {
+  const quantityInput = row.querySelector('input[name="quantity"]');
+  const priceInput = row.querySelector('input[name="asking_price"]');
+  return {
+    card_id: row.dataset.cardId,
+    variant: row.dataset.variant || "Normal",
+    card_condition: row.dataset.condition || "Near Mint",
+    quantity: Number(quantityInput?.value || 0),
+    asking_price: Number(priceInput?.value || 0),
+  };
+}
+
+async function saveSaleRow(row) {
+  const payload = salePayloadFromRow(row);
+  const max = Number(row.querySelector('input[name="quantity"]')?.max || 0);
+  if (payload.quantity < 1 || payload.quantity > max) {
+    throw new Error(`Sale quantity must be between 1 and ${integer.format(max)}.`);
+  }
+  if (payload.asking_price <= 0) {
+    throw new Error("Asking price must be greater than $0.00.");
+  }
+  await api("/api/cards/for-sale", {
+    method: "POST",
+    body: JSON.stringify({ cards: [payload], for_sale: true }),
+  });
+  setStatus("Sale listing updated.", "success", els.saleStatus);
+  await loadCards();
+}
+
+async function removeFromSale(card) {
+  const confirmed = window.confirm(`Remove ${cardTitle(card)} from For Sale?`);
+  if (!confirmed) return;
+  await api("/api/cards/for-sale", {
+    method: "POST",
+    body: JSON.stringify({
+      for_sale: false,
+      cards: [{
+        card_id: card.scryfall_id,
+        variant: card.variant || "Normal",
+        card_condition: conditionText(card),
+      }],
+    }),
+  });
+  setStatus(`Removed ${cardTitle(card)} from For Sale.`, "success", els.saleStatus);
+  await loadSaleCards();
+  await loadCards();
+}
+
+function isCardGridTarget(target) {
+  return target === els.cardsGrid || target === els.favoritesGrid;
+}
+
 function renderCards(cards, target = els.cardsGrid, options = {}) {
   target.innerHTML = "";
   if (!cards.length) {
     target.innerHTML = '<div class="empty-state">No cards match the current filters.</div>';
-    if (target === els.cardsGrid) updateBulkBar();
+    if (isCardGridTarget(target)) updateBulkBar();
     return;
   }
   for (const card of cards) {
     const owned = Number(card.quantity || 0) > 0;
+    const catalogOnly = Boolean(card.catalog_only);
     const node = els.template.content.firstElementChild.cloneNode(true);
     const selectWrap = node.querySelector(".select-card-wrap");
     const selectCheckbox = node.querySelector(".select-card-checkbox");
@@ -630,13 +1656,20 @@ function renderCards(cards, target = els.cardsGrid, options = {}) {
     const delta = node.querySelector(".delta");
     const variantPill = node.querySelector(".variant-pill");
     const conditionPill = node.querySelector(".condition-pill");
+    const typePill = node.querySelector(".type-pill");
+    const colorPill = node.querySelector(".color-pill");
     const favoriteButton = node.querySelector(".favorite-button");
+    const wishlistButton = node.querySelector(".wishlist-button");
+    const refreshButton = node.querySelector(".refresh-card-button");
     const editButton = node.querySelector(".edit-button");
     const deckButton = node.querySelector(".deck-membership-button");
     const containerButton = node.querySelector(".container-membership-button");
+    const scryfallButton = node.querySelector(".scryfall-button");
     const shareButton = node.querySelector(".share-button");
 
-    link.href = card.scryfall_uri || "#";
+    link.href = catalogOnly ? (card.scryfall_uri || "#") : cardDetailUrl(card);
+    link.target = catalogOnly ? "_blank" : "_self";
+    link.rel = catalogOnly ? "noreferrer" : "";
     img.src = card.image_normal || card.image_small || "";
     img.alt = cardTitle(card);
     title.textContent = cardTitle(card);
@@ -651,14 +1684,24 @@ function renderCards(cards, target = els.cardsGrid, options = {}) {
     delta.className = `delta ${valueClass(card.gain_loss || 0)}`;
     variantPill.textContent = card.variant || "Normal";
     conditionPill.textContent = conditionText(card);
+    typePill.textContent = cardTypeLabel(card);
+    colorPill.textContent = cardColorLabel(card);
 
-    wireCardSelection(selectWrap, selectCheckbox, card, options);
+    if (options.setMissingSelectable) {
+      wireSetMissingSelection(selectWrap, selectCheckbox, card);
+    } else {
+      wireCardSelection(selectWrap, selectCheckbox, card, options);
+    }
 
     favoriteButton.classList.toggle("is-favorite", Boolean(card.favorite));
     favoriteButton.setAttribute("aria-pressed", card.favorite ? "true" : "false");
     favoriteButton.title = card.favorite ? "Remove favorite" : "Favorite";
     favoriteButton.addEventListener("click", async () => {
       const nextFavorite = !Boolean(card.favorite);
+      if (!nextFavorite && options.confirmUnfavorite) {
+        const confirmed = window.confirm(`Remove ${cardTitle(card)} from Favorites? It will disappear from this page.`);
+        if (!confirmed) return;
+      }
       try {
         await api(`/api/cards/${encodeURIComponent(card.scryfall_id)}/favorite`, {
           method: "POST",
@@ -667,31 +1710,48 @@ function renderCards(cards, target = els.cardsGrid, options = {}) {
             favorite: nextFavorite,
           }),
         });
-        setStatus(nextFavorite ? `Favorited ${cardTitle(card)}.` : `Removed favorite from ${cardTitle(card)}.`);
-        await refresh();
+        setStatus(nextFavorite ? `Favorited ${cardTitle(card)}.` : `Removed favorite from ${cardTitle(card)}.`, "", options.statusTarget || els.status);
+        if (options.afterFavoriteChange) {
+          await options.afterFavoriteChange();
+        } else {
+          await refresh();
+        }
       } catch (error) {
-        setStatus(error.message, "error");
+        setStatus(error.message, "error", options.statusTarget || els.status);
       }
     });
-    editButton.addEventListener("click", () => openEditModal(card));
-    wireDeckMembershipButton(deckButton, card, target === els.cardsGrid);
-    wireContainerMembershipButton(containerButton, card, target === els.cardsGrid);
+    wireWishlistButton(wishlistButton, card, options);
+    if (catalogOnly) {
+      refreshButton.hidden = true;
+      editButton.hidden = true;
+      shareButton.hidden = true;
+      deckButton.hidden = true;
+      containerButton.hidden = true;
+    } else {
+      wireRefreshCardButton(refreshButton, card);
+      editButton.addEventListener("click", () => openCardDetail(card));
+      wireDeckMembershipButton(deckButton, card, target === els.cardsGrid);
+      wireContainerMembershipButton(containerButton, card, target === els.cardsGrid);
+      wireCardDetailNavigation(node, card);
+    }
+    wireScryfallButton(scryfallButton, card);
     wireShareButton(shareButton, card);
 
     target.appendChild(node);
   }
-  if (target === els.cardsGrid) updateBulkBar();
+  if (isCardGridTarget(target)) updateBulkBar();
 }
 
 function renderCardList(cards, target = els.cardsGrid, options = {}) {
   target.innerHTML = "";
   if (!cards.length) {
     target.innerHTML = '<div class="empty-state">No cards match the current filters.</div>';
-    if (target === els.cardsGrid) updateBulkBar();
+    if (isCardGridTarget(target)) updateBulkBar();
     return;
   }
   for (const card of cards) {
     const owned = Number(card.quantity || 0) > 0;
+    const catalogOnly = Boolean(card.catalog_only);
     const node = els.listTemplate.content.firstElementChild.cloneNode(true);
     const selectWrap = node.querySelector(".select-card-wrap");
     const selectCheckbox = node.querySelector(".select-card-checkbox");
@@ -705,14 +1765,22 @@ function renderCardList(cards, target = els.cardsGrid, options = {}) {
     const quantity = node.querySelector(".detail-quantity");
     const variant = node.querySelector(".detail-variant");
     const conditionPill = node.querySelector(".condition-pill");
+    const typePill = node.querySelector(".type-pill");
+    const colorPill = node.querySelector(".color-pill");
     const deckButton = node.querySelector(".deck-membership-button");
     const containerButton = node.querySelector(".container-membership-button");
+    const scryfallButton = node.querySelector(".scryfall-button");
+    const refreshButton = node.querySelector(".refresh-card-button");
+    const editButton = node.querySelector(".edit-button");
     const shareButton = node.querySelector(".share-button");
+    const wishlistButton = node.querySelector(".wishlist-button");
     const deleteButton = node.querySelector(".delete-card-button");
 
     node.classList.toggle("is-special", isSpecialVariant(card.variant));
     node.classList.toggle("is-missing", !owned);
-    link.href = card.scryfall_uri || "#";
+    link.href = catalogOnly ? (card.scryfall_uri || "#") : cardDetailUrl(card);
+    link.target = catalogOnly ? "_blank" : "_self";
+    link.rel = catalogOnly ? "noreferrer" : "";
     img.src = card.image_normal || card.image_small || "";
     img.alt = cardTitle(card);
     title.textContent = cardTitle(card);
@@ -723,16 +1791,32 @@ function renderCardList(cards, target = els.cardsGrid, options = {}) {
     quantity.textContent = `Qty ${integer.format(card.quantity || 0)}`;
     variant.textContent = card.variant || "Normal";
     conditionPill.textContent = conditionText(card);
+    typePill.textContent = cardTypeLabel(card);
+    colorPill.textContent = cardColorLabel(card);
 
     wireCardSelection(selectWrap, selectCheckbox, card, options);
     wireDeckMembershipButton(deckButton, card, target === els.cardsGrid);
     wireContainerMembershipButton(containerButton, card, target === els.cardsGrid);
-    wireShareButton(shareButton, card);
-    wireDeleteCardButton(deleteButton, card);
+    wireScryfallButton(scryfallButton, card);
+    if (catalogOnly) {
+      deckButton.hidden = true;
+      containerButton.hidden = true;
+      refreshButton.hidden = true;
+      editButton.hidden = true;
+      shareButton.hidden = true;
+      deleteButton.hidden = true;
+    } else {
+      wireRefreshCardButton(refreshButton, card);
+      editButton.addEventListener("click", () => openCardDetail(card));
+      wireShareButton(shareButton, card);
+      wireDeleteCardButton(deleteButton, card);
+      wireCardDetailNavigation(node, card);
+    }
+    wireWishlistButton(wishlistButton, card, options);
 
     target.appendChild(node);
   }
-  if (target === els.cardsGrid) updateBulkBar();
+  if (isCardGridTarget(target)) updateBulkBar();
 }
 
 function formatDate(value) {
@@ -790,6 +1874,10 @@ function shareUrlForDeck(deck) {
   return new URL(`/decks/${encodeURIComponent(deck.share_id)}`, window.location.origin).toString();
 }
 
+function shareUrlForFavorites() {
+  return new URL("/favorites/shared", window.location.origin).toString();
+}
+
 function openShareUrl(title, url) {
   els.shareTitle.textContent = title;
   els.shareUrlInput.value = url;
@@ -815,6 +1903,10 @@ function openDeckShareModal(deck) {
     return;
   }
   openShareUrl(deck.name || "Deck", url);
+}
+
+function openFavoritesShareModal() {
+  openShareUrl("Favorites", shareUrlForFavorites());
 }
 
 function deckMemberships(card) {
@@ -849,6 +1941,7 @@ function openCardDecksModal(card) {
     <button class="card-deck-link" type="button" data-share-id="${escapeHtml(deck.share_id || "")}">
       <span class="deck-icon" aria-hidden="true"></span>
       <span>${escapeHtml(deck.name || "Deck")}</span>
+      <small>Qty ${integer.format(deck.deck_quantity || 1)}</small>
     </button>
   `).join("");
   for (const button of els.cardDecksList.querySelectorAll(".card-deck-link")) {
@@ -980,7 +2073,7 @@ function variantsForCard(card) {
   return variants.length ? variants : ["Normal"];
 }
 
-function openAddCardModal() {
+function openAddCardModal(preselectedCard = null) {
   state.addResults = [];
   state.selectedAddCard = null;
   els.addSearchForm.reset();
@@ -1000,7 +2093,16 @@ function openAddCardModal() {
   els.confirmAddNewCardButton.disabled = true;
   els.addCardOverlay.hidden = false;
   document.body.classList.add("modal-open");
-  els.addSearchInput.focus();
+  if (preselectedCard && preselectedCard.scryfall_id) {
+    state.addResults = [preselectedCard];
+    els.addSearchInput.value = cardTitle(preselectedCard);
+    renderAddResults(state.addResults);
+    selectAddCard(preselectedCard);
+    els.addSearchStatus.textContent = "Selected from Search.";
+    els.addCardForm.quantity.focus();
+  } else {
+    els.addSearchInput.focus();
+  }
 }
 
 function resetAddCardModalForNew() {
@@ -1132,6 +2234,30 @@ function closeSettingsModal() {
   els.settingsForm.reset();
 }
 
+function renderSettingsPage() {
+  if (!els.settingsPageForm) return;
+  const settings = state.settings || defaultSettings();
+  els.settingsPageForm.language.value = settings.language || "en";
+  els.settingsPageForm.theme.value = settings.theme || "light";
+  if (els.settingsAccountEmail) {
+    els.settingsAccountEmail.textContent = state.user ? state.user.email : "Not logged in";
+  }
+}
+
+async function saveUserSettings(payload) {
+  if (!state.user) {
+    saveSettings(payload);
+    return;
+  }
+  const result = await api("/api/user/settings", {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+  state.user = result.user;
+  syncSettingsFromUser(state.user);
+  updateAuthUi();
+}
+
 function renderDecks(decks) {
   els.decksGrid.innerHTML = "";
   if (!decks.length) {
@@ -1150,7 +2276,7 @@ function renderDecks(decks) {
         <h3>${escapeHtml(deck.name)}</h3>
       </div>
       <strong>${integer.format(deck.card_count || 0)}</strong>
-      <span>cards assigned</span>
+      <span>${integer.format(deck.unique_card_count || 0)} unique cards assigned</span>
     `;
     item.addEventListener("click", () => {
       openDeckDetailModal(deck.id).catch((error) => {
@@ -1178,9 +2304,10 @@ function renderDeckDetail(deck, readonly = false) {
       <div>
         <strong>${escapeHtml(cardTitle(card))}</strong>
         <span>${escapeHtml(card.set_name || "")} #${escapeHtml(card.collector_number || "")} - ${escapeHtml(card.variant || "Normal")}</span>
+        <div class="deck-card-tags">${cardMetadataPillsHtml(card)}</div>
       </div>
-      <b>Qty ${integer.format(card.quantity || 0)}</b>
-      ${readonly ? "" : '<button class="remove-deck-card-button" type="button" aria-label="Remove card from deck" title="Remove card">x</button>'}
+      <b>Qty ${integer.format(deckQuantity(card))}</b>
+      ${readonly ? "" : '<button class="remove-deck-card-button" type="button" aria-label="Remove card from deck" title="Remove card"><span class="trash-icon" aria-hidden="true"></span></button>'}
     `;
     if (!readonly) {
       const removeButton = row.querySelector(".remove-deck-card-button");
@@ -1213,8 +2340,16 @@ function deckCardKey(card) {
   return `${card.scryfall_id || card.card_id || ""}::${card.variant || "Normal"}`;
 }
 
-function activeDeckCardKeys() {
-  return new Set((state.activeDeck?.cards || []).map(deckCardKey));
+function activeDeckQuantities() {
+  const quantities = new Map();
+  for (const card of state.activeDeck?.cards || []) {
+    quantities.set(deckCardKey(card), Number(card.deck_quantity ?? card.quantity ?? 0));
+  }
+  return quantities;
+}
+
+function deckQuantity(card) {
+  return Number(card.deck_quantity ?? card.quantity ?? 0);
 }
 
 function openDeckCardSearchModal() {
@@ -1245,23 +2380,31 @@ function renderDeckCardSearchResults(cards) {
     return;
   }
   for (const card of cards) {
-    const button = document.createElement("button");
-    button.className = "deck-card-search-result";
-    button.type = "button";
-    button.innerHTML = `
+    const available = Math.max(1, Number(card.available_deck_quantity ?? card.quantity ?? 1));
+    const current = Number(card.deck_quantity || 0);
+    const row = document.createElement("article");
+    row.className = "deck-card-search-result";
+    row.innerHTML = `
       <img src="${escapeHtml(card.image_small || card.image_normal || "")}" alt="">
       <span>
         <strong>${escapeHtml(cardTitle(card))}</strong>
         <small>${escapeHtml(card.set_name || "")} #${escapeHtml(card.collector_number || "")} - ${escapeHtml(card.variant || "Normal")}</small>
+        <small>${current ? `${integer.format(current)} already in deck - ` : ""}${integer.format(available)} available to add</small>
+        <span class="deck-card-tags">${cardMetadataPillsHtml(card)}</span>
       </span>
-      <b>Qty ${integer.format(card.quantity || 0)}</b>
+      <label class="deck-quantity-field">
+        Qty
+        <input type="number" min="1" max="${available}" step="1" value="1" aria-label="Quantity to add">
+      </label>
+      <button class="primary-button deck-add-card-button" type="button">Add</button>
     `;
-    button.addEventListener("click", () => {
-      addOwnedCardToActiveDeck(card).catch((error) => {
+    const input = row.querySelector("input");
+    row.querySelector(".deck-add-card-button").addEventListener("click", () => {
+      addOwnedCardToActiveDeck(card, Number(input.value || 1)).catch((error) => {
         els.deckCardSearchStatus.textContent = error.message;
       });
     });
-    els.deckCardSearchResults.appendChild(button);
+    els.deckCardSearchResults.appendChild(row);
   }
 }
 
@@ -1281,30 +2424,37 @@ async function searchOwnedCardsForDeck() {
     limit: "250",
   });
   const data = await api(`/api/cards?${params.toString()}`);
-  const deckKeys = activeDeckCardKeys();
+  const deckQuantities = activeDeckQuantities();
   const cards = (data.cards || []).filter((card) => {
-    return Number(card.quantity || 0) > 0 && !deckKeys.has(deckCardKey(card));
+    const inDeck = deckQuantities.get(deckCardKey(card)) || 0;
+    const available = Number(card.quantity || 0) - inDeck;
+    card.deck_quantity = inDeck;
+    card.available_deck_quantity = available;
+    return available > 0;
   });
   els.deckCardSearchStatus.textContent = `${integer.format(cards.length)} available match${cards.length === 1 ? "" : "es"}.`;
   renderDeckCardSearchResults(cards);
 }
 
-async function addOwnedCardToActiveDeck(card) {
+async function addOwnedCardToActiveDeck(card, quantity = 1) {
   if (!state.activeDeck) return;
   const deckId = state.activeDeck.id;
+  const max = Math.max(1, Number(card.available_deck_quantity ?? card.quantity ?? 1));
+  const selectedQuantity = Math.min(Math.max(1, Number(quantity || 1)), max);
   await api(`/api/decks/${encodeURIComponent(deckId)}/cards`, {
     method: "POST",
     body: JSON.stringify({
       cards: [{
         card_id: card.scryfall_id || card.card_id,
         variant: card.variant || "Normal",
+        quantity: selectedQuantity,
       }],
     }),
   });
   const deck = await api(`/api/decks/${encodeURIComponent(deckId)}`);
   renderDeckDetail(deck);
   await loadDecks();
-  els.deckCardSearchStatus.textContent = `Added ${cardTitle(card)}.`;
+  els.deckCardSearchStatus.textContent = `Added ${integer.format(selectedQuantity)} ${cardTitle(card)}.`;
   await searchOwnedCardsForDeck();
 }
 
@@ -1355,6 +2505,38 @@ function closeAddDeckModal() {
   els.addDeckForm.reset();
 }
 
+function renderAssignDeckCards(deck = null) {
+  const deckQuantities = new Map((deck?.cards || []).map((card) => [deckCardKey(card), deckQuantity(card)]));
+  const cards = Array.from(state.selectedCards.values());
+  els.assignDeckCards.innerHTML = cards.map((card) => {
+    const inDeck = deckQuantities.get(deckCardKey(card)) || 0;
+    const available = Math.max(0, Number(card.quantity || 0) - inDeck);
+    return `
+      <article class="assign-deck-card" data-card-id="${escapeHtml(card.card_id)}" data-variant="${escapeHtml(card.variant || "Normal")}">
+        <img src="${escapeHtml(card.image_small || card.image_normal || "")}" alt="">
+        <div>
+          <strong>${escapeHtml(card.name || "Card")}</strong>
+          <span>${escapeHtml(card.variant || "Normal")} - ${integer.format(available)} available${inDeck ? `, ${integer.format(inDeck)} already in deck` : ""}</span>
+        </div>
+        <label class="deck-quantity-field">
+          Qty
+          <input type="number" min="0" max="${available}" step="1" value="${available > 0 ? 1 : 0}" ${available > 0 ? "" : "disabled"} aria-label="Quantity to add">
+        </label>
+      </article>
+    `;
+  }).join("");
+}
+
+async function refreshAssignDeckCardsForSelectedDeck() {
+  const deckId = els.assignDeckForm.deck_id.value;
+  if (!deckId) {
+    renderAssignDeckCards();
+    return;
+  }
+  const deck = await api(`/api/decks/${encodeURIComponent(deckId)}`);
+  renderAssignDeckCards(deck);
+}
+
 async function openAssignDeckModal() {
   if (!state.selectedCards.size) return;
   const decks = await loadDecks();
@@ -1373,6 +2555,11 @@ async function openAssignDeckModal() {
       select.appendChild(option);
     }
   }
+  if (decks.length) {
+    await refreshAssignDeckCardsForSelectedDeck();
+  } else {
+    renderAssignDeckCards();
+  }
   els.assignDeckOverlay.hidden = false;
   document.body.classList.add("modal-open");
   select.focus();
@@ -1382,6 +2569,7 @@ function closeAssignDeckModal() {
   els.assignDeckOverlay.hidden = true;
   document.body.classList.remove("modal-open");
   els.assignDeckForm.reset();
+  els.assignDeckCards.innerHTML = "";
 }
 
 function renderContainers(containers) {
@@ -1432,9 +2620,10 @@ function renderContainerDetail(container) {
       <div>
         <strong>${escapeHtml(cardTitle(card))}</strong>
         <span>${escapeHtml(card.set_name || "")} #${escapeHtml(card.collector_number || "")} - ${escapeHtml(card.variant || "Normal")}</span>
+        <div class="deck-card-tags">${cardMetadataPillsHtml(card)}</div>
       </div>
       <b>Stored ${integer.format(card.stored_quantity || 0)}</b>
-      <button class="remove-deck-card-button" type="button" aria-label="Remove card from container" title="Remove card">x</button>
+      <button class="remove-deck-card-button" type="button" aria-label="Remove card from container" title="Remove card"><span class="trash-icon" aria-hidden="true"></span></button>
     `;
     row.querySelector(".remove-deck-card-button").addEventListener("click", () => {
       removeCardFromActiveContainer(card).catch((error) => {
@@ -1487,6 +2676,153 @@ async function deleteActiveContainer() {
   els.containersStatus.textContent = `Deleted ${containerName}.`;
   await loadContainers();
   await loadCards();
+}
+
+async function readImportFile(input, label) {
+  const file = input.files && input.files[0];
+  if (!file) {
+    throw new Error(`Choose a ${label} file first.`);
+  }
+  return file.text();
+}
+
+async function previewImport(format) {
+  const isJson = format === "json";
+  const input = isJson ? els.jsonImportFile : els.csvImportFile;
+  const button = isJson ? els.previewJsonImportButton : els.previewCsvImportButton;
+  button.disabled = true;
+  els.importStatus.textContent = `Reading ${format.toUpperCase()} file...`;
+  try {
+    const text = await readImportFile(input, format.toUpperCase());
+    els.importStatus.textContent = "Matching cards with Scryfall...";
+    const result = await api("/api/import/preview", {
+      method: "POST",
+      body: JSON.stringify({ format, text }),
+    });
+    state.importRows = result.rows || [];
+    state.importIssues = result.issues || [];
+    renderImportReview();
+    els.importReviewOverlay.hidden = false;
+    document.body.classList.add("modal-open");
+    els.importStatus.textContent = "Review matches before importing.";
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function closeImportReviewModal() {
+  els.importReviewOverlay.hidden = true;
+  document.body.classList.remove("modal-open");
+  state.importRows = [];
+  state.importIssues = [];
+  els.importReviewRows.innerHTML = "";
+  els.importIssues.innerHTML = "";
+}
+
+function renderImportCard(card) {
+  if (!card) return '<strong>No match</strong><span>Search and choose a Scryfall card before importing this row.</span>';
+  return `
+    <strong>${escapeHtml(card.display_name || card.name || "Card")}</strong>
+    <span>${escapeHtml(card.set_name || "")} #${escapeHtml(card.collector_number || "")} - ${escapeHtml(cardTypeLabel(card))} - ${escapeHtml(cardColorLabel(card))}</span>
+  `;
+}
+
+function renderImportReview() {
+  const checkedCount = state.importRows.filter((row) => row.checked).length;
+  els.importReviewCount.textContent = `${integer.format(checkedCount)} of ${integer.format(state.importRows.length)} selected`;
+  els.importIssueCount.textContent = `${integer.format(state.importIssues.length)} issue${state.importIssues.length === 1 ? "" : "s"}`;
+  els.importIssues.innerHTML = state.importIssues.length
+    ? state.importIssues.map((issue) => `<div>Line ${escapeHtml(issue.line || "?")}: ${escapeHtml(issue.error || "Unable to process row.")}</div>`).join("")
+    : "";
+  els.importReviewRows.innerHTML = "";
+  for (const row of state.importRows) {
+    const entry = row.entry || {};
+    const matchCard = row.match && row.match.card;
+    const item = document.createElement("article");
+    item.className = `import-review-row ${row.status === "bad" || !matchCard ? "needs-review" : ""}`;
+    item.dataset.rowId = row.id;
+    item.innerHTML = `
+      <label class="import-row-check">
+        <input type="checkbox" ${row.checked ? "checked" : ""} ${matchCard ? "" : "disabled"}>
+      </label>
+      <div class="import-row-source">
+        <strong>${escapeHtml(entry.name || "Unnamed row")}</strong>
+        <span>Line ${escapeHtml(entry.line || "?")} - ${escapeHtml(entry.set_name || entry.set_code || "Unknown set")} #${escapeHtml(entry.collector_number || "?")} - Qty ${integer.format(entry.quantity || 0)}</span>
+      </div>
+      <div class="import-row-match">${renderImportCard(matchCard)}</div>
+      <div class="import-row-tools">
+        <div class="search-control">
+          <input class="import-match-search" type="search" placeholder="Search Scryfall">
+          <button class="search-button import-match-button" type="button" aria-label="Search Scryfall">&#8981;</button>
+        </div>
+        <select class="import-match-results" hidden></select>
+      </div>
+    `;
+    const checkbox = item.querySelector('input[type="checkbox"]');
+    checkbox.addEventListener("change", () => {
+      row.checked = checkbox.checked;
+      renderImportReview();
+    });
+    const input = item.querySelector(".import-match-search");
+    const button = item.querySelector(".import-match-button");
+    const select = item.querySelector(".import-match-results");
+    input.value = entry.name || "";
+    button.addEventListener("click", () => searchImportRow(row, input, select, item));
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        searchImportRow(row, input, select, item);
+      }
+    });
+    select.addEventListener("change", () => {
+      const selected = select._cards?.find((card) => card.scryfall_id === select.value);
+      if (!selected) return;
+      row.match = { source: "scryfall", confidence: "user selected", card: selected };
+      row.status = "matched";
+      row.checked = true;
+      renderImportReview();
+    });
+    els.importReviewRows.appendChild(item);
+  }
+}
+
+async function searchImportRow(row, input, select, item) {
+  const query = input.value.trim();
+  if (query.length < 2) return;
+  item.classList.add("is-searching");
+  try {
+    const result = await api(`/api/scryfall/search?q=${encodeURIComponent(query)}`);
+    const cards = result.cards || [];
+    select._cards = cards;
+    select.innerHTML = cards.length
+      ? '<option value="">Choose a Scryfall match</option>' + cards.map((card) => `<option value="${escapeHtml(card.scryfall_id)}">${escapeHtml(card.display_name || card.name)} - ${escapeHtml(card.set_name)} #${escapeHtml(card.collector_number)}</option>`).join("")
+      : '<option value="">No matches</option>';
+    select.hidden = false;
+  } finally {
+    item.classList.remove("is-searching");
+  }
+}
+
+async function commitImportReview() {
+  const rows = state.importRows.map((row) => ({
+    checked: row.checked,
+    entry: row.entry,
+    card_id: row.match?.card?.scryfall_id || "",
+    match: row.match,
+  }));
+  els.commitImportButton.disabled = true;
+  els.importStatus.textContent = "Importing checked rows...";
+  try {
+    const result = await api("/api/import/commit", {
+      method: "POST",
+      body: JSON.stringify({ rows }),
+    });
+    closeImportReviewModal();
+    els.importStatus.textContent = `Imported ${integer.format(result.imported_rows || 0)} row${result.imported_rows === 1 ? "" : "s"}. ${integer.format((result.skipped_rows || []).length)} skipped.`;
+    await refresh();
+  } finally {
+    els.commitImportButton.disabled = false;
+  }
 }
 
 async function loadContainers() {
@@ -1590,6 +2926,110 @@ function closeAssignContainerModal() {
   els.assignContainerCards.innerHTML = "";
 }
 
+function renderSaleCards() {
+  const cards = Array.from(state.selectedCards.values());
+  els.saleCards.innerHTML = "";
+  if (!cards.length) {
+    els.saleCards.innerHTML = '<div class="empty-state">Select owned cards first.</div>';
+    return;
+  }
+  for (const card of cards) {
+    const market = Number(card.display_price || 0);
+    const buckets = Array.isArray(card.condition_inventory) ? card.condition_inventory : [];
+    const saleBuckets = buckets
+      .map((bucket) => ({
+        card_condition: bucket.card_condition || card.card_condition || "Near Mint",
+        quantity: Number(bucket.quantity || 0),
+        sale_available_quantity: Number(bucket.sale_available_quantity ?? bucket.quantity ?? 0),
+        sale_quantity: Number(bucket.sale_quantity || 0),
+        sale_price: Number(bucket.sale_price || card.sale_price || market || 0.01),
+      }))
+      .filter((bucket) => bucket.quantity > 0);
+    if (!saleBuckets.length && Number(card.quantity || 0) > 0) {
+      saleBuckets.push({
+        card_condition: card.card_condition || "Near Mint",
+        quantity: Number(card.quantity || 0),
+        sale_available_quantity: Number(card.saleable_quantity ?? card.quantity ?? 0),
+        sale_quantity: Number(card.sale_quantity || 0),
+        sale_price: Number(card.sale_price || market || 0.01),
+      });
+    }
+    for (const bucket of saleBuckets) {
+      const condition = bucket.card_condition || "Near Mint";
+      const maxQuantity = Number(bucket.sale_available_quantity ?? bucket.quantity ?? 0);
+      const existingQuantity = Number(bucket.sale_quantity || 0);
+      const disabled = maxQuantity <= 0;
+      const row = document.createElement("article");
+      row.className = "sale-modal-row";
+      row.dataset.cardId = card.card_id;
+      row.dataset.variant = card.variant || "Normal";
+      row.dataset.condition = condition;
+      row.innerHTML = `
+        <label class="sale-modal-check" title="Include in sale">
+          <input type="checkbox" ${disabled ? "disabled" : "checked"} aria-label="Include ${escapeHtml(card.name || "card")} ${escapeHtml(condition)}">
+        </label>
+        <img src="${escapeHtml(card.image_small || card.image_normal || "")}" alt="">
+        <div class="sale-modal-card-copy">
+          <strong>${escapeHtml(card.name || "Card")}</strong>
+          <span>${escapeHtml(card.variant || "Normal")} - ${escapeHtml(condition)}${disabled ? " - remove from decks before selling" : Number(card.deck_quantity || 0) > 0 ? ` - ${integer.format(card.deck_quantity)} in decks` : ""}</span>
+        </div>
+        <label class="sale-readonly-field">
+          Available Qty
+          <output>${integer.format(maxQuantity)}</output>
+        </label>
+        <span class="sale-value-pill">${dollars.format(market)} market</span>
+        <label class="sale-inline-field">
+          Quantity
+          <input name="quantity" type="number" min="1" max="${maxQuantity}" step="1" value="${disabled ? 0 : existingQuantity > 0 ? existingQuantity : 1}" ${disabled ? "disabled" : ""}>
+        </label>
+        <label class="sale-inline-field">
+          Asking Price
+          <input name="asking_price" type="number" min="0.01" step="0.01" value="${Number(bucket.sale_price || market || 0.01).toFixed(2)}">
+        </label>
+      `;
+      els.saleCards.appendChild(row);
+    }
+  }
+}
+
+function openSaleModal() {
+  if (!state.selectedCards.size) return;
+  renderSaleCards();
+  els.saleOverlay.hidden = false;
+  document.body.classList.add("modal-open");
+}
+
+function closeSaleModal() {
+  els.saleOverlay.hidden = true;
+  document.body.classList.remove("modal-open");
+  els.saleForm.reset();
+  els.saleCards.innerHTML = "";
+}
+
+function openSoldModal(card) {
+  state.activeSaleCard = card;
+  const quantity = Math.max(1, Number(card.sale_quantity || 1));
+  els.soldTitle.textContent = cardTitle(card);
+  els.soldSubtitle.textContent = `${integer.format(quantity)} listed - ${card.variant || "Normal"} - ${conditionText(card)}`;
+  els.soldForm.card_id.value = card.scryfall_id;
+  els.soldForm.variant.value = card.variant || "Normal";
+  els.soldForm.card_condition.value = conditionText(card);
+  els.soldForm.quantity.max = quantity;
+  els.soldForm.quantity.value = 1;
+  els.soldForm.sold_date.value = todayValue();
+  els.soldForm.sold_price_each.value = Number(card.sale_price || card.display_price || 0.01).toFixed(2);
+  els.soldOverlay.hidden = false;
+  document.body.classList.add("modal-open");
+  els.soldForm.sold_date.focus();
+}
+
+function closeSoldModal() {
+  els.soldOverlay.hidden = true;
+  document.body.classList.remove("modal-open");
+  state.activeSaleCard = null;
+  els.soldForm.reset();
+}
+
 function escapeHtml(value) {
   return String(value || "")
     .replaceAll("&", "&amp;")
@@ -1627,13 +3067,174 @@ function renderSharedCard(card) {
             <dd>${escapeHtml(formatDate(card.acquired_date))}</dd>
           </div>
           <div>
-            <dt>Current Value</dt>
-            <dd>${dollars.format(card.display_price || 0)}</dd>
+            <dt>Market Price</dt>
+            <dd>${dollars.format(card.market_price ?? card.display_price ?? 0)}</dd>
+          </div>
+          <div>
+            <dt>Total Value</dt>
+            <dd>${dollars.format(card.total_value ?? card.owned_value ?? 0)}</dd>
           </div>
         </dl>
       </div>
     </article>
   `;
+}
+
+function renderMovementHistory(movements) {
+  if (!movements || !movements.length) {
+    return '<div class="empty-state">No card movement yet.</div>';
+  }
+  return `
+    <div class="purchase-history-list">
+      ${movements.map((movement) => {
+        const isSale = movement.movement_type === "sell";
+        const verb = isSale ? "sold" : "bought";
+        const amountLabel = isSale ? "received" : "total";
+        const deleteLabel = isSale ? "Delete sold entry" : "Delete purchase entry";
+        return `
+        <article class="purchase-history-row ${isSale ? "is-sale" : "is-purchase"}">
+          <div>
+            <strong>${escapeHtml(formatDate(movement.movement_date || movement.purchase_date))}</strong>
+            <span>${escapeHtml(movement.card_condition || "Near Mint")}</span>
+          </div>
+          <div>
+            <b>${integer.format(movement.quantity || 0)} ${verb}</b>
+            <span>${dollars.format(movement.total_amount ?? movement.total_price ?? 0)} ${amountLabel} - ${dollars.format(movement.price_each || 0)} each</span>
+          </div>
+          ${movement.movement_id ? `
+            <button class="delete-movement-button" type="button" aria-label="${deleteLabel}" title="${deleteLabel}" data-movement-type="${escapeHtml(movement.movement_type)}" data-movement-id="${escapeHtml(movement.movement_id)}">
+              <span class="trash-icon" aria-hidden="true"></span>
+            </button>
+          ` : ""}
+        </article>
+      `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function renderCardDetail(card) {
+  state.activeCardDetail = card;
+  const specialClass = isSpecialVariant(card.variant) ? " is-special" : "";
+  const hasDecks = deckMemberships(card).length > 0;
+  const hasContainers = containerMemberships(card).length > 0;
+  els.cardDetailShell.innerHTML = `
+    <article class="shared-card editable-card-detail${specialClass}">
+      <div class="card-detail-media">
+        <a class="shared-card-art" href="${escapeHtml(card.scryfall_uri || "#")}" target="_blank" rel="noreferrer" title="Open on Scryfall">
+          <img src="${escapeHtml(card.image_normal || card.image_small || "")}" alt="${escapeHtml(cardTitle(card))}">
+        </a>
+        <div class="detail-storage-actions">
+          <button class="detail-storage-button detail-decks-button" type="button" aria-label="View decks" title="${hasDecks ? "View decks" : "Not in any decks"}" ${hasDecks ? "" : "disabled"}>
+            <span class="deck-icon" aria-hidden="true"></span>
+          </button>
+          <button class="detail-storage-button detail-containers-button" type="button" aria-label="View containers" title="${hasContainers ? "View containers" : "Not stored in a container"}" ${hasContainers ? "" : "disabled"}>
+            ${containerIconHtml((containerMemberships(card)[0] || {}).storage_type)}
+          </button>
+        </div>
+      </div>
+      <div class="shared-card-copy">
+        <p class="eyebrow">Collection card</p>
+        <h2>${escapeHtml(cardTitle(card))}</h2>
+        <div class="card-divider"></div>
+        <p>${escapeHtml(card.set_name)} #${escapeHtml(card.collector_number)} - ${escapeHtml(card.rarity || "unknown")}</p>
+        ${cardRulesName(card) ? `<p>Rules: ${escapeHtml(cardRulesName(card))}</p>` : ""}
+        <p>${escapeHtml(card.type_line || "")}</p>
+        <div class="detail-pill-row">
+          <span>${escapeHtml(card.variant || "Normal")}</span>
+          <span>${escapeHtml(conditionText(card))}</span>
+          <span>${escapeHtml(cardTypeLabel(card))}</span>
+          <span>${escapeHtml(cardColorLabel(card))}</span>
+        </div>
+        <dl class="shared-card-details">
+          <div>
+            <dt>Owned</dt>
+            <dd>${integer.format(card.quantity || 0)}</dd>
+          </div>
+          <div>
+            <dt>Average Paid</dt>
+            <dd>${dollars.format(card.paid_price || 0)}</dd>
+          </div>
+          <div>
+            <dt>Market Price</dt>
+            <dd>${dollars.format(card.market_price ?? card.display_price ?? 0)}</dd>
+          </div>
+          <div>
+            <dt>Total Value</dt>
+            <dd>${dollars.format(card.total_value ?? card.owned_value ?? 0)}</dd>
+          </div>
+          <div>
+            <dt>Total Delta</dt>
+            <dd class="${valueClass(card.gain_loss || 0)}">${dollars.format(card.gain_loss || 0)}</dd>
+          </div>
+        </dl>
+        <div class="detail-actions">
+          <button id="addPurchaseButton" class="primary-button" type="button">Add Purchase</button>
+        </div>
+      </div>
+      <aside class="card-detail-toolbar" aria-label="Card actions">
+        <button class="detail-action-button detail-edit-button" type="button" aria-label="Edit card" title="Edit card"><span class="edit-icon" aria-hidden="true"></span></button>
+        <button class="detail-action-button detail-refresh-button" type="button" aria-label="Refresh from Scryfall" title="Refresh from Scryfall">&#8635;</button>
+        <a class="detail-action-button detail-scryfall-button" href="${escapeHtml(card.scryfall_uri || "#")}" target="_blank" rel="noreferrer" aria-label="View on Scryfall" title="View on Scryfall">S</a>
+        <button class="detail-action-button detail-share-button" type="button" aria-label="Share card" title="Share card">&#8599;</button>
+        <button class="detail-action-button detail-delete-button" type="button" aria-label="Delete card" title="Delete card"><span class="trash-icon" aria-hidden="true"></span></button>
+      </aside>
+    </article>
+    <section class="purchase-history-panel">
+      <div class="panel-head">
+        <h2>Card History</h2>
+        <span>${integer.format((card.movements || card.purchases || []).length)} entries</span>
+      </div>
+      ${renderMovementHistory(card.movements || card.purchases || [])}
+    </section>
+  `;
+  els.cardDetailShell.querySelector("#addPurchaseButton").addEventListener("click", () => openAddPurchaseModal(card));
+  els.cardDetailShell.querySelector(".detail-edit-button").addEventListener("click", () => openEditModal(card));
+  els.cardDetailShell.querySelector(".detail-refresh-button").addEventListener("click", (event) => {
+    refreshCardDetailMetadata(event.currentTarget, card).catch((error) => setStatus(error.message, "error"));
+  });
+  els.cardDetailShell.querySelector(".detail-share-button").addEventListener("click", () => openShareModal(card));
+  els.cardDetailShell.querySelector(".detail-delete-button").addEventListener("click", () => {
+    deleteCardFromDetail(card).catch((error) => setStatus(error.message, "error"));
+  });
+  els.cardDetailShell.querySelector(".detail-decks-button").addEventListener("click", () => openCardDecksModal(card));
+  els.cardDetailShell.querySelector(".detail-containers-button").addEventListener("click", () => openCardContainersModal(card));
+  els.cardDetailShell.querySelectorAll(".delete-movement-button").forEach((button) => {
+    button.addEventListener("click", () => {
+      deleteCardMovement(button).catch((error) => setStatus(error.message, "error"));
+    });
+  });
+}
+
+async function loadCardDetail(cardId, variant = "Normal") {
+  showPage("card-detail");
+  els.cardDetailShell.innerHTML = '<div class="empty-state">Loading card...</div>';
+  try {
+    const card = await api(`/api/cards/${encodeURIComponent(cardId)}/detail?variant=${encodeURIComponent(variant)}`);
+    renderCardDetail(card);
+  } catch (error) {
+    els.cardDetailShell.innerHTML = `<div class="empty-state">${escapeHtml(error.message)}</div>`;
+  }
+}
+
+function openAddPurchaseModal(card) {
+  state.activeCardDetail = card;
+  els.addPurchaseTitle.textContent = cardTitle(card);
+  els.addPurchaseForm.card_id.value = card.scryfall_id;
+  els.addPurchaseForm.variant.value = card.variant || "Normal";
+  els.addPurchaseForm.quantity.value = 1;
+  els.addPurchaseForm.card_condition.value = conditionText(card);
+  els.addPurchaseForm.purchase_date.value = todayValue();
+  els.addPurchaseForm.total_price.value = "0.01";
+  els.addPurchaseOverlay.hidden = false;
+  document.body.classList.add("modal-open");
+  els.addPurchaseForm.quantity.focus();
+}
+
+function closeAddPurchaseModal() {
+  els.addPurchaseOverlay.hidden = true;
+  document.body.classList.remove("modal-open");
+  els.addPurchaseForm.reset();
 }
 
 async function loadSharedCard(shareId) {
@@ -1650,6 +3251,7 @@ async function loadSharedCard(shareId) {
 function renderSetPage(setDetail, cards) {
   state.activeSet = setDetail;
   state.setCards = cards;
+  state.selectedSetMissingCards.clear();
   const percent = Math.max(0, Math.min(100, Number(setDetail.completion_percent || 0)));
   els.setPageShell.innerHTML = `
     <section class="set-hero">
@@ -1658,19 +3260,86 @@ function renderSetPage(setDetail, cards) {
         <h2>${escapeHtml(setDetail.set_name || setDetail.set_code)}</h2>
         <span>${integer.format(setDetail.owned_cards || 0)} / ${integer.format(setDetail.total_cards || 0)} unique prints</span>
       </div>
-      <b>${percent.toFixed(1)}%</b>
+      <div class="set-hero-actions">
+        <b>${percent.toFixed(1)}%</b>
+        <button id="addMissingSetButton" class="primary-button" type="button">Add Missing to Missing List</button>
+      </div>
       <div class="set-progress set-progress-large" aria-label="${percent.toFixed(1)} percent complete">
         <span style="width: ${percent}%"></span>
       </div>
     </section>
+    <div id="setPageStatus" class="status" aria-live="polite"></div>
+    <div id="setMissingBulkBar" class="bulk-bar" hidden>
+      <span id="setMissingSelectedCount">0 selected</span>
+      <button id="addSelectedMissingButton" class="primary-button" type="button">Add to Missing List</button>
+    </div>
     <div id="setCardsGrid" class="cards-grid set-cards-grid"></div>
   `;
-  renderCards(cards, els.setPageShell.querySelector("#setCardsGrid"));
+  const addMissingButton = els.setPageShell.querySelector("#addMissingSetButton");
+  addMissingButton.addEventListener("click", () => {
+    addSetMissingToMissingList(setDetail.set_code, addMissingButton).catch((error) => {
+      const status = els.setPageShell.querySelector("#setPageStatus");
+      setStatus(error.message, "error", status);
+    });
+  });
+  const addSelectedButton = els.setPageShell.querySelector("#addSelectedMissingButton");
+  addSelectedButton.addEventListener("click", () => {
+    addSelectedSetMissingToMissingList(addSelectedButton).catch((error) => {
+      const status = els.setPageShell.querySelector("#setPageStatus");
+      setStatus(error.message, "error", status);
+    });
+  });
+  renderCards(cards, els.setPageShell.querySelector("#setCardsGrid"), { setMissingSelectable: true });
+  updateSetMissingBar();
 }
 
-function deckRowsHtml(cards) {
+async function addSetMissingToMissingList(setCode, button) {
+  const status = els.setPageShell.querySelector("#setPageStatus");
+  button.disabled = true;
+  const original = button.textContent;
+  button.textContent = "Adding...";
+  try {
+    const result = await api(`/api/sets/${encodeURIComponent(setCode)}/missing-list`, {
+      method: "POST",
+      body: "{}",
+    });
+    const added = Number(result.added || 0);
+    const tagged = Number(result.tagged || 0);
+    setStatus(`${integer.format(added)} newly added. ${integer.format(tagged)} missing cards are now on the Missing List.`, "success", status);
+    await loadMissingList();
+  } finally {
+    button.disabled = false;
+    button.textContent = original;
+  }
+}
+
+async function addSelectedSetMissingToMissingList(button) {
+  const cards = Array.from(state.selectedSetMissingCards.values());
+  if (!cards.length) return;
+  const status = els.setPageShell.querySelector("#setPageStatus");
+  button.disabled = true;
+  const original = button.textContent;
+  button.textContent = "Adding...";
+  try {
+    const result = await api("/api/cards/missing-list", {
+      method: "POST",
+      body: JSON.stringify({ cards, missing_list: true }),
+    });
+    setStatus(`${integer.format(result.updated || 0)} card${Number(result.updated || 0) === 1 ? "" : "s"} added to Missing List.`, "success", status);
+    clearSetMissingSelection();
+    if (state.activeSet?.set_code) {
+      await loadSetPage(state.activeSet.set_code);
+    }
+    await loadMissingList();
+  } finally {
+    button.disabled = false;
+    button.textContent = original;
+  }
+}
+
+function deckRowsHtml(cards, emptyMessage = "No cards in this deck yet.") {
   if (!cards.length) {
-    return '<div class="empty-state">No cards in this deck yet.</div>';
+    return `<div class="empty-state">${escapeHtml(emptyMessage)}</div>`;
   }
   return cards.map((card) => `
     <article class="deck-card-row">
@@ -1678,6 +3347,7 @@ function deckRowsHtml(cards) {
       <div>
         <strong>${escapeHtml(cardTitle(card))}</strong>
         <span>${escapeHtml(card.set_name || "")} #${escapeHtml(card.collector_number || "")} - ${escapeHtml(card.variant || "Normal")}</span>
+        <div class="deck-card-tags">${cardMetadataPillsHtml(card)}</div>
       </div>
       <b>Qty ${integer.format(card.quantity || 0)}</b>
     </article>
@@ -1686,13 +3356,32 @@ function deckRowsHtml(cards) {
 
 function renderSharedDeck(deck) {
   const cards = deck.cards || [];
+  const cardCount = Number(deck.card_count || cards.reduce((total, card) => total + deckQuantity(card), 0));
   els.deckShareShell.innerHTML = `
     <section class="shared-deck-card">
       <div class="shared-deck-head">
         <div>
           <p class="eyebrow">Shared deck</p>
           <h2>${escapeHtml(deck.name || "Deck")}</h2>
-          <span>${integer.format(cards.length)} cards</span>
+          <span>${integer.format(cardCount)} cards</span>
+        </div>
+      </div>
+      <div class="deck-detail-list">
+        ${deckRowsHtml(cards, "No favorite cards yet.")}
+      </div>
+    </section>
+  `;
+}
+
+function renderSharedFavorites(payload) {
+  const cards = payload.cards || [];
+  els.favoritesShareShell.innerHTML = `
+    <section class="shared-deck-card">
+      <div class="shared-deck-head">
+        <div>
+          <p class="eyebrow">Shared favorites</p>
+          <h2>Favorites</h2>
+          <span>${integer.format(cards.length)} favorite cards</span>
         </div>
       </div>
       <div class="deck-detail-list">
@@ -1710,6 +3399,17 @@ async function loadSharedDeck(shareId) {
     renderSharedDeck(deck);
   } catch (error) {
     els.deckShareShell.innerHTML = `<div class="empty-state">${escapeHtml(error.message)}</div>`;
+  }
+}
+
+async function loadSharedFavorites() {
+  showPage("favorites-share");
+  els.favoritesShareShell.innerHTML = '<div class="empty-state">Loading shared favorites...</div>';
+  try {
+    const payload = await api("/api/shared-favorites");
+    renderSharedFavorites(payload);
+  } catch (error) {
+    els.favoritesShareShell.innerHTML = `<div class="empty-state">${escapeHtml(error.message)}</div>`;
   }
 }
 
@@ -1751,23 +3451,26 @@ async function refresh() {
 function wireEvents() {
   for (const command of els.navCommands) {
     command.addEventListener("click", () => {
-      if (sharedRouteId() || setRouteCode() || deckRouteId()) {
-        window.history.pushState({}, "", "/");
-      }
       const page = command.dataset.pageTarget || "dashboard";
-      showPage(page);
-      if (page === "decks") {
-        loadDecks().catch((error) => {
-          els.decksStatus.textContent = error.message;
-        });
-      }
-      if (page === "containers") {
-        loadContainers().catch((error) => {
-          els.containersStatus.textContent = error.message;
-        });
-      }
+      activatePage(page, { push: true });
     });
   }
+  window.addEventListener("popstate", () => {
+    const routePage = appPageRoute();
+    if (routePage) {
+      activatePage(routePage);
+      return;
+    }
+    const detail = cardDetailRoute();
+    if (detail) {
+      loadCardDetail(detail.cardId, detail.variant);
+      return;
+    }
+    const setCode = setRouteCode();
+    if (setCode) {
+      loadSetPage(setCode);
+    }
+  });
 
   els.searchInput.addEventListener("input", () => {
     window.clearTimeout(state.searchTimer);
@@ -1784,33 +3487,112 @@ function wireEvents() {
     clearSelectedCards();
     loadCards().catch((error) => setStatus(error.message, "error"));
   });
+  els.favoriteSearchInput.addEventListener("input", () => {
+    window.clearTimeout(state.favoriteSearchTimer);
+    state.favoriteSearchTimer = window.setTimeout(() => {
+      clearSelectedCards();
+      loadFavorites().catch((error) => setStatus(error.message, "error", els.favoritesStatus));
+    }, 180);
+  });
+  els.favoriteSortSelect.addEventListener("change", () => {
+    clearSelectedCards();
+    loadFavorites().catch((error) => setStatus(error.message, "error", els.favoritesStatus));
+  });
+  els.missingSearchInput.addEventListener("input", () => {
+    window.clearTimeout(state.missingSearchTimer);
+    state.missingSearchTimer = window.setTimeout(() => {
+      clearSelectedCards();
+      loadMissingList().catch((error) => setStatus(error.message, "error", els.missingStatus));
+    }, 180);
+  });
+  els.missingSortSelect.addEventListener("change", () => {
+    clearSelectedCards();
+    loadMissingList().catch((error) => setStatus(error.message, "error", els.missingStatus));
+  });
+  els.saleSearchInput.addEventListener("input", () => {
+    window.clearTimeout(state.saleSearchTimer);
+    state.saleSearchTimer = window.setTimeout(() => {
+      loadSaleCards().catch((error) => setStatus(error.message, "error", els.saleStatus));
+    }, 180);
+  });
+  els.saleSortSelect.addEventListener("change", () => {
+    loadSaleCards().catch((error) => setStatus(error.message, "error", els.saleStatus));
+  });
+  els.wishlistSearchInput.addEventListener("input", () => {
+    window.clearTimeout(state.wishlistSearchTimer);
+    state.wishlistSearchTimer = window.setTimeout(() => {
+      loadWishlist().catch((error) => setStatus(error.message, "error", els.wishlistStatus));
+    }, 180);
+  });
+  els.wishlistSortSelect.addEventListener("change", () => {
+    loadWishlist().catch((error) => setStatus(error.message, "error", els.wishlistStatus));
+  });
+  els.catalogSearchForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    searchCatalog().catch((error) => setStatus(error.message, "error", els.catalogSearchStatus));
+  });
+  els.catalogSearchInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      searchCatalog().catch((error) => setStatus(error.message, "error", els.catalogSearchStatus));
+    }
+  });
 
-  els.addCardButton.addEventListener("click", openAddCardModal);
-  els.settingsButton.addEventListener("click", openSettingsModal);
+  els.addCardButton.addEventListener("click", () => {
+    if (!state.user) {
+      openAuthModal("login", "Create an account or log in before adding cards.");
+      return;
+    }
+    openAddCardModal();
+  });
+  els.accountButton.addEventListener("click", () => {
+    if (state.user) {
+      activatePage("settings", { push: true });
+    } else {
+      openAuthModal("login");
+    }
+  });
+  els.logoutButton.addEventListener("click", () => {
+    logout().catch((error) => setStatus(error.message, "error"));
+  });
   els.addDeckButton.addEventListener("click", openAddDeckModal);
   els.addContainerButton.addEventListener("click", openAddContainerModal);
+  els.closeAddPurchaseButton.addEventListener("click", closeAddPurchaseModal);
+  els.cancelAddPurchaseButton.addEventListener("click", closeAddPurchaseModal);
+  els.addPurchaseOverlay.addEventListener("click", (event) => {
+    if (event.target === els.addPurchaseOverlay) {
+      closeAddPurchaseModal();
+    }
+  });
   els.tileViewButton.addEventListener("click", () => setCollectionView("tiles"));
   els.listViewButton.addEventListener("click", () => setCollectionView("list"));
+  els.favoriteTileViewButton.addEventListener("click", () => setFavoritesView("tiles"));
+  els.favoriteListViewButton.addEventListener("click", () => setFavoritesView("list"));
+  els.wishlistTileViewButton.addEventListener("click", () => setWishlistView("tiles"));
+  els.wishlistListViewButton.addEventListener("click", () => setWishlistView("list"));
+  els.shareFavoritesButton.addEventListener("click", openFavoritesShareModal);
   els.addToDeckButton.addEventListener("click", () => {
     openAssignDeckModal().catch((error) => setStatus(error.message, "error"));
   });
   els.addToContainerButton.addEventListener("click", () => {
     openAssignContainerModal().catch((error) => setStatus(error.message, "error"));
   });
-
-  els.importButton.addEventListener("click", async () => {
-    setStatus("Importing collection CSV...");
-    els.importButton.disabled = true;
-    try {
-      const result = await api("/api/import", { method: "POST", body: "{}" });
-      const missed = (result.unmatched_rows || []).length;
-      setStatus(`Imported ${integer.format(result.imported_rows || 0)} rows. ${integer.format(missed)} unmatched.`);
-      await refresh();
-    } catch (error) {
-      setStatus(error.message, "error");
-    } finally {
-      els.importButton.disabled = false;
-    }
+  els.markForSaleButton.addEventListener("click", openSaleModal);
+  els.favoriteAddToDeckButton.addEventListener("click", () => {
+    openAssignDeckModal().catch((error) => setStatus(error.message, "error", els.favoritesStatus));
+  });
+  els.favoriteAddToContainerButton.addEventListener("click", () => {
+    openAssignContainerModal().catch((error) => setStatus(error.message, "error", els.favoritesStatus));
+  });
+  els.previewJsonImportButton.addEventListener("click", () => {
+    previewImport("json").catch((error) => {
+      els.importStatus.textContent = error.message;
+    });
+  });
+  els.previewCsvImportButton.addEventListener("click", () => {
+    previewImport("csv").catch((error) => {
+      els.importStatus.textContent = error.message;
+    });
   });
 
   els.closeEditButton.addEventListener("click", closeEditModal);
@@ -1834,6 +3616,23 @@ function wireEvents() {
       closeSettingsModal();
     }
   });
+  els.closeAuthButton.addEventListener("click", closeAuthModal);
+  els.toggleAuthModeButton.addEventListener("click", () => {
+    setAuthMode(authMode() === "login" ? "register" : "login");
+    els.authStatus.textContent = "";
+  });
+  els.authOverlay.addEventListener("click", (event) => {
+    if (event.target === els.authOverlay) {
+      closeAuthModal();
+    }
+  });
+  els.authForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    submitAuthForm().catch((error) => {
+      els.authStatus.textContent = error.message;
+      els.authStatus.dataset.tone = "error";
+    });
+  });
   els.closeAddDeckButton.addEventListener("click", closeAddDeckModal);
   els.cancelAddDeckButton.addEventListener("click", closeAddDeckModal);
   els.addDeckOverlay.addEventListener("click", (event) => {
@@ -1843,6 +3642,11 @@ function wireEvents() {
   });
   els.closeAssignDeckButton.addEventListener("click", closeAssignDeckModal);
   els.cancelAssignDeckButton.addEventListener("click", closeAssignDeckModal);
+  els.assignDeckForm.deck_id.addEventListener("change", () => {
+    refreshAssignDeckCardsForSelectedDeck().catch((error) => {
+      setStatus(error.message, "error", activeStatusTarget());
+    });
+  });
   els.assignDeckOverlay.addEventListener("click", (event) => {
     if (event.target === els.assignDeckOverlay) {
       closeAssignDeckModal();
@@ -1899,6 +3703,55 @@ function wireEvents() {
       closeAssignContainerModal();
     }
   });
+  els.closeSaleButton.addEventListener("click", closeSaleModal);
+  els.cancelSaleButton.addEventListener("click", closeSaleModal);
+  els.saleOverlay.addEventListener("click", (event) => {
+    if (event.target === els.saleOverlay) {
+      closeSaleModal();
+    }
+  });
+  els.closeSoldButton.addEventListener("click", closeSoldModal);
+  els.cancelSoldButton.addEventListener("click", closeSoldModal);
+  els.soldOverlay.addEventListener("click", (event) => {
+    if (event.target === els.soldOverlay) {
+      closeSoldModal();
+    }
+  });
+  els.soldForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const payload = Object.fromEntries(new FormData(els.soldForm).entries());
+    payload.quantity = Number(payload.quantity || 0);
+    payload.sold_price_each = Number(payload.sold_price_each || 0);
+    const maxQuantity = Number(els.soldForm.quantity.max || 0);
+    if (payload.quantity < 1 || payload.quantity > maxQuantity) {
+      setStatus(`Sold quantity must be between 1 and ${integer.format(maxQuantity)}.`, "error", els.saleStatus);
+      return;
+    }
+    if (!payload.sold_date) {
+      setStatus("Choose the date sold.", "error", els.saleStatus);
+      return;
+    }
+    if (payload.sold_price_each <= 0) {
+      setStatus("Sold price must be greater than $0.00.", "error", els.saleStatus);
+      return;
+    }
+    try {
+      const result = await api("/api/cards/sold", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      const sold = result.sold || {};
+      setStatus(`Marked ${integer.format(sold.quantity || payload.quantity)} card${Number(sold.quantity || payload.quantity) === 1 ? "" : "s"} sold.`, "success", els.saleStatus);
+      closeSoldModal();
+      await loadSaleCards();
+      await loadCards();
+      if (!Array.from(els.pages).find((page) => page.dataset.page === "dashboard")?.hidden) {
+        await refresh();
+      }
+    } catch (error) {
+      setStatus(error.message, "error", els.saleStatus);
+    }
+  });
   els.closeContainerDetailButton.addEventListener("click", closeContainerDetailModal);
   els.editContainerButton.addEventListener("click", () => {
     if (state.activeContainer) {
@@ -1928,6 +3781,19 @@ function wireEvents() {
       closeShareModal();
     }
   });
+  els.closeImportReviewButton.addEventListener("click", closeImportReviewModal);
+  els.cancelImportReviewButton.addEventListener("click", closeImportReviewModal);
+  els.importReviewOverlay.addEventListener("click", (event) => {
+    if (event.target === els.importReviewOverlay) {
+      closeImportReviewModal();
+    }
+  });
+  els.commitImportButton.addEventListener("click", () => {
+    commitImportReview().catch((error) => {
+      els.importStatus.textContent = error.message;
+      els.commitImportButton.disabled = false;
+    });
+  });
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && !els.editOverlay.hidden) {
       closeEditModal();
@@ -1935,8 +3801,14 @@ function wireEvents() {
     if (event.key === "Escape" && !els.addCardOverlay.hidden) {
       closeAddCardModal();
     }
+    if (event.key === "Escape" && !els.addPurchaseOverlay.hidden) {
+      closeAddPurchaseModal();
+    }
     if (event.key === "Escape" && !els.settingsOverlay.hidden) {
       closeSettingsModal();
+    }
+    if (event.key === "Escape" && !els.authOverlay.hidden) {
+      closeAuthModal();
     }
     if (event.key === "Escape" && !els.shareOverlay.hidden) {
       closeShareModal();
@@ -1963,11 +3835,20 @@ function wireEvents() {
     if (event.key === "Escape" && !els.assignContainerOverlay.hidden) {
       closeAssignContainerModal();
     }
+    if (event.key === "Escape" && !els.saleOverlay.hidden) {
+      closeSaleModal();
+    }
+    if (event.key === "Escape" && !els.soldOverlay.hidden) {
+      closeSoldModal();
+    }
     if (event.key === "Escape" && !els.containerDetailOverlay.hidden) {
       closeContainerDetailModal();
     }
     if (event.key === "Escape" && !els.cardContainersOverlay.hidden) {
       closeCardContainersModal();
+    }
+    if (event.key === "Escape" && !els.importReviewOverlay.hidden) {
+      closeImportReviewModal();
     }
   });
   els.addSearchForm.addEventListener("submit", (event) => {
@@ -2010,6 +3891,10 @@ function wireEvents() {
         closeAddCardModal();
       }
       await refresh();
+      const searchVisible = Array.from(els.pages).some((page) => page.dataset.page === "search" && !page.hidden);
+      if (searchVisible && state.catalogSearchResults.length) {
+        await searchCatalog();
+      }
     } catch (error) {
       els.addSearchStatus.textContent = error.message;
       els.confirmAddCardButton.disabled = false;
@@ -2022,6 +3907,47 @@ function wireEvents() {
     saveSettings(payload);
     setStatus("Settings saved.");
     closeSettingsModal();
+  });
+  els.settingsPageForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const payload = Object.fromEntries(new FormData(els.settingsPageForm).entries());
+    try {
+      await saveUserSettings(payload);
+      setStatus("Settings saved.", "success", els.settingsPageStatus);
+    } catch (error) {
+      setStatus(error.message, "error", els.settingsPageStatus);
+    }
+  });
+  els.clearDatabaseButton.addEventListener("click", async () => {
+    const confirmed = window.confirm("Clear your FoilFolio database? This removes your collection, decks, containers, lists, sale listings, and card history, but keeps your account.");
+    if (!confirmed) return;
+    try {
+      await api("/api/user/clear-data", { method: "POST", body: JSON.stringify({}) });
+      setStatus("Your database has been cleared.", "success", els.settingsPageStatus);
+      state.cards = [];
+      state.favoriteCards = [];
+      state.missingCards = [];
+      state.saleCards = [];
+      state.wishlistCards = [];
+      await refresh();
+    } catch (error) {
+      setStatus(error.message, "error", els.settingsPageStatus);
+    }
+  });
+  els.deleteProfileButton.addEventListener("click", async () => {
+    const confirmed = window.confirm("Delete your FoilFolio profile and all of your data? This cannot be undone.");
+    if (!confirmed) return;
+    const typed = window.prompt('Type "delete" to confirm profile deletion.');
+    if ((typed || "").toLowerCase() !== "delete") return;
+    try {
+      await api("/api/user/profile", { method: "DELETE", body: JSON.stringify({}) });
+      state.user = null;
+      updateAuthUi();
+      setStatus("Profile deleted.", "success");
+      activatePage("search", { push: true });
+    } catch (error) {
+      setStatus(error.message, "error", els.settingsPageStatus);
+    }
   });
   els.addDeckForm.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -2054,7 +3980,7 @@ function wireEvents() {
       if (state.activeContainer && Number(state.activeContainer.id) === Number(result.container.id)) {
         renderContainerDetail(result.container);
       }
-      await loadCards();
+      await reloadVisibleCardPages();
     } catch (error) {
       els.containersStatus.textContent = error.message;
     }
@@ -2062,32 +3988,43 @@ function wireEvents() {
   els.assignDeckForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     const deckId = els.assignDeckForm.deck_id.value;
+    const statusTarget = activeStatusTarget();
     if (!deckId) {
-      setStatus("Create a deck first.", "error");
+      setStatus("Create a deck first.", "error", statusTarget);
       return;
     }
-    const cards = Array.from(state.selectedCards.values()).map((card) => ({
-      card_id: card.card_id,
-      variant: card.variant,
-    }));
+    const cards = Array.from(els.assignDeckCards.querySelectorAll(".assign-deck-card")).map((row) => {
+      const input = row.querySelector("input");
+      return {
+        card_id: row.dataset.cardId,
+        variant: row.dataset.variant || "Normal",
+        quantity: Number(input.value || 0),
+      };
+    }).filter((card) => card.card_id && card.quantity > 0);
+    if (!cards.length) {
+      setStatus("Choose at least one available card quantity.", "error", statusTarget);
+      return;
+    }
     try {
       const result = await api(`/api/decks/${encodeURIComponent(deckId)}/cards`, {
         method: "POST",
         body: JSON.stringify({ cards }),
       });
-      setStatus(`Added ${integer.format(result.added || 0)} card${result.added === 1 ? "" : "s"} to deck.`);
+      setStatus(`Added ${integer.format(result.added || 0)} card${result.added === 1 ? "" : "s"} to deck.`, "", statusTarget);
       closeAssignDeckModal();
       clearSelectedCards();
       await loadDecks();
+      await reloadVisibleCardPages();
     } catch (error) {
-      setStatus(error.message, "error");
+      setStatus(error.message, "error", statusTarget);
     }
   });
   els.assignContainerForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     const containerId = els.assignContainerForm.container_id.value;
+    const statusTarget = activeStatusTarget();
     if (!containerId) {
-      setStatus("Create a container first.", "error");
+      setStatus("Create a container first.", "error", statusTarget);
       return;
     }
     const cardsByKey = new Map(Array.from(state.selectedCards.values()).map((card) => [`${card.card_id}::${card.variant}`, card]));
@@ -2102,7 +4039,7 @@ function wireEvents() {
       };
     }).filter((card) => card && card.quantity > 0);
     if (!cards.length) {
-      setStatus("No unassigned copies are available for those cards.", "error");
+      setStatus("No unassigned copies are available for those cards.", "error", statusTarget);
       return;
     }
     try {
@@ -2110,11 +4047,57 @@ function wireEvents() {
         method: "POST",
         body: JSON.stringify({ cards }),
       });
-      setStatus(`Stored ${integer.format(result.added || 0)} card${result.added === 1 ? "" : "s"} in container.`);
+      setStatus(`Stored ${integer.format(result.added || 0)} card${result.added === 1 ? "" : "s"} in container.`, "", statusTarget);
       closeAssignContainerModal();
       clearSelectedCards();
       await loadContainers();
+      await reloadVisibleCardPages();
+    } catch (error) {
+      setStatus(error.message, "error", statusTarget);
+    }
+  });
+  els.saleForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const rows = Array.from(els.saleCards.querySelectorAll(".sale-modal-row"));
+    const cards = [];
+    for (const row of rows) {
+      const checked = row.querySelector('input[type="checkbox"]')?.checked;
+      if (!checked) continue;
+      const quantityInput = row.querySelector('input[name="quantity"]');
+      const priceInput = row.querySelector('input[name="asking_price"]');
+      const quantity = Number(quantityInput?.value || 0);
+      const max = Number(quantityInput?.max || 0);
+      const askingPrice = Number(priceInput?.value || 0);
+      if (quantity < 1 || quantity > max) {
+        setStatus(`Sale quantity must be between 1 and ${integer.format(max)}.`, "error");
+        return;
+      }
+      if (askingPrice <= 0) {
+        setStatus("Asking price must be greater than $0.00.", "error");
+        return;
+      }
+      cards.push({
+        card_id: row.dataset.cardId,
+        variant: row.dataset.variant || "Normal",
+        card_condition: row.dataset.condition || "Near Mint",
+        quantity,
+        asking_price: askingPrice,
+      });
+    }
+    if (!cards.length) {
+      setStatus("Keep at least one checked card to mark for sale.", "error");
+      return;
+    }
+    try {
+      const result = await api("/api/cards/for-sale", {
+        method: "POST",
+        body: JSON.stringify({ cards, for_sale: true }),
+      });
+      setStatus(`Marked ${integer.format(result.updated || 0)} card${result.updated === 1 ? "" : "s"} for sale.`, "success");
+      closeSaleModal();
+      clearSelectedCards();
       await loadCards();
+      await loadSaleCards();
     } catch (error) {
       setStatus(error.message, "error");
     }
@@ -2129,38 +4112,91 @@ function wireEvents() {
         body: JSON.stringify(payload),
       });
       setStatus(`Saved ${state.editingCard ? state.editingCard.name : "card"}.`);
+      const editedVariant = payload.variant || state.editingCard?.variant || "Normal";
+      const isDetailVisible = !document.querySelector('[data-page="card-detail"]')?.hidden;
       closeEditModal();
       await refresh();
+      if (isDetailVisible) {
+        await loadCardDetail(cardId, editedVariant);
+      }
+    } catch (error) {
+      setStatus(error.message, "error");
+    }
+  });
+  els.addPurchaseForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const payload = Object.fromEntries(new FormData(els.addPurchaseForm).entries());
+    const cardId = payload.card_id;
+    try {
+      const result = await api(`/api/cards/${encodeURIComponent(cardId)}/purchases`, {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      closeAddPurchaseModal();
+      renderCardDetail(result.card);
+      await refresh();
+      setStatus(`Added purchase for ${cardTitle(result.card)}.`);
     } catch (error) {
       setStatus(error.message, "error");
     }
   });
 }
 
-state.settings = loadSettings();
-applySettings();
-const initialSharedId = sharedRouteId();
-const initialSetCode = setRouteCode();
-const initialDeckShareId = deckRouteId();
-const isShareOnlyRoute = Boolean(initialSharedId || initialDeckShareId);
-if (!isShareOnlyRoute) {
-  wireEvents();
-}
-if (initialSharedId) {
-  document.body.classList.add("share-only");
-  loadSharedCard(initialSharedId);
-} else if (initialDeckShareId) {
-  document.body.classList.add("share-only");
-  loadSharedDeck(initialDeckShareId);
-} else if (initialSetCode) {
-  loadSetPage(initialSetCode);
-  refresh().catch((error) => {
-    setStatus(error.message, "error");
-    renderCollection();
+async function boot() {
+  state.settings = loadSettings();
+  applySettings();
+  const initialSharedId = sharedRouteId();
+  const initialSetCode = setRouteCode();
+  const initialDeckShareId = deckRouteId();
+  const initialFavoritesShare = favoritesShareRoute();
+  const initialCardDetail = cardDetailRoute();
+  const initialAppPage = appPageRoute();
+  const isShareOnlyRoute = Boolean(initialSharedId || initialDeckShareId || initialFavoritesShare);
+  await loadSession().catch(() => {
+    state.user = null;
+    updateAuthUi();
   });
-} else {
-  refresh().catch((error) => {
-    setStatus(error.message, "error");
-    renderCollection();
-  });
+  if (!isShareOnlyRoute) {
+    wireEvents();
+  }
+  if (initialSharedId) {
+    document.body.classList.add("share-only");
+    loadSharedCard(initialSharedId);
+  } else if (initialDeckShareId) {
+    document.body.classList.add("share-only");
+    loadSharedDeck(initialDeckShareId);
+  } else if (initialFavoritesShare) {
+    document.body.classList.add("share-only");
+    loadSharedFavorites();
+  } else if (initialCardDetail) {
+    if (state.user) {
+      loadCardDetail(initialCardDetail.cardId, initialCardDetail.variant);
+      refresh().catch((error) => {
+        setStatus(error.message, "error");
+        renderCollection();
+      });
+    } else {
+      activatePage("search");
+      openAuthModal("login", "Log in to view your card details.");
+    }
+  } else if (initialSetCode) {
+    if (state.user) {
+      loadSetPage(initialSetCode);
+      refresh().catch((error) => {
+        setStatus(error.message, "error");
+        renderCollection();
+      });
+    } else {
+      activatePage("search");
+      openAuthModal("login", "Log in to view set progress.");
+    }
+  } else if (initialAppPage) {
+    activatePage(initialAppPage);
+  } else {
+    activatePage(state.user ? "dashboard" : "search");
+  }
 }
+
+boot().catch((error) => {
+  setStatus(error.message, "error");
+});

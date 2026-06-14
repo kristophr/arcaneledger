@@ -5,7 +5,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     HOST=0.0.0.0 \
     PORT=8000 \
     DATA_DIR=/app/data \
-    DEFAULT_IMPORT=/imports/export.csv
+    DEFAULT_IMPORT=/imports/export.csv \
+    MAILGUN_API_BASE=https://api.mailgun.net/v3 \
+    MAILGUN_API_KEY= \
+    MAILGUN_DOMAIN= \
+    MAILGUN_FROM_EMAIL= \
+    MAILGUN_FROM_NAME=FoilFolio
 
 WORKDIR /app
 
