@@ -106,6 +106,38 @@ To send a smoke-test email after credentials are ready:
 docker compose run --rm foilfolio python app.py email-test you@example.com
 ```
 
+## Debug Logs
+
+FoilFolio writes server startup messages, requests, network warnings, and unexpected server errors to a rotating log file:
+
+```text
+data/logs/foilfolio.log
+```
+
+From Docker, check the configured log path and status:
+
+```bash
+docker compose run --rm foilfolio python app.py log-status
+```
+
+To show the last 200 log lines:
+
+```bash
+docker compose run --rm foilfolio python app.py logs
+```
+
+Or ask for a specific number of lines:
+
+```bash
+docker compose run --rm foilfolio python app.py logs 500
+```
+
+The same log tail is also available to a logged-in user at:
+
+```text
+/api/debug/logs?lines=200
+```
+
 ## Local Python Run
 
 ```bash
@@ -128,6 +160,8 @@ python3 app.py seed "/Users/kristophr/Downloads/export(1).csv"
 python3 app.py serve 8000
 python3 app.py email-status
 python3 app.py email-test you@example.com
+python3 app.py log-status
+python3 app.py logs 200
 ```
 
 ## Data

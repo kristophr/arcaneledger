@@ -5,6 +5,7 @@ import hashlib
 import hmac
 import io
 import json
+import logging
 import os
 import re
 import secrets
@@ -19,6 +20,7 @@ from datetime import date, datetime, timedelta
 from email.message import EmailMessage
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 
@@ -26,6 +28,11 @@ ROOT = Path(__file__).resolve().parent
 STATIC_DIR = ROOT / "static"
 DATA_DIR = Path(os.environ.get("DATA_DIR", ROOT / "data"))
 DB_PATH = Path(os.environ.get("DB_PATH", DATA_DIR / "mtg_collection.sqlite"))
+LOG_DIR = Path(os.environ.get("LOG_DIR", DATA_DIR / "logs"))
+LOG_FILE = Path(os.environ.get("LOG_FILE", LOG_DIR / "foilfolio.log"))
+LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
+LOG_MAX_BYTES = int(os.environ.get("LOG_MAX_BYTES", str(2 * 1024 * 1024)) or (2 * 1024 * 1024))
+LOG_BACKUP_COUNT = int(os.environ.get("LOG_BACKUP_COUNT", "5") or 5)
 DEFAULT_IMPORT = Path(os.environ.get("DEFAULT_IMPORT", "/Users/kristophr/Downloads/export(1).csv"))
 SCRYFALL_SETS_URL = "https://api.scryfall.com/sets"
 SCRYFALL_SET_URL = "https://api.scryfall.com/sets/{set_code}"
@@ -63,6 +70,36 @@ DEFAULT_CARD_CONDITION = "Near Mint"
 CONTAINER_TYPES = ("binder", "box", "other")
 DEFAULT_CONTAINER_TYPE = "other"
 THEMES = {"light", "dark", "retro", "neon", "red", "blue", "black", "green", "pride"}
+
+
+def configure_logging():
+    logger = logging.getLogger("foilfolio")
+    if logger.handlers:
+        return logger
+    level = getattr(logging, LOG_LEVEL, logging.INFO)
+    logger.setLevel(level)
+    logger.propagate = False
+    formatter = logging.Formatter("%(asctime)sZ %(levelname)s %(message)s")
+    formatter.converter = time.gmtime
+    try:
+        LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        handler = RotatingFileHandler(
+            LOG_FILE,
+            maxBytes=LOG_MAX_BYTES,
+            backupCount=LOG_BACKUP_COUNT,
+            encoding="utf-8",
+        )
+        handler.setFormatter(formatter)
+        logger.addHandler(handler)
+    except OSError:
+        handler = logging.StreamHandler(sys.stderr)
+        handler.setFormatter(formatter)
+        logger.addHandler(handler)
+        logger.exception("Failed to configure file logging at %s", LOG_FILE)
+    return logger
+
+
+LOGGER = configure_logging()
 
 
 def now_iso():
@@ -179,6 +216,33 @@ def scryfall_query_with_language(query, language=None):
     if re.search(r"\blang:[a-z-]+\b", text, flags=re.IGNORECASE):
         return text
     return f"{text} lang:{scryfall_language(language)}".strip()
+
+
+def debug_log_status():
+    return {
+        "path": str(LOG_FILE),
+        "level": LOG_LEVEL,
+        "max_bytes": LOG_MAX_BYTES,
+        "backup_count": LOG_BACKUP_COUNT,
+        "exists": LOG_FILE.exists(),
+        "size": LOG_FILE.stat().st_size if LOG_FILE.exists() else 0,
+    }
+
+
+def read_log_tail(line_count=200, max_bytes=256 * 1024):
+    try:
+        line_count = max(1, min(int(line_count or 200), 1000))
+    except (TypeError, ValueError):
+        line_count = 200
+    if not LOG_FILE.exists():
+        return {**debug_log_status(), "lines": []}
+    with LOG_FILE.open("rb") as handle:
+        handle.seek(0, os.SEEK_END)
+        size = handle.tell()
+        handle.seek(max(0, size - max_bytes))
+        data = handle.read().decode("utf-8", errors="replace")
+    lines = data.splitlines()[-line_count:]
+    return {**debug_log_status(), "lines": lines}
 
 
 def collector_keys(value):
@@ -4321,7 +4385,18 @@ class Handler(SimpleHTTPRequestHandler):
         super().__init__(*args, directory=str(STATIC_DIR), **kwargs)
 
     def log_message(self, fmt, *args):
-        sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))
+        message = "%s - %s" % (self.address_string(), fmt % args)
+        sys.stderr.write(f"{message}\n")
+        LOGGER.info(message)
+
+    def log_exception(self, exc):
+        LOGGER.exception(
+            "%s %s failed for %s: %s",
+            self.command,
+            self.path,
+            self.client_address[0] if self.client_address else "unknown",
+            exc,
+        )
 
     def send_json(self, payload, status=HTTPStatus.OK, cookie=None):
         data = json.dumps(payload).encode("utf-8")
@@ -4364,6 +4439,10 @@ class Handler(SimpleHTTPRequestHandler):
                     return self.send_json(dashboard(conn, user["id"]))
                 if parsed.path == "/api/email/status":
                     return self.send_json(email_status())
+                if parsed.path == "/api/debug/logs":
+                    self.require_user(conn)
+                    params = urllib.parse.parse_qs(parsed.query)
+                    return self.send_json(read_log_tail(params.get("lines", [200])[0]))
                 if parsed.path == "/api/cards/for-sale":
                     user = self.require_user(conn)
                     return self.send_json({"cards": list_sale_cards(conn, parsed.query, user["id"])})
@@ -4448,6 +4527,7 @@ class Handler(SimpleHTTPRequestHandler):
         except PermissionError as exc:
             return self.send_json({"error": str(exc)}, HTTPStatus.UNAUTHORIZED)
         except Exception as exc:
+            self.log_exception(exc)
             return self.send_json({"error": str(exc)}, HTTPStatus.INTERNAL_SERVER_ERROR)
         if (
             re.match(r"^/(cards|sets|decks)/[^/]+/?$", parsed.path)
@@ -4543,6 +4623,7 @@ class Handler(SimpleHTTPRequestHandler):
                     user = self.require_user(conn)
                     return self.send_json(add_set_missing_to_missing_list(conn, user["id"], urllib.parse.unquote(match.group(1)).lower()))
         except urllib.error.URLError as exc:
+            LOGGER.warning("%s %s network error: %s", self.command, self.path, exc)
             return self.send_json({"error": f"Network error: {exc}"}, HTTPStatus.BAD_GATEWAY)
         except KeyError as exc:
             return self.send_json({"error": str(exc)}, HTTPStatus.NOT_FOUND)
@@ -4551,6 +4632,7 @@ class Handler(SimpleHTTPRequestHandler):
         except PermissionError as exc:
             return self.send_json({"error": str(exc)}, HTTPStatus.UNAUTHORIZED)
         except Exception as exc:
+            self.log_exception(exc)
             return self.send_json({"error": str(exc)}, HTTPStatus.INTERNAL_SERVER_ERROR)
         return self.send_json({"error": "Not found"}, HTTPStatus.NOT_FOUND)
 
@@ -4573,6 +4655,7 @@ class Handler(SimpleHTTPRequestHandler):
         except PermissionError as exc:
             return self.send_json({"error": str(exc)}, HTTPStatus.UNAUTHORIZED)
         except Exception as exc:
+            self.log_exception(exc)
             return self.send_json({"error": str(exc)}, HTTPStatus.INTERNAL_SERVER_ERROR)
         return self.send_json({"error": "Not found"}, HTTPStatus.NOT_FOUND)
 
@@ -4616,6 +4699,7 @@ class Handler(SimpleHTTPRequestHandler):
         except PermissionError as exc:
             return self.send_json({"error": str(exc)}, HTTPStatus.UNAUTHORIZED)
         except Exception as exc:
+            self.log_exception(exc)
             return self.send_json({"error": str(exc)}, HTTPStatus.INTERNAL_SERVER_ERROR)
         return self.send_json({"error": "Not found"}, HTTPStatus.NOT_FOUND)
 
@@ -4625,12 +4709,21 @@ def serve(host="127.0.0.1", port=8000):
         init_db(conn)
     server = ThreadingHTTPServer((host, port), Handler)
     display_host = "127.0.0.1" if host in ("0.0.0.0", "::") else host
+    LOGGER.info("FoilFolio starting at http://%s:%s with database %s", display_host, port, DB_PATH)
     print(f"FoilFolio running at http://{display_host}:{port}")
     server.serve_forever()
 
 
 def main(argv):
     command = argv[1] if len(argv) > 1 else "serve"
+    if command == "log-status":
+        print(json.dumps(debug_log_status(), indent=2))
+        return 0
+    if command in {"logs", "log-tail"}:
+        line_count = argv[2] if len(argv) > 2 else 200
+        payload = read_log_tail(line_count)
+        print("\n".join(payload["lines"]))
+        return 0
     with connect() as conn:
         init_db(conn)
         if command == "sync":
@@ -4673,9 +4766,13 @@ def main(argv):
         host = os.environ.get("HOST", "127.0.0.1")
         serve(host, port)
         return 0
-    print("Usage: python3 app.py [serve [port] | sync | import [csv_path] | seed [csv_path] | cache-owned-sets | refresh-missing-colors [limit] | email-status | email-test recipient@example.com [subject]]")
+    print("Usage: python3 app.py [serve [port] | sync | import [csv_path] | seed [csv_path] | cache-owned-sets | refresh-missing-colors [limit] | email-status | email-test recipient@example.com [subject] | log-status | logs [lines]]")
     return 2
 
 
 if __name__ == "__main__":
-    raise SystemExit(main(sys.argv))
+    try:
+        raise SystemExit(main(sys.argv))
+    except Exception:
+        LOGGER.exception("Command failed: %s", " ".join(sys.argv[1:]) or "serve")
+        raise
