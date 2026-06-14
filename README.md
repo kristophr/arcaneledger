@@ -142,6 +142,12 @@ For a detailed redacted SMTP trace:
 docker compose run --rm foilfolio python app.py email-trace
 ```
 
+For a detailed redacted Mailgun API trace:
+
+```bash
+docker compose run --rm foilfolio python app.py email-mailgun-trace
+```
+
 If a provider behaves badly with one SMTP auth mechanism, you can force one:
 
 ```text
@@ -217,6 +223,7 @@ python3 app.py serve 8000
 python3 app.py email-status
 python3 app.py email-diagnose
 python3 app.py email-trace
+python3 app.py email-mailgun-trace
 python3 app.py email-test you@example.com
 python3 app.py log-status
 python3 app.py logs 200

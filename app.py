@@ -396,6 +396,75 @@ def mailgun_sender():
     return MAILGUN_FROM_EMAIL
 
 
+def mailgun_auth_header():
+    token = base64.b64encode(f"api:{MAILGUN_API_KEY}".encode("utf-8")).decode("ascii")
+    return f"Basic {token}"
+
+
+def mailgun_trace():
+    trace = {
+        "configured": mailgun_configured(),
+        "api_base": MAILGUN_API_BASE,
+        "domain": MAILGUN_DOMAIN,
+        "from_email": MAILGUN_FROM_EMAIL,
+        "from_name": MAILGUN_FROM_NAME,
+        "api_key_present": bool(MAILGUN_API_KEY),
+        "api_key_length": len(MAILGUN_API_KEY or ""),
+        "api_key_prefix": (MAILGUN_API_KEY[:8] + "...") if MAILGUN_API_KEY else "",
+        "region_hint": "eu" if "api.eu.mailgun.net" in MAILGUN_API_BASE else "us",
+        "steps": [],
+    }
+
+    def step(name, ok, detail=None, **extra):
+        item = {"step": name, "ok": bool(ok)}
+        if detail:
+            item["detail"] = str(detail)
+        item.update(extra)
+        trace["steps"].append(item)
+
+    if not mailgun_configured():
+        step("configuration", False, "Set MAILGUN_API_KEY, MAILGUN_DOMAIN, and MAILGUN_FROM_EMAIL.")
+        return trace
+
+    domain_url = f"{MAILGUN_API_BASE}/domains/{urllib.parse.quote(MAILGUN_DOMAIN)}"
+    req = urllib.request.Request(domain_url, method="GET")
+    req.add_header("Authorization", mailgun_auth_header())
+    req.add_header("Accept", "application/json")
+    req.add_header("User-Agent", USER_AGENT)
+    step("request", True, url=domain_url)
+    try:
+        with urllib.request.urlopen(req, timeout=30) as response:
+            body = response.read().decode("utf-8", errors="replace")
+            step("domain_lookup", 200 <= response.status < 300, f"{response.status} {response.reason}")
+            try:
+                parsed = json.loads(body)
+            except json.JSONDecodeError:
+                parsed = body[:500]
+            if isinstance(parsed, dict):
+                domain = parsed.get("domain") or parsed
+                if isinstance(domain, dict):
+                    step(
+                        "domain",
+                        True,
+                        name=domain.get("name"),
+                        state=domain.get("state"),
+                        type=domain.get("type"),
+                    )
+            else:
+                step("response", True, str(parsed)[:500])
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        hint = ""
+        if exc.code == 401:
+            hint = "Mailgun rejected the API key or the API region. Verify private API key and MAILGUN_API_BASE."
+        elif exc.code == 404:
+            hint = "Mailgun accepted the API key but could not find this domain in that region/account."
+        step("domain_lookup", False, f"{exc.code} {detail}", hint=hint)
+    except Exception as exc:
+        step("error", False, f"{type(exc).__name__}: {exc}")
+    return trace
+
+
 def smtp_sender():
     if SMTP_FROM_NAME:
         return f"{SMTP_FROM_NAME} <{SMTP_FROM}>"
@@ -613,8 +682,7 @@ def send_mailgun_email(to_email, subject, text=None, html=None, tags=None):
     url = f"{MAILGUN_API_BASE}/{urllib.parse.quote(MAILGUN_DOMAIN)}/messages"
     boundary, body = encode_multipart_form(fields)
     req = urllib.request.Request(url, data=body, method="POST")
-    token = base64.b64encode(f"api:{MAILGUN_API_KEY}".encode("utf-8")).decode("ascii")
-    req.add_header("Authorization", f"Basic {token}")
+    req.add_header("Authorization", mailgun_auth_header())
     req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
     req.add_header("Accept", "application/json")
     req.add_header("User-Agent", USER_AGENT)
@@ -625,7 +693,12 @@ def send_mailgun_email(to_email, subject, text=None, html=None, tags=None):
             body = response.read().decode("utf-8")
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
-        raise ValueError(f"Mailgun error {exc.code}: {detail}") from exc
+        hint = ""
+        if exc.code == 401:
+            hint = " Verify MAILGUN_API_KEY and MAILGUN_API_BASE. Use a private Mailgun API key, not an SMTP password."
+        elif exc.code == 404:
+            hint = " Verify MAILGUN_DOMAIN and API region."
+        raise ValueError(f"Mailgun error {exc.code} at {url}: {detail}{hint}") from exc
 
     try:
         parsed = json.loads(body)
@@ -4903,6 +4976,9 @@ def main(argv):
         if command == "email-trace":
             print(json.dumps(smtp_trace(), indent=2))
             return 0
+        if command == "email-mailgun-trace":
+            print(json.dumps(mailgun_trace(), indent=2))
+            return 0
         if command == "email-test":
             if len(argv) < 3:
                 print("Usage: python3 app.py email-test recipient@example.com [subject]")
@@ -4921,7 +4997,7 @@ def main(argv):
         host = os.environ.get("HOST", "127.0.0.1")
         serve(host, port)
         return 0
-    print("Usage: python3 app.py [serve [port] | sync | import [csv_path] | seed [csv_path] | cache-owned-sets | refresh-missing-colors [limit] | email-status | email-diagnose | email-trace | email-test recipient@example.com [subject] | log-status | logs [lines]]")
+    print("Usage: python3 app.py [serve [port] | sync | import [csv_path] | seed [csv_path] | cache-owned-sets | refresh-missing-colors [limit] | email-status | email-diagnose | email-trace | email-mailgun-trace | email-test recipient@example.com [subject] | log-status | logs [lines]]")
     return 2
 
 
