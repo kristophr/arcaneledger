@@ -392,6 +392,55 @@ def smtp_sender():
     return SMTP_FROM
 
 
+def smtp_diagnostics():
+    result = {
+        "configured": smtp_configured(),
+        "host": SMTP_HOST,
+        "port": SMTP_PORT,
+        "user": SMTP_USER,
+        "from": SMTP_FROM,
+        "secure": SMTP_SECURE,
+        "starttls": SMTP_STARTTLS and not SMTP_SECURE,
+        "password_present": bool(SMTP_PASSWORD),
+        "password_length": len(SMTP_PASSWORD or ""),
+        "steps": [],
+    }
+
+    def step(name, ok, detail=None):
+        result["steps"].append({"step": name, "ok": bool(ok), "detail": str(detail) if detail else ""})
+
+    if not smtp_configured():
+        step("configuration", False, "Set SMTP_HOST, SMTP_USER, SMTP_PASSWORD, and SMTP_FROM.")
+        return result
+
+    server = None
+    try:
+        if SMTP_SECURE:
+            server = smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=30)
+            step("connect_ssl", True)
+        else:
+            server = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30)
+            step("connect", True)
+        code, message = server.ehlo()
+        step("ehlo", 200 <= code < 400, f"{code} {message.decode('utf-8', errors='replace') if isinstance(message, bytes) else message}")
+        if SMTP_STARTTLS and not SMTP_SECURE:
+            code, message = server.starttls()
+            step("starttls", 200 <= code < 400, f"{code} {message.decode('utf-8', errors='replace') if isinstance(message, bytes) else message}")
+            code, message = server.ehlo()
+            step("ehlo_after_starttls", 200 <= code < 400, f"{code} {message.decode('utf-8', errors='replace') if isinstance(message, bytes) else message}")
+        code, message = server.login(SMTP_USER, SMTP_PASSWORD)
+        step("login", 200 <= code < 400, f"{code} {message.decode('utf-8', errors='replace') if isinstance(message, bytes) else message}")
+    except Exception as exc:
+        step("error", False, f"{type(exc).__name__}: {exc}")
+    finally:
+        if server:
+            try:
+                server.quit()
+            except Exception:
+                pass
+    return result
+
+
 def encode_multipart_form(fields):
     boundary = f"----foilfolio-{secrets.token_hex(16)}"
     parts = []
@@ -4750,6 +4799,9 @@ def main(argv):
         if command == "email-status":
             print(json.dumps(email_status(), indent=2))
             return 0
+        if command == "email-diagnose":
+            print(json.dumps(smtp_diagnostics(), indent=2))
+            return 0
         if command == "email-test":
             if len(argv) < 3:
                 print("Usage: python3 app.py email-test recipient@example.com [subject]")
@@ -4768,7 +4820,7 @@ def main(argv):
         host = os.environ.get("HOST", "127.0.0.1")
         serve(host, port)
         return 0
-    print("Usage: python3 app.py [serve [port] | sync | import [csv_path] | seed [csv_path] | cache-owned-sets | refresh-missing-colors [limit] | email-status | email-test recipient@example.com [subject] | log-status | logs [lines]]")
+    print("Usage: python3 app.py [serve [port] | sync | import [csv_path] | seed [csv_path] | cache-owned-sets | refresh-missing-colors [limit] | email-status | email-diagnose | email-test recipient@example.com [subject] | log-status | logs [lines]]")
     return 2
 
 

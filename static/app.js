@@ -345,7 +345,16 @@ function updateAuthUi() {
     els.accountButton.title = loggedIn ? "Account settings" : "Log in";
   }
   if (els.logoutButton) {
-    els.logoutButton.hidden = !loggedIn;
+    const icon = els.logoutButton.querySelector("[aria-hidden='true']");
+    const label = els.logoutButton.querySelector(".auth-command-label");
+    els.logoutButton.title = loggedIn ? "Log out" : "Log in";
+    els.logoutButton.setAttribute("aria-label", loggedIn ? "Log out" : "Log in");
+    if (icon) {
+      icon.className = loggedIn ? "logout-icon" : "login-icon";
+    }
+    if (label) {
+      label.textContent = loggedIn ? "Logout" : "Log In";
+    }
   }
   if (els.settingsAccountEmail) {
     els.settingsAccountEmail.textContent = loggedIn ? state.user.email : "Not logged in";
@@ -3584,7 +3593,11 @@ function wireEvents() {
     }
   });
   els.logoutButton.addEventListener("click", () => {
-    logout().catch((error) => setStatus(error.message, "error"));
+    if (state.user) {
+      logout().catch((error) => setStatus(error.message, "error"));
+    } else {
+      openAuthModal("login");
+    }
   });
   els.addDeckButton.addEventListener("click", openAddDeckModal);
   els.addContainerButton.addEventListener("click", openAddContainerModal);

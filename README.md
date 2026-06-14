@@ -115,6 +115,12 @@ To check whether the app sees the email settings:
 docker compose run --rm foilfolio python app.py email-status
 ```
 
+To test the SMTP connection without sending an email:
+
+```bash
+docker compose run --rm foilfolio python app.py email-diagnose
+```
+
 To send a smoke-test email after credentials are ready:
 
 ```bash
@@ -174,6 +180,7 @@ python3 app.py import "/Users/kristophr/Downloads/export(1).csv"
 python3 app.py seed "/Users/kristophr/Downloads/export(1).csv"
 python3 app.py serve 8000
 python3 app.py email-status
+python3 app.py email-diagnose
 python3 app.py email-test you@example.com
 python3 app.py log-status
 python3 app.py logs 200
