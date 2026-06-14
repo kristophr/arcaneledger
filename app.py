@@ -8,6 +8,7 @@ import json
 import os
 import re
 import secrets
+import smtplib
 import sqlite3
 import sys
 import time
@@ -15,6 +16,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import date, datetime, timedelta
+from email.message import EmailMessage
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -37,6 +39,14 @@ MAILGUN_API_KEY = os.environ.get("MAILGUN_API_KEY", "")
 MAILGUN_DOMAIN = os.environ.get("MAILGUN_DOMAIN", "")
 MAILGUN_FROM_EMAIL = os.environ.get("MAILGUN_FROM_EMAIL", "")
 MAILGUN_FROM_NAME = os.environ.get("MAILGUN_FROM_NAME", "FoilFolio")
+SMTP_HOST = os.environ.get("SMTP_HOST", "")
+SMTP_PORT = int(os.environ.get("SMTP_PORT", "587") or 587)
+SMTP_USER = os.environ.get("SMTP_USER", "")
+SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
+SMTP_FROM = os.environ.get("SMTP_FROM", "")
+SMTP_FROM_NAME = os.environ.get("SMTP_FROM_NAME", MAILGUN_FROM_NAME)
+SMTP_SECURE = os.environ.get("SMTP_SECURE", "false").strip().lower() in {"1", "true", "yes", "on"}
+SMTP_STARTTLS = os.environ.get("SMTP_STARTTLS", "true").strip().lower() not in {"0", "false", "no", "off"}
 SESSION_COOKIE = "foilfolio_session"
 SESSION_DAYS = int(os.environ.get("SESSION_DAYS", "30"))
 SUPPORTED_SCRYFALL_LANGUAGES = {"en"}
@@ -265,20 +275,44 @@ def mailgun_configured():
     return bool(MAILGUN_API_KEY and MAILGUN_DOMAIN and MAILGUN_FROM_EMAIL)
 
 
+def smtp_configured():
+    return bool(SMTP_HOST and SMTP_USER and SMTP_PASSWORD and SMTP_FROM)
+
+
 def email_status():
-    required = {
+    smtp_required = {
+        "SMTP_HOST": SMTP_HOST,
+        "SMTP_USER": SMTP_USER,
+        "SMTP_PASSWORD": SMTP_PASSWORD,
+        "SMTP_FROM": SMTP_FROM,
+    }
+    mailgun_required = {
         "MAILGUN_API_KEY": MAILGUN_API_KEY,
         "MAILGUN_DOMAIN": MAILGUN_DOMAIN,
         "MAILGUN_FROM_EMAIL": MAILGUN_FROM_EMAIL,
     }
     return {
-        "provider": "mailgun",
-        "configured": mailgun_configured(),
-        "api_base": MAILGUN_API_BASE,
-        "domain": MAILGUN_DOMAIN,
-        "from_email": MAILGUN_FROM_EMAIL,
-        "from_name": MAILGUN_FROM_NAME,
-        "missing": [name for name, value in required.items() if not value],
+        "provider": "smtp" if smtp_configured() else "mailgun",
+        "configured": smtp_configured() or mailgun_configured(),
+        "smtp": {
+            "configured": smtp_configured(),
+            "host": SMTP_HOST,
+            "port": SMTP_PORT,
+            "user": SMTP_USER,
+            "from": SMTP_FROM,
+            "from_name": SMTP_FROM_NAME,
+            "secure": SMTP_SECURE,
+            "starttls": SMTP_STARTTLS and not SMTP_SECURE,
+            "missing": [name for name, value in smtp_required.items() if not value],
+        },
+        "mailgun": {
+            "configured": mailgun_configured(),
+            "api_base": MAILGUN_API_BASE,
+            "domain": MAILGUN_DOMAIN,
+            "from_email": MAILGUN_FROM_EMAIL,
+            "from_name": MAILGUN_FROM_NAME,
+            "missing": [name for name, value in mailgun_required.items() if not value],
+        },
     }
 
 
@@ -286,6 +320,12 @@ def mailgun_sender():
     if MAILGUN_FROM_NAME:
         return f"{MAILGUN_FROM_NAME} <{MAILGUN_FROM_EMAIL}>"
     return MAILGUN_FROM_EMAIL
+
+
+def smtp_sender():
+    if SMTP_FROM_NAME:
+        return f"{SMTP_FROM_NAME} <{SMTP_FROM}>"
+    return SMTP_FROM
 
 
 def encode_multipart_form(fields):
@@ -301,8 +341,14 @@ def encode_multipart_form(fields):
 
 
 def send_email(to_email, subject, text=None, html=None, tags=None):
+    if smtp_configured():
+        return send_smtp_email(to_email, subject, text, html)
     if not mailgun_configured():
-        raise ValueError("Mailgun is not configured. Set MAILGUN_API_KEY, MAILGUN_DOMAIN, and MAILGUN_FROM_EMAIL.")
+        raise ValueError("Email is not configured. Set SMTP_HOST, SMTP_USER, SMTP_PASSWORD, and SMTP_FROM, or configure Mailgun API settings.")
+    return send_mailgun_email(to_email, subject, text, html, tags)
+
+
+def validate_email_message(to_email, subject, text=None, html=None):
     recipient = (to_email or "").strip()
     if "@" not in recipient:
         raise ValueError("A valid recipient email address is required.")
@@ -310,11 +356,41 @@ def send_email(to_email, subject, text=None, html=None, tags=None):
         raise ValueError("Email subject is required.")
     if not text and not html:
         raise ValueError("Email text or HTML body is required.")
+    return recipient, subject.strip()
+
+
+def send_smtp_email(to_email, subject, text=None, html=None):
+    recipient, clean_subject = validate_email_message(to_email, subject, text, html)
+    message = EmailMessage()
+    message["From"] = smtp_sender()
+    message["To"] = recipient
+    message["Subject"] = clean_subject
+    message.set_content(text or "")
+    if html:
+        message.add_alternative(html, subtype="html")
+
+    if SMTP_SECURE:
+        with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=30) as server:
+            server.login(SMTP_USER, SMTP_PASSWORD)
+            server.send_message(message)
+    else:
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as server:
+            server.ehlo()
+            if SMTP_STARTTLS:
+                server.starttls()
+                server.ehlo()
+            server.login(SMTP_USER, SMTP_PASSWORD)
+            server.send_message(message)
+    return {"ok": True, "provider": "smtp", "status": "sent"}
+
+
+def send_mailgun_email(to_email, subject, text=None, html=None, tags=None):
+    recipient, clean_subject = validate_email_message(to_email, subject, text, html)
 
     fields = [
         ("from", mailgun_sender()),
         ("to", recipient),
-        ("subject", subject.strip()),
+        ("subject", clean_subject),
     ]
     if text:
         fields.append(("text", text))

@@ -58,15 +58,30 @@ cp "/path/to/new-export.csv" imports/export.csv
 docker compose exec foilfolio python app.py import /imports/export.csv
 ```
 
-## Email With Mailgun
+## Email
 
-FoilFolio has Mailgun plumbing ready for future account confirmation and share-by-email features. Copy the example env file, then fill in your Mailgun values:
+FoilFolio has email plumbing ready for future account confirmation and share-by-email features. SMTP is recommended for Mailgun if you already have working Mailgun SMTP credentials. Copy the example env file, then fill in your values:
 
 ```bash
 cp .env.example .env
 ```
 
-Required values:
+Recommended SMTP values for Mailgun:
+
+```text
+SMTP_HOST=smtp.mailgun.org
+SMTP_PORT=587
+SMTP_USER=postmaster@yourdomain.com
+SMTP_PASSWORD=your-smtp-password
+SMTP_FROM=foilfolio@yourdomain.com
+SMTP_FROM_NAME=FoilFolio
+SMTP_SECURE=false
+SMTP_STARTTLS=true
+```
+
+`SMTP_SECURE=false` means FoilFolio uses a normal SMTP connection first; with `SMTP_STARTTLS=true` it upgrades to TLS on port `587`.
+
+The older Mailgun HTTP API settings are still supported as a fallback:
 
 ```text
 MAILGUN_API_KEY=key-your-mailgun-api-key
@@ -75,17 +90,17 @@ MAILGUN_FROM_EMAIL=noreply@yourdomain.com
 MAILGUN_FROM_NAME=FoilFolio
 ```
 
-For EU Mailgun accounts, set `MAILGUN_API_BASE=https://api.eu.mailgun.net/v3`.
+For EU Mailgun API accounts, set `MAILGUN_API_BASE=https://api.eu.mailgun.net/v3`.
 
 Do not commit `.env`; it is ignored by Git. Docker Compose reads it automatically when you run the app.
 
-To check whether the app sees the Mailgun settings:
+To check whether the app sees the email settings:
 
 ```bash
 docker compose run --rm foilfolio python app.py email-status
 ```
 
-To send a smoke-test email after Mailgun DNS and credentials are ready:
+To send a smoke-test email after credentials are ready:
 
 ```bash
 docker compose run --rm foilfolio python app.py email-test you@example.com
