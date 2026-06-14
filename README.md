@@ -96,6 +96,21 @@ SMTP_STARTTLS=true
 
 `SMTP_SECURE=false` means FoilFolio uses a normal SMTP connection first; with `SMTP_STARTTLS=true` it upgrades to TLS on port `587`.
 
+FoilFolio also accepts Laravel-style SMTP names if you already have those:
+
+```text
+MAIL_DRIVER=smtp
+MAIL_HOST=smtp.mailgun.org
+MAIL_PORT=587
+MAIL_ENCRYPTION=tls
+MAIL_USERNAME=postmaster@yourdomain.com
+MAIL_PASSWORD=your-mailgun-smtp-password
+MAIL_FROM_ADDRESS=noreply@yourdomain.com
+MAIL_FROM_NAME=FoilFolio
+```
+
+If both `SMTP_*` and `MAIL_*` are present, `SMTP_*` values win.
+
 The older Mailgun HTTP API settings are still supported as a fallback:
 
 ```text

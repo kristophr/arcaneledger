@@ -46,14 +46,23 @@ MAILGUN_API_KEY = os.environ.get("MAILGUN_API_KEY", "")
 MAILGUN_DOMAIN = os.environ.get("MAILGUN_DOMAIN", "")
 MAILGUN_FROM_EMAIL = os.environ.get("MAILGUN_FROM_EMAIL", "")
 MAILGUN_FROM_NAME = os.environ.get("MAILGUN_FROM_NAME", "FoilFolio")
-SMTP_HOST = os.environ.get("SMTP_HOST", "")
-SMTP_PORT = int(os.environ.get("SMTP_PORT", "587") or 587)
-SMTP_USER = os.environ.get("SMTP_USER", "")
-SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
-SMTP_FROM = os.environ.get("SMTP_FROM", "")
-SMTP_FROM_NAME = os.environ.get("SMTP_FROM_NAME", MAILGUN_FROM_NAME)
-SMTP_SECURE = os.environ.get("SMTP_SECURE", "false").strip().lower() in {"1", "true", "yes", "on"}
-SMTP_STARTTLS = os.environ.get("SMTP_STARTTLS", "true").strip().lower() not in {"0", "false", "no", "off"}
+MAIL_DRIVER = os.environ.get("MAIL_DRIVER", "")
+MAIL_ENCRYPTION = os.environ.get("MAIL_ENCRYPTION", "").strip().lower()
+SMTP_HOST = os.environ.get("SMTP_HOST") or os.environ.get("MAIL_HOST", "")
+SMTP_PORT = int((os.environ.get("SMTP_PORT") or os.environ.get("MAIL_PORT") or "587") or 587)
+SMTP_USER = os.environ.get("SMTP_USER") or os.environ.get("MAIL_USERNAME", "")
+SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD") or os.environ.get("MAIL_PASSWORD", "")
+SMTP_FROM = os.environ.get("SMTP_FROM") or os.environ.get("MAIL_FROM_ADDRESS", "")
+SMTP_FROM_NAME = os.environ.get("SMTP_FROM_NAME") or os.environ.get("MAIL_FROM_NAME") or MAILGUN_FROM_NAME
+SMTP_SECURE = (
+    os.environ.get("SMTP_SECURE", "").strip().lower() in {"1", "true", "yes", "on"}
+    or MAIL_ENCRYPTION in {"ssl", "smtps"}
+)
+SMTP_STARTTLS = (
+    os.environ.get("SMTP_STARTTLS", "").strip().lower() not in {"0", "false", "no", "off"}
+    if "SMTP_STARTTLS" in os.environ
+    else MAIL_ENCRYPTION in {"tls", "starttls"} or not SMTP_SECURE
+)
 SESSION_COOKIE = "foilfolio_session"
 SESSION_DAYS = int(os.environ.get("SESSION_DAYS", "30"))
 SUPPORTED_SCRYFALL_LANGUAGES = {"en"}
