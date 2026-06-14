@@ -136,6 +136,26 @@ To test the SMTP connection without sending an email:
 docker compose run --rm foilfolio python app.py email-diagnose
 ```
 
+For a detailed redacted SMTP trace:
+
+```bash
+docker compose run --rm foilfolio python app.py email-trace
+```
+
+If a provider behaves badly with one SMTP auth mechanism, you can force one:
+
+```text
+SMTP_AUTH_METHOD=LOGIN
+```
+
+or, when using `MAIL_*` names:
+
+```text
+MAIL_AUTH_METHOD=LOGIN
+```
+
+Supported values are `LOGIN` and `PLAIN`. Leave it blank for Python's default SMTP negotiation.
+
 To send a smoke-test email after credentials are ready:
 
 ```bash
@@ -196,6 +216,7 @@ python3 app.py seed "/Users/kristophr/Downloads/export(1).csv"
 python3 app.py serve 8000
 python3 app.py email-status
 python3 app.py email-diagnose
+python3 app.py email-trace
 python3 app.py email-test you@example.com
 python3 app.py log-status
 python3 app.py logs 200

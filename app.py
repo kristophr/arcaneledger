@@ -54,6 +54,7 @@ SMTP_USER = os.environ.get("SMTP_USER") or os.environ.get("MAIL_USERNAME", "")
 SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD") or os.environ.get("MAIL_PASSWORD", "")
 SMTP_FROM = os.environ.get("SMTP_FROM") or os.environ.get("MAIL_FROM_ADDRESS", "")
 SMTP_FROM_NAME = os.environ.get("SMTP_FROM_NAME") or os.environ.get("MAIL_FROM_NAME") or MAILGUN_FROM_NAME
+SMTP_AUTH_METHOD = (os.environ.get("SMTP_AUTH_METHOD") or os.environ.get("MAIL_AUTH_METHOD", "")).strip().upper()
 SMTP_SECURE = (
     os.environ.get("SMTP_SECURE", "").strip().lower() in {"1", "true", "yes", "on"}
     or MAIL_ENCRYPTION in {"ssl", "smtps"}
@@ -401,6 +402,93 @@ def smtp_sender():
     return SMTP_FROM
 
 
+def smtp_response_text(message):
+    return message.decode("utf-8", errors="replace") if isinstance(message, bytes) else str(message)
+
+
+def smtp_login(server):
+    if not SMTP_AUTH_METHOD:
+        return server.login(SMTP_USER, SMTP_PASSWORD)
+    methods = {
+        "PLAIN": server.auth_plain,
+        "LOGIN": server.auth_login,
+    }
+    if SMTP_AUTH_METHOD not in methods:
+        raise ValueError("SMTP_AUTH_METHOD must be PLAIN or LOGIN.")
+    return server.auth(SMTP_AUTH_METHOD, methods[SMTP_AUTH_METHOD])
+
+
+def smtp_trace():
+    trace = {
+        "configured": smtp_configured(),
+        "driver": MAIL_DRIVER,
+        "host": SMTP_HOST,
+        "port": SMTP_PORT,
+        "user": SMTP_USER,
+        "from": SMTP_FROM,
+        "from_name": SMTP_FROM_NAME,
+        "secure": SMTP_SECURE,
+        "starttls": SMTP_STARTTLS and not SMTP_SECURE,
+        "auth_method": SMTP_AUTH_METHOD or "default",
+        "password_present": bool(SMTP_PASSWORD),
+        "password_length": len(SMTP_PASSWORD or ""),
+        "steps": [],
+    }
+
+    def step(name, ok, detail=None, **extra):
+        item = {"step": name, "ok": bool(ok)}
+        if detail:
+            item["detail"] = str(detail)
+        item.update(extra)
+        trace["steps"].append(item)
+
+    if not smtp_configured():
+        step("configuration", False, "Set SMTP_HOST, SMTP_USER, SMTP_PASSWORD, and SMTP_FROM, or MAIL_HOST, MAIL_USERNAME, MAIL_PASSWORD, and MAIL_FROM_ADDRESS.")
+        return trace
+
+    server = None
+    try:
+        server = smtplib.SMTP_SSL(timeout=30) if SMTP_SECURE else smtplib.SMTP(timeout=30)
+        code, message = server.connect(SMTP_HOST, SMTP_PORT)
+        step("connect_ssl" if SMTP_SECURE else "connect", 200 <= code < 400, f"{code} {smtp_response_text(message)}")
+        if getattr(server, "sock", None):
+            try:
+                step("socket", True, local=str(server.sock.getsockname()), peer=str(server.sock.getpeername()))
+            except OSError as exc:
+                step("socket", False, f"{type(exc).__name__}: {exc}")
+        code, message = server.ehlo()
+        step("ehlo", 200 <= code < 400, f"{code} {smtp_response_text(message)}", features=dict(server.esmtp_features))
+        if SMTP_STARTTLS and not SMTP_SECURE:
+            code, message = server.starttls()
+            step("starttls", 200 <= code < 400, f"{code} {smtp_response_text(message)}")
+            if getattr(server, "sock", None) and hasattr(server.sock, "cipher"):
+                try:
+                    step("tls", True, version=server.sock.version(), cipher=str(server.sock.cipher()))
+                except Exception as exc:
+                    step("tls", False, f"{type(exc).__name__}: {exc}")
+            code, message = server.ehlo()
+            step("ehlo_after_starttls", 200 <= code < 400, f"{code} {smtp_response_text(message)}", features=dict(server.esmtp_features))
+        auth_methods = (server.esmtp_features.get("auth", "") or "").split()
+        step("auth_methods", bool(auth_methods), methods=auth_methods)
+        try:
+            code, message = server.noop()
+            step("noop_before_login", 200 <= code < 400, f"{code} {smtp_response_text(message)}")
+        except Exception as exc:
+            step("noop_before_login", False, f"{type(exc).__name__}: {exc}")
+        step("login_attempt", True, method=SMTP_AUTH_METHOD or "smtplib default")
+        code, message = smtp_login(server)
+        step("login", 200 <= code < 400, f"{code} {smtp_response_text(message)}")
+    except Exception as exc:
+        step("error", False, f"{type(exc).__name__}: {exc}")
+    finally:
+        if server:
+            try:
+                server.quit()
+            except Exception:
+                pass
+    return trace
+
+
 def smtp_diagnostics():
     result = {
         "configured": smtp_configured(),
@@ -410,6 +498,7 @@ def smtp_diagnostics():
         "from": SMTP_FROM,
         "secure": SMTP_SECURE,
         "starttls": SMTP_STARTTLS and not SMTP_SECURE,
+        "auth_method": SMTP_AUTH_METHOD or "default",
         "password_present": bool(SMTP_PASSWORD),
         "password_length": len(SMTP_PASSWORD or ""),
         "steps": [],
@@ -437,7 +526,7 @@ def smtp_diagnostics():
             step("starttls", 200 <= code < 400, f"{code} {message.decode('utf-8', errors='replace') if isinstance(message, bytes) else message}")
             code, message = server.ehlo()
             step("ehlo_after_starttls", 200 <= code < 400, f"{code} {message.decode('utf-8', errors='replace') if isinstance(message, bytes) else message}")
-        code, message = server.login(SMTP_USER, SMTP_PASSWORD)
+        code, message = smtp_login(server)
         step("login", 200 <= code < 400, f"{code} {message.decode('utf-8', errors='replace') if isinstance(message, bytes) else message}")
     except Exception as exc:
         step("error", False, f"{type(exc).__name__}: {exc}")
@@ -493,7 +582,7 @@ def send_smtp_email(to_email, subject, text=None, html=None):
 
     if SMTP_SECURE:
         with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=30) as server:
-            server.login(SMTP_USER, SMTP_PASSWORD)
+            smtp_login(server)
             server.send_message(message)
     else:
         with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as server:
@@ -501,7 +590,7 @@ def send_smtp_email(to_email, subject, text=None, html=None):
             if SMTP_STARTTLS:
                 server.starttls()
                 server.ehlo()
-            server.login(SMTP_USER, SMTP_PASSWORD)
+            smtp_login(server)
             server.send_message(message)
     return {"ok": True, "provider": "smtp", "status": "sent"}
 
@@ -4811,6 +4900,9 @@ def main(argv):
         if command == "email-diagnose":
             print(json.dumps(smtp_diagnostics(), indent=2))
             return 0
+        if command == "email-trace":
+            print(json.dumps(smtp_trace(), indent=2))
+            return 0
         if command == "email-test":
             if len(argv) < 3:
                 print("Usage: python3 app.py email-test recipient@example.com [subject]")
@@ -4829,7 +4921,7 @@ def main(argv):
         host = os.environ.get("HOST", "127.0.0.1")
         serve(host, port)
         return 0
-    print("Usage: python3 app.py [serve [port] | sync | import [csv_path] | seed [csv_path] | cache-owned-sets | refresh-missing-colors [limit] | email-status | email-diagnose | email-test recipient@example.com [subject] | log-status | logs [lines]]")
+    print("Usage: python3 app.py [serve [port] | sync | import [csv_path] | seed [csv_path] | cache-owned-sets | refresh-missing-colors [limit] | email-status | email-diagnose | email-trace | email-test recipient@example.com [subject] | log-status | logs [lines]]")
     return 2
 
 
