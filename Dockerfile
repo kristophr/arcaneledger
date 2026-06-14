@@ -5,20 +5,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     HOST=0.0.0.0 \
     PORT=8000 \
     DATA_DIR=/app/data \
-    DEFAULT_IMPORT=/imports/export.csv \
-    MAILGUN_API_BASE=https://api.mailgun.net/v3 \
-    MAILGUN_API_KEY= \
-    MAILGUN_DOMAIN= \
-    MAILGUN_FROM_EMAIL= \
-    MAILGUN_FROM_NAME=FoilFolio \
-    SMTP_HOST= \
-    SMTP_PORT=587 \
-    SMTP_USER= \
-    SMTP_PASSWORD= \
-    SMTP_FROM= \
-    SMTP_FROM_NAME=FoilFolio \
-    SMTP_SECURE=false \
-    SMTP_STARTTLS=true
+    DEFAULT_IMPORT=/imports/export.csv
 
 WORKDIR /app
 

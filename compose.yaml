@@ -4,6 +4,8 @@ services:
       context: .
     container_name: foilfolio
     restart: unless-stopped
+    env_file:
+      - .env
     ports:
       - "${PORT:-8000}:8000"
     environment:
@@ -13,19 +15,6 @@ services:
       DEFAULT_IMPORT: /imports/export.csv
       SCRYFALL_QUERY: game:paper
       SCRYFALL_LANGUAGE: en
-      MAILGUN_API_BASE: ${MAILGUN_API_BASE:-https://api.mailgun.net/v3}
-      MAILGUN_API_KEY: ${MAILGUN_API_KEY:-}
-      MAILGUN_DOMAIN: ${MAILGUN_DOMAIN:-}
-      MAILGUN_FROM_EMAIL: ${MAILGUN_FROM_EMAIL:-}
-      MAILGUN_FROM_NAME: ${MAILGUN_FROM_NAME:-FoilFolio}
-      SMTP_HOST: ${SMTP_HOST:-}
-      SMTP_PORT: ${SMTP_PORT:-587}
-      SMTP_USER: ${SMTP_USER:-}
-      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
-      SMTP_FROM: ${SMTP_FROM:-}
-      SMTP_FROM_NAME: ${SMTP_FROM_NAME:-FoilFolio}
-      SMTP_SECURE: ${SMTP_SECURE:-false}
-      SMTP_STARTTLS: ${SMTP_STARTTLS:-true}
     volumes:
       - ./data:/app/data
       - ./imports:/imports:ro
