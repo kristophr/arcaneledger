@@ -4051,10 +4051,20 @@ function renderSharedDeck(deck) {
           <span>${integer.format(cardCount)} cards</span>
         </div>
       </div>
-      ${deck.description ? `<p class="shared-card-note">${escapeHtml(deck.description)}</p>` : ""}
-      ${deck.external_notes ? `<p class="shared-card-note">${escapeHtml(deck.external_notes)}</p>` : ""}
-      <div class="deck-detail-list">
-        ${deckRowsHtml(cards, "No cards in this deck yet.")}
+      <div class="shared-deck-content">
+        <div class="deck-detail-list shared-deck-list">
+          ${deckRowsHtml(cards, "No cards in this deck yet.")}
+        </div>
+        <aside class="shared-deck-notes" aria-label="Deck notes">
+          <section class="shared-note-box">
+            <p class="eyebrow">Description</p>
+            <p>${escapeHtml(deck.description || "No description shared.")}</p>
+          </section>
+          <section class="shared-note-box shared-note-box-large">
+            <p class="eyebrow">External Notes</p>
+            <p>${escapeHtml(deck.external_notes || "No external notes shared.")}</p>
+          </section>
+        </aside>
       </div>
     </section>
   `;

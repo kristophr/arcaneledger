@@ -3836,7 +3836,7 @@ main {
 }
 
 .deck-share-shell {
-  max-width: 920px;
+  max-width: 1220px;
   margin: 0 auto;
 }
 
@@ -3865,6 +3865,46 @@ main {
   margin-top: 6px;
   color: var(--muted);
   font-weight: 800;
+}
+
+.shared-deck-content {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
+  gap: 16px;
+  align-items: start;
+  padding: 16px;
+}
+
+.shared-deck-list {
+  padding: 0;
+}
+
+.shared-deck-notes {
+  display: grid;
+  gap: 12px;
+}
+
+.shared-note-box {
+  min-height: 126px;
+  border: 1px solid var(--input-border);
+  border-radius: 8px;
+  padding: 13px 14px;
+  background: var(--input-bg);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.42);
+}
+
+.shared-note-box-large {
+  min-height: 238px;
+}
+
+.shared-note-box p:not(.eyebrow) {
+  margin: 8px 0 0;
+  color: var(--ink);
+  font-size: 0.92rem;
+  font-weight: 650;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .selected-add-card strong {
@@ -3930,6 +3970,10 @@ main {
   }
 
   .deck-editor-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .shared-deck-content {
     grid-template-columns: 1fr;
   }
 
