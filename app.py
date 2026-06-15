@@ -5184,10 +5184,34 @@ def card_aggregate_stats(conn, card_id):
         """,
         (card_id,),
     ).fetchone()["deck_count"] or 0
+    favorite_count = conn.execute(
+        """
+        SELECT COUNT(DISTINCT user_id) AS favorite_count
+        FROM card_meta
+        WHERE card_id = ? AND COALESCE(favorite, 0) = 1
+        """,
+        (card_id,),
+    ).fetchone()["favorite_count"] or 0
+    wishlist_count = conn.execute(
+        """
+        SELECT COUNT(DISTINCT user_id) AS wishlist_count
+        FROM (
+            SELECT user_id FROM wishlist_items WHERE card_id = ?
+            UNION
+            SELECT user_id FROM wishlist_cards WHERE card_id = ?
+            UNION
+            SELECT user_id FROM card_meta WHERE card_id = ? AND COALESCE(wishlist, 0) = 1
+        )
+        WHERE user_id IS NOT NULL
+        """,
+        (card_id, card_id, card_id),
+    ).fetchone()["wishlist_count"] or 0
     return {
         "user_count": int(row["user_count"] or 0),
         "total_quantity": int(row["total_quantity"] or 0),
         "deck_count": int(deck_count),
+        "favorite_count": int(favorite_count),
+        "wishlist_count": int(wishlist_count),
     }
 
 

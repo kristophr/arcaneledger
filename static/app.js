@@ -3887,6 +3887,8 @@ function renderCardAggregateStats(stats = {}) {
   const userCount = Number(stats.user_count || 0);
   const totalQuantity = Number(stats.total_quantity || 0);
   const deckCount = Number(stats.deck_count || 0);
+  const favoriteCount = Number(stats.favorite_count || 0);
+  const wishlistCount = Number(stats.wishlist_count || 0);
   return `
     <div class="card-meta-grid">
       <div>
@@ -3900,6 +3902,14 @@ function renderCardAggregateStats(stats = {}) {
       <div>
         <strong>${integer.format(deckCount)}</strong>
         <span>${deckCount === 1 ? "deck includes it" : "decks include it"}</span>
+      </div>
+      <div>
+        <strong>${integer.format(favoriteCount)}</strong>
+        <span>${favoriteCount === 1 ? "user favorited it" : "users favorited it"}</span>
+      </div>
+      <div>
+        <strong>${integer.format(wishlistCount)}</strong>
+        <span>${wishlistCount === 1 ? "user wishlisted it" : "users wishlisted it"}</span>
       </div>
     </div>
   `;
