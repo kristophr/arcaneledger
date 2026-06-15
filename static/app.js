@@ -454,7 +454,12 @@ function setAuthMode(mode) {
   els.authForm.email.readOnly = isComplete || isResetComplete;
   els.authForm.email.required = true;
   els.authForm.name.required = isComplete;
+  els.authForm.name.disabled = !isComplete;
+  if (!isComplete) {
+    els.authForm.name.value = "";
+  }
   els.authForm.password.required = !(isRegister || isResetRequest);
+  els.authForm.password.disabled = isRegister || isResetRequest;
   els.authHint.textContent = isComplete
     ? "Email verified. Add your name and a strong password to finish creating your account."
     : isRegister

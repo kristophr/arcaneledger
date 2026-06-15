@@ -791,6 +791,11 @@ main {
   display: none;
 }
 
+#authNameField[hidden],
+#authPasswordField[hidden] {
+  display: none !important;
+}
+
 .dashboard-band,
 .collection-band,
 .decks-band,
