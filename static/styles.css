@@ -419,7 +419,8 @@ main {
 .share-only .deck-share-band,
 .share-only .favorites-share-band,
 .share-only .wishlist-share-band,
-.share-only .container-share-band {
+.share-only .container-share-band,
+.share-only .store-share-band {
   min-height: 100vh;
 }
 
@@ -810,6 +811,7 @@ main {
 .favorites-share-band,
 .container-share-band,
 .wishlist-share-band,
+.store-share-band,
 .set-band {
   padding: clamp(18px, 4vw, 44px) clamp(16px, 4vw, 48px);
 }
@@ -2681,27 +2683,90 @@ main {
   gap: 6px;
 }
 
-.card-meta-grid div {
+.card-meta-grid div,
+.card-meta-grid button {
   display: grid;
   gap: 2px;
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 7px 8px;
   background: var(--detail-bg);
+  color: inherit;
+  font: inherit;
+  text-align: left;
 }
 
-.card-meta-grid strong {
+.card-meta-grid strong,
+.card-meta-grid button strong {
   color: var(--accent);
   font-size: 1.05rem;
   line-height: 1;
 }
 
-.card-meta-grid span {
+.card-meta-grid span,
+.card-meta-grid button span {
   color: var(--muted);
   font-size: 0.68rem;
   font-weight: 800;
   line-height: 1.2;
   text-transform: uppercase;
+}
+
+.card-meta-action {
+  justify-items: start;
+  color: inherit;
+  cursor: pointer;
+}
+
+.card-meta-action:hover {
+  border-color: var(--accent);
+  background: var(--button-hover);
+}
+
+.card-meta-action:disabled {
+  cursor: default;
+  opacity: 0.68;
+}
+
+.card-meta-action:disabled:hover {
+  border-color: var(--line);
+  background: var(--detail-bg);
+}
+
+.card-meta-drilldown-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.card-meta-drilldown-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: var(--ink);
+  background: var(--detail-bg);
+  text-decoration: none;
+}
+
+.card-meta-drilldown-row:hover {
+  border-color: var(--accent);
+  background: var(--button-hover);
+}
+
+.card-meta-drilldown-row strong,
+.card-meta-drilldown-row span {
+  display: block;
+}
+
+.card-meta-drilldown-row span {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 800;
 }
 
 .card-notes-form {

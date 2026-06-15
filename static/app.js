@@ -294,6 +294,11 @@ const els = {
   cardContainersTitle: document.querySelector("#cardContainersTitle"),
   cardContainersList: document.querySelector("#cardContainersList"),
   closeCardContainersButton: document.querySelector("#closeCardContainersButton"),
+  cardMetaOverlay: document.querySelector("#cardMetaOverlay"),
+  cardMetaEyebrow: document.querySelector("#cardMetaEyebrow"),
+  cardMetaTitle: document.querySelector("#cardMetaTitle"),
+  cardMetaList: document.querySelector("#cardMetaList"),
+  closeCardMetaButton: document.querySelector("#closeCardMetaButton"),
   shareOverlay: document.querySelector("#shareOverlay"),
   shareTitle: document.querySelector("#shareTitle"),
   shareUrlInput: document.querySelector("#shareUrlInput"),
@@ -303,6 +308,7 @@ const els = {
   favoritesShareShell: document.querySelector("#favoritesShareShell"),
   wishlistShareShell: document.querySelector("#wishlistShareShell"),
   containerShareShell: document.querySelector("#containerShareShell"),
+  storeShareShell: document.querySelector("#storeShareShell"),
   cardDetailShell: document.querySelector("#cardDetailShell"),
   addPurchaseOverlay: document.querySelector("#addPurchaseOverlay"),
   addPurchaseForm: document.querySelector("#addPurchaseForm"),
@@ -607,7 +613,7 @@ async function logout() {
 }
 
 function protectedPage(page) {
-  return !["search", "deck-share", "card-share", "favorites-share", "wishlist-share", "container-share"].includes(page);
+  return !["search", "deck-share", "card-share", "favorites-share", "wishlist-share", "container-share", "store-share"].includes(page);
 }
 
 function valueClass(value) {
@@ -1217,6 +1223,11 @@ function wishlistRouteId() {
 
 function containerRouteId() {
   const match = window.location.pathname.match(/^\/containers\/([^/]+)\/?$/);
+  return match ? decodeURIComponent(match[1]) : "";
+}
+
+function storeRouteId() {
+  const match = window.location.pathname.match(/^\/stores\/([^/]+)\/?$/);
   return match ? decodeURIComponent(match[1]) : "";
 }
 
@@ -2541,6 +2552,14 @@ function closeCardContainersModal() {
   document.body.classList.remove("modal-open");
   els.cardContainersTitle.textContent = "Containers";
   els.cardContainersList.innerHTML = "";
+}
+
+function closeCardMetaModal() {
+  els.cardMetaOverlay.hidden = true;
+  document.body.classList.remove("modal-open");
+  els.cardMetaEyebrow.textContent = "FoilFolio meta";
+  els.cardMetaTitle.textContent = "Card Meta";
+  els.cardMetaList.innerHTML = "";
 }
 
 function closeCardDecksModal() {
@@ -3937,23 +3956,90 @@ function renderCardAggregateStats(stats = {}) {
   const wishlistCount = Number(stats.wishlist_count || 0);
   const saleUserCount = Number(stats.sale_user_count || 0);
   const rows = [
-    [integer.format(userCount), userCount === 1 ? "user owns" : "users own"],
-    [integer.format(totalQuantity), totalQuantity === 1 ? "copy owned" : "copies owned"],
-    [integer.format(deckCount), deckCount === 1 ? "deck" : "decks"],
-    [integer.format(favoriteCount), favoriteCount === 1 ? "favorite" : "favorites"],
-    [integer.format(wishlistCount), wishlistCount === 1 ? "wishlist" : "wishlists"],
-    [integer.format(saleUserCount), saleUserCount === 1 ? "user selling" : "users selling"],
+    { value: integer.format(userCount), label: userCount === 1 ? "user owns" : "users own" },
+    { value: integer.format(totalQuantity), label: totalQuantity === 1 ? "copy owned" : "copies owned" },
+    { value: integer.format(deckCount), label: deckCount === 1 ? "deck" : "decks", action: "decks", disabled: deckCount <= 0 },
+    { value: integer.format(favoriteCount), label: favoriteCount === 1 ? "favorite" : "favorites" },
+    { value: integer.format(wishlistCount), label: wishlistCount === 1 ? "wishlist" : "wishlists" },
+    { value: integer.format(saleUserCount), label: "for sale", action: "sales", disabled: saleUserCount <= 0 },
   ];
   return `
     <div class="card-meta-grid">
-      ${rows.map(([value, label]) => `
+      ${rows.map((row) => row.action ? `
+        <button class="card-meta-action" type="button" data-meta-action="${row.action}" ${row.disabled ? "disabled" : ""}>
+          <strong>${row.value}</strong>
+          <span>${row.label}</span>
+        </button>
+      ` : `
         <div>
-          <strong>${value}</strong>
-          <span>${label}</span>
+          <strong>${row.value}</strong>
+          <span>${row.label}</span>
         </div>
       `).join("")}
     </div>
   `;
+}
+
+function openCardMetaOverlay(title, eyebrow = "FoilFolio meta") {
+  els.cardMetaEyebrow.textContent = eyebrow;
+  els.cardMetaTitle.textContent = title;
+  els.cardMetaOverlay.hidden = false;
+  document.body.classList.add("modal-open");
+}
+
+async function openCardDeckReferencesModal(card) {
+  openCardMetaOverlay("Decks Using This Card", cardTitle(card));
+  els.cardMetaList.innerHTML = '<div class="empty-state">Loading decks...</div>';
+  try {
+    const result = await api(`/api/cards/${encodeURIComponent(card.scryfall_id)}/deck-references`, { promptLogin: true });
+    const decks = result.decks || [];
+    if (!decks.length) {
+      els.cardMetaList.innerHTML = '<div class="empty-state">No decks include this card yet.</div>';
+      return;
+    }
+    els.cardMetaList.innerHTML = decks.map((deck) => `
+      <a class="card-meta-drilldown-row" href="${escapeHtml(deck.deck_url || `/decks/${encodeURIComponent(deck.share_id || "")}`)}" target="_blank" rel="noreferrer">
+        <span>
+          <strong>${escapeHtml(deck.name || "Deck")}</strong>
+          <span>${escapeHtml(deck.owner_name || "FoilFolio user")} - ${integer.format(deck.deck_quantity || 0)} in deck</span>
+        </span>
+        <b>&#8599;</b>
+      </a>
+    `).join("");
+  } catch (error) {
+    els.cardMetaList.innerHTML = `<div class="empty-state">${escapeHtml(error.message)}</div>`;
+  }
+}
+
+async function openCardSaleSellersModal(card) {
+  openCardMetaOverlay("For Sale", cardTitle(card));
+  els.cardMetaList.innerHTML = '<div class="empty-state">Loading sellers...</div>';
+  try {
+    const result = await api(`/api/cards/${encodeURIComponent(card.scryfall_id)}/sale-sellers`, { promptLogin: true });
+    const sellers = result.sellers || [];
+    if (!sellers.length) {
+      els.cardMetaList.innerHTML = '<div class="empty-state">No users have this card for sale yet.</div>';
+      return;
+    }
+    els.cardMetaList.innerHTML = sellers.map((seller) => {
+      const minPrice = Number(seller.min_asking_price || 0);
+      const maxPrice = Number(seller.max_asking_price || 0);
+      const priceLabel = minPrice && maxPrice && minPrice !== maxPrice
+        ? `${dollars.format(minPrice)}-${dollars.format(maxPrice)}`
+        : dollars.format(minPrice || maxPrice || 0);
+      return `
+        <a class="card-meta-drilldown-row" href="${escapeHtml(seller.store_url || `/stores/${encodeURIComponent(seller.store_share_id || "")}`)}" target="_blank" rel="noreferrer">
+          <span>
+            <strong>${escapeHtml(seller.seller_name || "Seller")}</strong>
+            <span>${integer.format(seller.sale_quantity || 0)} for sale - ${priceLabel}</span>
+          </span>
+          <b>&#8599;</b>
+        </a>
+      `;
+    }).join("");
+  } catch (error) {
+    els.cardMetaList.innerHTML = `<div class="empty-state">${escapeHtml(error.message)}</div>`;
+  }
 }
 
 function renderCardDetail(card) {
@@ -4086,6 +4172,16 @@ function renderCardDetail(card) {
   els.cardDetailShell.querySelector(".card-notes-form")?.addEventListener("submit", (event) => {
     event.preventDefault();
     saveCardPrivateNotes(card, event.currentTarget).catch((error) => setStatus(error.message, "error"));
+  });
+  els.cardDetailShell.querySelectorAll(".card-meta-action").forEach((button) => {
+    button.addEventListener("click", () => {
+      if (button.dataset.metaAction === "decks") {
+        openCardDeckReferencesModal(card).catch((error) => setStatus(error.message, "error"));
+      }
+      if (button.dataset.metaAction === "sales") {
+        openCardSaleSellersModal(card).catch((error) => setStatus(error.message, "error"));
+      }
+    });
   });
   els.cardDetailShell.querySelector(".detail-wishlist-button") && wireWishlistButton(els.cardDetailShell.querySelector(".detail-wishlist-button"), card, {
     statusTarget: els.status,
@@ -4613,6 +4709,35 @@ function renderSharedContainer(container) {
   `;
 }
 
+function renderSharedStore(store) {
+  const cards = store.cards || [];
+  const rows = cards.length ? cards.map((card) => `
+    <article class="deck-card-row favorite-deck-share-row">
+      <img src="${escapeHtml(card.image_small || card.image_normal || "")}" alt="">
+      <div>
+        <strong>${escapeHtml(cardTitle(card))}</strong>
+        <span>${escapeHtml(card.variant || "Normal")} - ${escapeHtml(conditionText(card))}</span>
+        <small>${escapeHtml(card.set_name || "")} #${escapeHtml(card.collector_number || "")}</small>
+      </div>
+      <b>${integer.format(card.sale_quantity || 0)} @ ${dollars.format(card.sale_price || 0)}</b>
+    </article>
+  `).join("") : '<div class="empty-state">No active sale listings.</div>';
+  els.storeShareShell.innerHTML = `
+    <section class="shared-deck-card">
+      <div class="shared-deck-head">
+        <div>
+          <p class="eyebrow">FoilFolio store</p>
+          <h2>${escapeHtml(store.seller_name || "Seller")}</h2>
+          <span>${integer.format(store.card_count || cards.length)} listing${Number(store.card_count || cards.length) === 1 ? "" : "s"} - ${integer.format(store.sale_quantity || 0)} card${Number(store.sale_quantity || 0) === 1 ? "" : "s"} for sale</span>
+        </div>
+      </div>
+      <div class="deck-detail-list">
+        ${rows}
+      </div>
+    </section>
+  `;
+}
+
 function renderSharedFavorites(payload) {
   const cards = payload.cards || [];
   const decks = payload.decks || [];
@@ -4677,6 +4802,17 @@ async function loadSharedContainer(shareId) {
     renderSharedContainer(container);
   } catch (error) {
     els.containerShareShell.innerHTML = `<div class="empty-state">${escapeHtml(error.message)}</div>`;
+  }
+}
+
+async function loadSharedStore(shareId) {
+  showPage("store-share");
+  els.storeShareShell.innerHTML = '<div class="empty-state">Loading store...</div>';
+  try {
+    const store = await api(`/api/stores/${encodeURIComponent(shareId)}`);
+    renderSharedStore(store);
+  } catch (error) {
+    els.storeShareShell.innerHTML = `<div class="empty-state">${escapeHtml(error.message)}</div>`;
   }
 }
 
@@ -5173,6 +5309,12 @@ function wireEvents() {
       closeCardContainersModal();
     }
   });
+  els.closeCardMetaButton.addEventListener("click", closeCardMetaModal);
+  els.cardMetaOverlay.addEventListener("click", (event) => {
+    if (event.target === els.cardMetaOverlay) {
+      closeCardMetaModal();
+    }
+  });
   els.closeShareButton.addEventListener("click", closeShareModal);
   els.copyShareButton.addEventListener("click", copyShareUrl);
   els.shareOverlay.addEventListener("click", (event) => {
@@ -5263,6 +5405,9 @@ function wireEvents() {
     }
     if (event.key === "Escape" && !els.cardContainersOverlay.hidden) {
       closeCardContainersModal();
+    }
+    if (event.key === "Escape" && !els.cardMetaOverlay.hidden) {
+      closeCardMetaModal();
     }
     if (event.key === "Escape" && !els.importReviewOverlay.hidden) {
       closeImportReviewModal();
@@ -5724,12 +5869,13 @@ async function boot() {
   const initialDeckShareId = initialDeckRouteId && !initialDeckEditorId ? initialDeckRouteId : "";
   const initialWishlistShareId = wishlistRouteId();
   const initialContainerShareId = containerRouteId();
+  const initialStoreShareId = storeRouteId();
   const initialFavoritesShare = favoritesShareRoute();
   const initialCardDetail = cardDetailRoute();
   const initialVerificationToken = verificationRouteToken();
   const initialPasswordResetToken = passwordResetRouteToken();
   const initialAppPage = appPageRoute();
-  const isAlwaysShareOnlyRoute = Boolean(initialDeckShareId || initialWishlistShareId || initialContainerShareId || initialFavoritesShare);
+  const isAlwaysShareOnlyRoute = Boolean(initialDeckShareId || initialWishlistShareId || initialContainerShareId || initialStoreShareId || initialFavoritesShare);
   await loadSession().catch(() => {
     state.user = null;
     updateAuthUi();
@@ -5761,6 +5907,9 @@ async function boot() {
   } else if (initialContainerShareId) {
     document.body.classList.add("share-only");
     loadSharedContainer(initialContainerShareId);
+  } else if (initialStoreShareId) {
+    document.body.classList.add("share-only");
+    loadSharedStore(initialStoreShareId);
   } else if (initialFavoritesShare) {
     document.body.classList.add("share-only");
     loadSharedFavorites();

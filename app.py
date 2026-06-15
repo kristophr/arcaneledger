@@ -930,6 +930,7 @@ def init_db(conn):
             language TEXT NOT NULL DEFAULT 'en',
             theme TEXT NOT NULL DEFAULT 'light',
             email_verified INTEGER NOT NULL DEFAULT 0,
+            store_share_id TEXT UNIQUE,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         );
@@ -1809,8 +1810,13 @@ def migrate_user_schema(conn):
         conn.execute("ALTER TABLE users ADD COLUMN theme TEXT NOT NULL DEFAULT 'light'")
     if "email_verified" not in user_columns:
         conn.execute("ALTER TABLE users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0")
+    if "store_share_id" not in user_columns:
+        conn.execute("ALTER TABLE users ADD COLUMN store_share_id TEXT")
     conn.execute("UPDATE users SET name = email WHERE trim(COALESCE(name, '')) = ''")
     conn.execute("UPDATE users SET email_verified = 1 WHERE email_verified = 0 AND trim(COALESCE(password_hash, '')) != ''")
+    rows = conn.execute("SELECT id FROM users WHERE store_share_id IS NULL OR store_share_id = ''").fetchall()
+    for row in rows:
+        conn.execute("UPDATE users SET store_share_id = ? WHERE id = ?", (new_store_share_id(conn), row["id"]))
     conn.executescript(
         """
         CREATE TABLE IF NOT EXISTS email_verifications (
@@ -1833,6 +1839,7 @@ def migrate_user_schema(conn):
         """
     )
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email)")
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_store_share_id ON users(store_share_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id, expires_at)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_email_verifications_email ON email_verifications(email, expires_at)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_password_resets_user ON password_resets(user_id, expires_at)")
@@ -2024,10 +2031,10 @@ def complete_registration(conn, payload):
         raise ValueError("An account with that email already exists.")
     cursor = conn.execute(
         """
-        INSERT INTO users (name, email, password_hash, language, theme, email_verified, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+        INSERT INTO users (name, email, password_hash, language, theme, email_verified, store_share_id, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)
         """,
-        (name, email, hash_password(password), scryfall_language(payload.get("language")), clean_theme(payload.get("theme")), timestamp, timestamp),
+        (name, email, hash_password(password), scryfall_language(payload.get("language")), clean_theme(payload.get("theme")), new_store_share_id(conn), timestamp, timestamp),
     )
     user_id = cursor.lastrowid
     if not legacy_direct:
@@ -2215,6 +2222,14 @@ def new_container_share_id(conn):
     while True:
         share_id = secrets.token_urlsafe(9)
         exists = conn.execute("SELECT 1 FROM containers WHERE share_id = ?", (share_id,)).fetchone()
+        if not exists:
+            return share_id
+
+
+def new_store_share_id(conn):
+    while True:
+        share_id = secrets.token_urlsafe(9)
+        exists = conn.execute("SELECT 1 FROM users WHERE store_share_id = ?", (share_id,)).fetchone()
         if not exists:
             return share_id
 
@@ -3630,6 +3645,19 @@ def deck_share_url(deck):
     return f"{verification_base_url()}/decks/{urllib.parse.quote(share_id)}"
 
 
+def store_share_url(store_share_id):
+    return f"{verification_base_url()}/stores/{urllib.parse.quote(store_share_id)}"
+
+
+def public_display_name(user_row, fallback_prefix="Seller"):
+    name = (user_row["name"] if user_row and "name" in user_row.keys() else "") or ""
+    share_id = (user_row["store_share_id"] if user_row and "store_share_id" in user_row.keys() else "") or ""
+    if name and "@" not in name:
+        return name
+    suffix = share_id[:6] if share_id else "user"
+    return f"{fallback_prefix} {suffix}"
+
+
 def unique_import_wishlist_name(conn, user_id, base):
     clean_base = re.sub(r"\s+", " ", (base or "Imported Deck").strip()) or "Imported Deck"
     clean_base = clean_base[:30].strip() or "Imported Deck"
@@ -4833,6 +4861,78 @@ def list_sale_cards(conn, query, user_id):
         [user_id, user_id, DEFAULT_CARD_CONDITION, user_id, DEFAULT_CARD_CONDITION] + values + [limit],
     ).fetchall()
     return rows_to_dicts(rows)
+
+
+def card_deck_references(conn, card_id):
+    rows = conn.execute(
+        """
+        SELECT d.id, d.share_id, d.name, COALESCE(u.name, '') AS owner_name,
+               COALESCE(u.store_share_id, '') AS store_share_id,
+               COALESCE(SUM(dc.quantity), 0) AS deck_quantity,
+               COUNT(DISTINCT COALESCE(NULLIF(dc.variant, ''), 'Normal')) AS variant_count
+        FROM deck_cards dc
+        JOIN decks d ON d.id = dc.deck_id
+        LEFT JOIN users u ON u.id = d.user_id
+        WHERE dc.card_id = ?
+        GROUP BY d.id
+        ORDER BY d.name COLLATE NOCASE
+        """,
+        (card_id,),
+    ).fetchall()
+    decks = []
+    for row in rows:
+        deck = dict(row)
+        deck["owner_name"] = public_display_name(row, "User")
+        deck["deck_url"] = deck_share_url(deck)
+        decks.append(deck)
+    return {"decks": decks}
+
+
+def card_sale_sellers(conn, card_id):
+    rows = conn.execute(
+        """
+        SELECT u.id, COALESCE(u.name, '') AS name, COALESCE(u.store_share_id, '') AS store_share_id,
+               COALESCE(SUM(sale.quantity), 0) AS sale_quantity,
+               MIN(sale.asking_price) AS min_asking_price,
+               MAX(sale.asking_price) AS max_asking_price,
+               COUNT(DISTINCT COALESCE(NULLIF(sale.variant, ''), 'Normal')) AS variant_count
+        FROM card_sales sale
+        JOIN users u ON u.id = sale.user_id
+        WHERE sale.card_id = ? AND COALESCE(sale.quantity, 0) > 0
+        GROUP BY u.id
+        ORDER BY COALESCE(SUM(sale.quantity), 0) DESC, u.name COLLATE NOCASE
+        """,
+        (card_id,),
+    ).fetchall()
+    sellers = []
+    for row in rows:
+        seller = dict(row)
+        if not seller.get("store_share_id"):
+            seller["store_share_id"] = new_store_share_id(conn)
+            conn.execute("UPDATE users SET store_share_id = ? WHERE id = ?", (seller["store_share_id"], row["id"]))
+        seller["seller_name"] = public_display_name(row, "Seller")
+        seller["store_url"] = store_share_url(seller["store_share_id"])
+        sellers.append(seller)
+    conn.commit()
+    return {"sellers": sellers}
+
+
+def shared_store(conn, share_id):
+    user = conn.execute(
+        "SELECT id, name, store_share_id FROM users WHERE store_share_id = ?",
+        (share_id,),
+    ).fetchone()
+    if not user:
+        raise KeyError("Store not found")
+    cards = list_sale_cards(conn, "sort=value&limit=5000", user["id"])
+    return {
+        "share_id": share_id,
+        "seller_name": public_display_name(user, "Seller"),
+        "cards": cards,
+        "card_count": len(cards),
+        "sale_quantity": sum(int(card.get("sale_quantity") or 0) for card in cards),
+        "readonly": True,
+    }
 
 
 def shared_card_identity(conn, share_id):
@@ -6544,6 +6644,14 @@ class Handler(SimpleHTTPRequestHandler):
                         urllib.parse.unquote(match.group(1)),
                         params.get("variant", ["Normal"])[0],
                     ))
+                match = re.match(r"^/api/cards/([^/]+)/deck-references$", parsed.path)
+                if match:
+                    self.require_user(conn)
+                    return self.send_json(card_deck_references(conn, urllib.parse.unquote(match.group(1))))
+                match = re.match(r"^/api/cards/([^/]+)/sale-sellers$", parsed.path)
+                if match:
+                    self.require_user(conn)
+                    return self.send_json(card_sale_sellers(conn, urllib.parse.unquote(match.group(1))))
                 if parsed.path == "/api/decks":
                     user = self.require_user(conn)
                     return self.send_json({"decks": list_decks(conn, user["id"])})
@@ -6580,6 +6688,9 @@ class Handler(SimpleHTTPRequestHandler):
                 match = re.match(r"^/api/shared-containers/([^/]+)$", parsed.path)
                 if match:
                     return self.send_json(shared_container(conn, urllib.parse.unquote(match.group(1))))
+                match = re.match(r"^/api/stores/([^/]+)$", parsed.path)
+                if match:
+                    return self.send_json(shared_store(conn, urllib.parse.unquote(match.group(1))))
                 if parsed.path == "/api/shared-favorites":
                     user = self.require_user(conn)
                     return self.send_json({
@@ -6629,6 +6740,7 @@ class Handler(SimpleHTTPRequestHandler):
         if (
             re.match(r"^/(cards|sets|decks|wishlists|containers)/[^/]+/?$", parsed.path)
             or re.match(r"^/card/[^/]+/[^/]+/?$", parsed.path)
+            or re.match(r"^/stores/[^/]+/?$", parsed.path)
             or re.match(r"^/favorites/shared/?$", parsed.path)
             or re.match(r"^/verify-email/[^/]+/?$", parsed.path)
             or re.match(r"^/reset-password/[^/]+/?$", parsed.path)
