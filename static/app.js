@@ -563,7 +563,7 @@ async function submitAuthForm() {
   syncSettingsFromUser(state.user);
   updateAuthUi();
   closeAuthModal();
-  await activatePage(appPageRoute() || "dashboard", { replace: true });
+  await activatePage("dashboard", { replace: true });
 }
 
 async function loadEmailVerification(token) {
