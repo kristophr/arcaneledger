@@ -450,7 +450,11 @@ function setAuthMode(mode) {
   els.toggleAuthModeButton.hidden = isComplete || isResetComplete;
   els.forgotPasswordButton.hidden = !isLogin;
   els.authNameField.hidden = !isComplete;
+  els.authNameField.toggleAttribute("hidden", !isComplete);
+  els.authNameField.style.display = isComplete ? "" : "none";
   els.authPasswordField.hidden = isRegister || isResetRequest;
+  els.authPasswordField.toggleAttribute("hidden", isRegister || isResetRequest);
+  els.authPasswordField.style.display = (isRegister || isResetRequest) ? "none" : "";
   els.authForm.email.readOnly = isComplete || isResetComplete;
   els.authForm.email.required = true;
   els.authForm.name.required = isComplete;
