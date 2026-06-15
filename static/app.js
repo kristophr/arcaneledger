@@ -1184,6 +1184,10 @@ async function reloadVisibleCardPages() {
       tasks.push(loadWishlist());
     }
   }
+  const cardDetailVisible = Array.from(els.pages).some((page) => page.dataset.page === "card-detail" && !page.hidden);
+  if (cardDetailVisible && state.activeCardDetail?.scryfall_id) {
+    tasks.push(loadCardDetail(state.activeCardDetail.scryfall_id, state.activeCardDetail.variant || "Normal"));
+  }
   await Promise.all(tasks);
 }
 
@@ -3647,7 +3651,7 @@ function renderSaleCards() {
       .map((bucket) => ({
         card_condition: bucket.card_condition || card.card_condition || "Near Mint",
         quantity: Number(bucket.quantity || 0),
-        sale_available_quantity: Number(bucket.sale_available_quantity ?? bucket.quantity ?? 0),
+        sale_available_quantity: Number(bucket.sale_available_quantity ?? bucket.available_quantity ?? bucket.quantity ?? 0),
         sale_quantity: Number(bucket.sale_quantity || 0),
         sale_price: Number(bucket.sale_price || card.sale_price || market || 0.01),
       }))
@@ -3704,6 +3708,48 @@ function openSaleModal() {
   renderSaleCards();
   els.saleOverlay.hidden = false;
   document.body.classList.add("modal-open");
+}
+
+function selectedSaleCardFromDetail(card) {
+  const variant = card.variant || "Normal";
+  const buckets = Array.isArray(card.condition_inventory)
+    ? card.condition_inventory.filter((bucket) => (bucket.variant || variant) === variant)
+    : [];
+  const saleableQuantity = buckets.length
+    ? buckets.reduce((total, bucket) => total + Number(bucket.available_quantity ?? bucket.sale_available_quantity ?? bucket.quantity ?? 0), 0)
+    : Number(card.saleable_quantity ?? card.quantity ?? 0);
+  const deckQuantity = buckets.length
+    ? buckets.reduce((total, bucket) => total + Number(bucket.deck_reserved_quantity || 0), 0)
+    : Number(card.deck_quantity || 0);
+  return {
+    card_id: card.scryfall_id,
+    variant,
+    name: cardTitle(card),
+    quantity: Number(card.quantity || 0),
+    unassigned_quantity: Number(card.unassigned_quantity ?? card.quantity ?? 0),
+    saleable_quantity: saleableQuantity,
+    deck_quantity: deckQuantity,
+    display_price: Number(card.display_price || card.market_price || 0),
+    sale_quantity: Number(card.sale_quantity || 0),
+    sale_price: Number(card.sale_price || card.display_price || card.market_price || 0),
+    card_condition: conditionText(card),
+    condition_inventory: buckets,
+    image_small: card.image_small || "",
+    image_normal: card.image_normal || "",
+  };
+}
+
+function openSaleModalForCardDetail(card) {
+  if (!card || Number(card.quantity || 0) <= 0) {
+    setStatus("Add this card to your collection before marking it for sale.", "error");
+    return;
+  }
+  const confirmed = window.confirm(`Mark ${cardTitle(card)} for sale?`);
+  if (!confirmed) return;
+  clearSelectedCards();
+  state.selectedCards.set(cardSelectionKey(card), selectedSaleCardFromDetail(card));
+  updateBulkBar();
+  openSaleModal();
 }
 
 function closeSaleModal() {
@@ -3998,6 +4044,7 @@ function renderCardDetail(card) {
         <aside class="card-detail-toolbar" aria-label="Card actions">
           ${owned ? '<button class="detail-action-button detail-refresh-button" type="button" aria-label="Refresh from Scryfall" title="Refresh from Scryfall">&#8635;</button>' : ""}
           <a class="detail-action-button detail-scryfall-button" href="${escapeHtml(card.scryfall_uri || "#")}" target="_blank" rel="noreferrer" aria-label="View on Scryfall" title="View on Scryfall">S</a>
+          ${canManageCollection && owned ? '<button class="detail-action-button detail-for-sale-button" type="button" aria-label="Mark this card for sale" title="Mark this card for sale"><span class="sale-icon" aria-hidden="true"></span></button>' : ""}
           <button class="detail-action-button detail-share-button" type="button" aria-label="Share card" title="Share card">&#8599;</button>
           <button class="detail-action-button detail-email-button" type="button" aria-label="Email card" title="Email card"><span class="send-icon" aria-hidden="true"></span></button>
           ${owned ? '<button class="detail-action-button detail-delete-button" type="button" aria-label="Delete card" title="Delete card"><span class="trash-icon" aria-hidden="true"></span></button>' : ""}
@@ -4055,6 +4102,7 @@ function renderCardDetail(card) {
   els.cardDetailShell.querySelector(".detail-refresh-button")?.addEventListener("click", (event) => {
     refreshCardDetailMetadata(event.currentTarget, card).catch((error) => setStatus(error.message, "error"));
   });
+  els.cardDetailShell.querySelector(".detail-for-sale-button")?.addEventListener("click", () => openSaleModalForCardDetail(card));
   els.cardDetailShell.querySelector(".detail-share-button").addEventListener("click", () => openShareModal(card));
   els.cardDetailShell.querySelector(".detail-email-button").addEventListener("click", () => openEmailCardModal(card));
   els.cardDetailShell.querySelector(".detail-delete-button")?.addEventListener("click", () => {
@@ -5571,8 +5619,7 @@ function wireEvents() {
       setStatus(`Marked ${integer.format(result.updated || 0)} card${result.updated === 1 ? "" : "s"} for sale.`, "success");
       closeSaleModal();
       clearSelectedCards();
-      await loadCards();
-      await loadSaleCards();
+      await reloadVisibleCardPages();
     } catch (error) {
       setStatus(error.message, "error");
     }
