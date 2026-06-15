@@ -1107,6 +1107,9 @@ def init_db(conn):
             user_id INTEGER,
             share_id TEXT UNIQUE,
             name TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            internal_notes TEXT NOT NULL DEFAULT '',
+            external_notes TEXT NOT NULL DEFAULT '',
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -1313,8 +1316,15 @@ def migrate_purchases_schema(conn):
 
 
 def migrate_decks_schema(conn):
-    columns = {col["name"] for col in conn.execute("PRAGMA table_info(deck_cards)").fetchall()}
-    if "quantity" not in columns:
+    deck_columns = {col["name"] for col in conn.execute("PRAGMA table_info(decks)").fetchall()}
+    if "description" not in deck_columns:
+        conn.execute("ALTER TABLE decks ADD COLUMN description TEXT NOT NULL DEFAULT ''")
+    if "internal_notes" not in deck_columns:
+        conn.execute("ALTER TABLE decks ADD COLUMN internal_notes TEXT NOT NULL DEFAULT ''")
+    if "external_notes" not in deck_columns:
+        conn.execute("ALTER TABLE decks ADD COLUMN external_notes TEXT NOT NULL DEFAULT ''")
+    deck_card_columns = {col["name"] for col in conn.execute("PRAGMA table_info(deck_cards)").fetchall()}
+    if "quantity" not in deck_card_columns:
         conn.execute("ALTER TABLE deck_cards ADD COLUMN quantity INTEGER NOT NULL DEFAULT 1")
     conn.execute(
         """
@@ -3318,7 +3328,10 @@ def name_exists(conn, table, name, user_id, exclude_id=None):
 def list_decks(conn, user_id):
     rows = conn.execute(
         """
-        SELECT d.id, d.share_id, d.name, d.created_at, d.updated_at,
+        SELECT d.id, d.share_id, d.name,
+               COALESCE(d.description, '') AS description,
+               COALESCE(d.external_notes, '') AS external_notes,
+               d.created_at, d.updated_at,
                COALESCE(SUM(dc.quantity), 0) AS card_count,
                COUNT(dc.card_id) AS unique_card_count
         FROM decks d
@@ -3340,14 +3353,17 @@ def create_deck(conn, user_id, payload):
         raise ValueError("Deck name must be 20 characters or fewer.")
     if name_exists(conn, "decks", name, user_id):
         raise ValueError("Deck name must be unique across your decks, containers, and wishlists.")
+    description = clean_deck_text(payload.get("description"), 500, "Description")
+    internal_notes = clean_deck_text(payload.get("internal_notes"), 2000, "Internal notes")
+    external_notes = clean_deck_text(payload.get("external_notes"), 2000, "External notes")
     timestamp = now_iso()
     share_id = new_deck_share_id(conn)
     cursor = conn.execute(
         """
-        INSERT INTO decks (user_id, share_id, name, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO decks (user_id, share_id, name, description, internal_notes, external_notes, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (user_id, share_id, name, timestamp, timestamp),
+        (user_id, share_id, name, description, internal_notes, external_notes, timestamp, timestamp),
     )
     conn.commit()
     return {
@@ -3356,12 +3372,53 @@ def create_deck(conn, user_id, payload):
             "id": cursor.lastrowid,
             "share_id": share_id,
             "name": name,
+            "description": description,
+            "internal_notes": internal_notes,
+            "external_notes": external_notes,
             "created_at": timestamp,
             "updated_at": timestamp,
             "card_count": 0,
             "unique_card_count": 0,
         },
     }
+
+
+def clean_deck_text(value, limit, label):
+    text = str(value or "").strip()
+    if len(text) > limit:
+        raise ValueError(f"{label} must be {limit} characters or fewer.")
+    return text
+
+
+def update_deck(conn, user_id, deck_id, payload):
+    deck = conn.execute("SELECT id, name FROM decks WHERE id = ? AND user_id = ?", (deck_id, user_id)).fetchone()
+    if not deck:
+        raise KeyError("Deck not found")
+    name = re.sub(r"\s+", " ", (payload.get("name") or deck["name"] or "").strip())
+    if not name:
+        raise ValueError("Deck name is required.")
+    if len(name) > 20:
+        raise ValueError("Deck name must be 20 characters or fewer.")
+    if name_exists(conn, "decks", name, user_id, exclude_id=deck_id):
+        raise ValueError("Deck name must be unique across your decks, containers, and wishlists.")
+    description = clean_deck_text(payload.get("description"), 500, "Description")
+    internal_notes = clean_deck_text(payload.get("internal_notes"), 2000, "Internal notes")
+    external_notes = clean_deck_text(payload.get("external_notes"), 2000, "External notes")
+    timestamp = now_iso()
+    conn.execute(
+        """
+        UPDATE decks
+        SET name = ?,
+            description = ?,
+            internal_notes = ?,
+            external_notes = ?,
+            updated_at = ?
+        WHERE id = ? AND user_id = ?
+        """,
+        (name, description, internal_notes, external_notes, timestamp, deck_id, user_id),
+    )
+    conn.commit()
+    return {"ok": True, "deck": deck_detail(conn, user_id, deck_id)}
 
 
 def deck_cards(conn, user_id, deck_id):
@@ -3391,7 +3448,11 @@ def deck_cards(conn, user_id, deck_id):
 def deck_detail(conn, user_id, deck_id):
     deck = conn.execute(
         """
-        SELECT d.id, d.share_id, d.name, d.created_at, d.updated_at,
+        SELECT d.id, d.share_id, d.name,
+               COALESCE(d.description, '') AS description,
+               COALESCE(d.internal_notes, '') AS internal_notes,
+               COALESCE(d.external_notes, '') AS external_notes,
+               d.created_at, d.updated_at,
                COALESCE(SUM(dc.quantity), 0) AS card_count,
                COUNT(dc.card_id) AS unique_card_count
         FROM decks d
@@ -3413,6 +3474,7 @@ def shared_deck(conn, share_id):
     if not deck:
         raise KeyError("Shared deck not found")
     payload = deck_detail(conn, deck["user_id"], deck["id"])
+    payload.pop("internal_notes", None)
     payload["readonly"] = True
     return payload
 
@@ -4207,6 +4269,12 @@ def shared_list_email_html(payload, share_url, sender_name, entity_type):
     safe_name = html_lib.escape(payload.get("name") or label)
     safe_url = html_lib.escape(share_url)
     safe_entity = html_lib.escape(entity_type)
+    public_notes = []
+    if payload.get("description"):
+        public_notes.append(f"<p style=\"margin:0 0 10px;color:#303936;line-height:1.45;\">{html_lib.escape(payload.get('description') or '')}</p>")
+    if entity_type == "deck" and payload.get("external_notes"):
+        public_notes.append(f"<p style=\"margin:0 0 16px;color:#586661;line-height:1.45;\">{html_lib.escape(payload.get('external_notes') or '')}</p>")
+    public_notes_html = "\n".join(public_notes)
     return f"""
     <!doctype html>
     <html>
@@ -4214,6 +4282,7 @@ def shared_list_email_html(payload, share_url, sender_name, entity_type):
         <div style="max-width:820px;margin:0 auto;padding:24px;">
           <h1 style="margin:0 0 8px;font-size:28px;line-height:1.1;">{safe_name}</h1>
           <p style="margin:0 0 16px;color:#586661;">{safe_sender} shared this FoilFolio {safe_entity} with you.</p>
+          {public_notes_html}
           <p style="margin:0 0 20px;">
             <a href="{safe_url}" style="display:inline-block;background:#111816;color:#ffffff;text-decoration:none;padding:10px 14px;border-radius:8px;font-weight:700;">Open {safe_entity}</a>
           </p>
@@ -4243,8 +4312,12 @@ def shared_list_email_text(payload, share_url, sender_name, entity_type):
         f"{sender_name or 'A FoilFolio user'} shared this FoilFolio {entity_type} with you: {payload.get('name') or entity_type.title()}",
         share_url,
         "",
-        "Cards:",
     ]
+    if payload.get("description"):
+        lines.extend([payload.get("description") or "", ""])
+    if entity_type == "deck" and payload.get("external_notes"):
+        lines.extend([payload.get("external_notes") or "", ""])
+    lines.append("Cards:")
     for card in payload.get("cards") or []:
         set_text = " ".join(part for part in [
             card.get("set_name") or "",
@@ -5983,6 +6056,10 @@ class Handler(SimpleHTTPRequestHandler):
                 if match:
                     user = self.require_user(conn)
                     return self.send_json(update_container(conn, user["id"], int(match.group(1)), self.read_json()))
+                match = re.match(r"^/api/decks/([0-9]+)$", parsed.path)
+                if match:
+                    user = self.require_user(conn)
+                    return self.send_json(update_deck(conn, user["id"], int(match.group(1)), self.read_json()))
         except KeyError as exc:
             return self.send_json({"error": str(exc)}, HTTPStatus.NOT_FOUND)
         except ValueError as exc:

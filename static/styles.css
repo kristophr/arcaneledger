@@ -800,6 +800,7 @@ main {
 .import-band,
 .settings-band,
 .shared-card-band,
+.deck-editor-band,
 .deck-share-band,
 .favorites-share-band,
 .container-share-band,
@@ -3297,6 +3298,97 @@ main {
   padding: 16px;
 }
 
+.deck-editor-shell {
+  max-width: 1280px;
+  margin: 0 auto;
+}
+
+.deck-editor-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 380px);
+  gap: 18px;
+  align-items: start;
+}
+
+.deck-editor-main,
+.deck-editor-side {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.deck-editor-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+  padding: 18px 18px 0;
+}
+
+.deck-editor-head h1 {
+  margin: 0;
+  color: var(--ink);
+  font-size: clamp(1.8rem, 3vw, 2.7rem);
+  line-height: 1.05;
+  overflow-wrap: anywhere;
+}
+
+.deck-editor-head span {
+  display: block;
+  margin-top: 6px;
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.deck-editor-card-list {
+  padding-top: 14px;
+}
+
+.deck-editor-form {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+}
+
+.deck-editor-form label {
+  display: grid;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.deck-editor-form input,
+.deck-editor-form textarea {
+  width: 100%;
+  border: 1px solid var(--input-border);
+  border-radius: 8px;
+  padding: 10px 11px;
+  color: var(--ink);
+  background: var(--input-bg);
+  font: inherit;
+  font-size: 0.92rem;
+  line-height: 1.35;
+  resize: vertical;
+}
+
+.deck-editor-form textarea {
+  min-height: 96px;
+}
+
+.deck-editor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.deck-editor-delete {
+  justify-content: center;
+}
+
 .wishlist-detail-toolbar {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto;
@@ -3832,6 +3924,10 @@ main {
     grid-template-columns: 1fr 1fr;
   }
 
+  .deck-editor-layout {
+    grid-template-columns: 1fr;
+  }
+
   .chart-panel {
     grid-column: 1 / -1;
   }
@@ -3919,6 +4015,11 @@ main {
   .dashboard-grid,
   .cards-grid {
     grid-template-columns: 1fr;
+  }
+
+  .deck-editor-head {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .panel {

@@ -247,6 +247,7 @@ const els = {
   deckCardSearchStatus: document.querySelector("#deckCardSearchStatus"),
   deckCardSearchResults: document.querySelector("#deckCardSearchResults"),
   closeDeckCardSearchButton: document.querySelector("#closeDeckCardSearchButton"),
+  deckEditorShell: document.querySelector("#deckEditorShell"),
   deckShareShell: document.querySelector("#deckShareShell"),
   cardDecksOverlay: document.querySelector("#cardDecksOverlay"),
   cardDecksTitle: document.querySelector("#cardDecksTitle"),
@@ -1024,8 +1025,9 @@ function showPage(pageName) {
   for (const page of els.pages) {
     page.hidden = page.dataset.page !== pageName;
   }
+  const activePage = pageName === "deck-editor" ? "decks" : pageName;
   for (const command of els.navCommands) {
-    command.classList.toggle("is-active", command.dataset.pageTarget === pageName);
+    command.classList.toggle("is-active", command.dataset.pageTarget === activePage);
   }
 }
 
@@ -1169,6 +1171,10 @@ function setRouteCode() {
 function deckRouteId() {
   const match = window.location.pathname.match(/^\/decks\/([^/]+)\/?$/);
   return match ? decodeURIComponent(match[1]) : "";
+}
+
+function isPrivateDeckRoute(routeId) {
+  return /^[0-9]+$/.test(String(routeId || ""));
 }
 
 function wishlistRouteId() {
@@ -2717,11 +2723,155 @@ function renderDecks(decks) {
       <span>${integer.format(deck.unique_card_count || 0)} unique cards assigned</span>
     `;
     item.addEventListener("click", () => {
-      openDeckDetailModal(deck.id).catch((error) => {
+      openDeckPage(deck.id).catch((error) => {
         els.decksStatus.textContent = error.message;
       });
     });
     els.decksGrid.appendChild(item);
+  }
+}
+
+function renderDeckCardsEditable(deck) {
+  const cards = deck.cards || [];
+  if (!cards.length) {
+    return '<div class="empty-state">No cards in this deck yet.</div>';
+  }
+  return cards.map((card) => `
+    <article class="deck-card-row">
+      <img src="${escapeHtml(card.image_small || card.image_normal || "")}" alt="">
+      <div>
+        <strong>${escapeHtml(cardTitle(card))}</strong>
+        <span>${escapeHtml(card.set_name || "")} #${escapeHtml(card.collector_number || "")} - ${escapeHtml(card.variant || "Normal")}</span>
+        <div class="deck-card-tags">${cardMetadataPillsHtml(card)}</div>
+      </div>
+      <b>Qty ${integer.format(deckQuantity(card))}</b>
+      <button class="remove-deck-card-button" type="button" data-card-id="${escapeHtml(card.scryfall_id || card.card_id || "")}" data-variant="${escapeHtml(card.variant || "Normal")}" aria-label="Remove card from deck" title="Remove card"><span class="trash-icon" aria-hidden="true"></span></button>
+    </article>
+  `).join("");
+}
+
+function renderDeckEditor(deck) {
+  const cards = deck.cards || [];
+  state.activeDeck = deck;
+  showPage("deck-editor");
+  els.deckEditorShell.innerHTML = `
+    <section class="deck-editor-layout">
+      <div class="deck-editor-main">
+        <div class="deck-editor-head">
+          <div>
+            <p class="eyebrow">Deck editor</p>
+            <h1>${escapeHtml(deck.name || "Deck")}</h1>
+            <span>${integer.format(deck.card_count || cards.reduce((total, card) => total + deckQuantity(card), 0))} cards - ${integer.format(deck.unique_card_count || cards.length)} unique</span>
+          </div>
+          <button class="primary-button" type="button" data-deck-action="add-card">+ Add Card</button>
+        </div>
+        <div class="deck-detail-list deck-editor-card-list">
+          ${renderDeckCardsEditable(deck)}
+        </div>
+      </div>
+      <aside class="deck-editor-side">
+        <form id="deckEditorForm" class="deck-editor-form">
+          <label>
+            Deck Name
+            <input name="name" type="text" maxlength="20" value="${escapeAttribute(deck.name || "")}" required>
+          </label>
+          <label>
+            Description
+            <textarea name="description" maxlength="500" rows="5" placeholder="Public summary for this deck">${escapeHtml(deck.description || "")}</textarea>
+          </label>
+          <label>
+            Internal Notes
+            <textarea name="internal_notes" maxlength="2000" rows="7" placeholder="Private notes only you can see">${escapeHtml(deck.internal_notes || "")}</textarea>
+          </label>
+          <label>
+            External Notes
+            <textarea name="external_notes" maxlength="2000" rows="7" placeholder="Public notes shown on shared deck pages">${escapeHtml(deck.external_notes || "")}</textarea>
+          </label>
+          <div class="deck-editor-actions">
+            <button class="primary-button" type="submit">Save</button>
+            <button class="share-button" type="button" data-deck-action="email" aria-label="Email deck" title="Email deck"><span class="send-icon" aria-hidden="true"></span></button>
+            <button class="share-button" type="button" data-deck-action="share" aria-label="Share deck" title="Share deck">&#8599;</button>
+          </div>
+          <button class="danger-action-button deck-editor-delete" type="button" data-deck-action="delete">
+            <span class="trash-icon" aria-hidden="true"></span>
+            <span>Delete Deck</span>
+          </button>
+          <div id="deckEditorStatus" class="status" aria-live="polite"></div>
+        </form>
+      </aside>
+    </section>
+  `;
+  const status = els.deckEditorShell.querySelector("#deckEditorStatus");
+  els.deckEditorShell.querySelector("#deckEditorForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    status.textContent = "Saving deck...";
+    status.dataset.tone = "";
+    const payload = Object.fromEntries(new FormData(event.currentTarget).entries());
+    try {
+      const result = await api(`/api/decks/${encodeURIComponent(deck.id)}`, {
+        method: "PUT",
+        body: JSON.stringify(payload),
+      });
+      renderDeckEditor(result.deck);
+      await loadDecks();
+      const nextStatus = els.deckEditorShell.querySelector("#deckEditorStatus");
+      nextStatus.textContent = "Deck saved.";
+      nextStatus.dataset.tone = "";
+    } catch (error) {
+      status.textContent = error.message;
+      status.dataset.tone = "error";
+    }
+  });
+  els.deckEditorShell.querySelector('[data-deck-action="add-card"]').addEventListener("click", openDeckCardSearchModal);
+  els.deckEditorShell.querySelector('[data-deck-action="email"]').addEventListener("click", () => openEmailDeckModal(state.activeDeck));
+  els.deckEditorShell.querySelector('[data-deck-action="share"]').addEventListener("click", () => openDeckShareModal(state.activeDeck));
+  els.deckEditorShell.querySelector('[data-deck-action="delete"]').addEventListener("click", () => {
+    deleteActiveDeck().catch((error) => {
+      status.textContent = error.message;
+      status.dataset.tone = "error";
+    });
+  });
+  for (const button of els.deckEditorShell.querySelectorAll(".remove-deck-card-button")) {
+    button.addEventListener("click", () => {
+      const card = cards.find((candidate) => (
+        (candidate.scryfall_id || candidate.card_id) === button.dataset.cardId
+        && (candidate.variant || "Normal") === (button.dataset.variant || "Normal")
+      ));
+      if (!card) return;
+      removeCardFromActiveDeck(card).catch((error) => {
+        status.textContent = error.message;
+        status.dataset.tone = "error";
+      });
+    });
+  }
+}
+
+async function loadDeckEditor(deckId) {
+  showPage("deck-editor");
+  els.deckEditorShell.innerHTML = '<div class="empty-state">Loading deck...</div>';
+  try {
+    const deck = await api(`/api/decks/${encodeURIComponent(deckId)}`);
+    renderDeckEditor(deck);
+  } catch (error) {
+    els.deckEditorShell.innerHTML = `<div class="empty-state">${escapeHtml(error.message)}</div>`;
+  }
+}
+
+async function openDeckPage(deckId) {
+  if (!deckId) return;
+  window.history.pushState({}, "", `/decks/${encodeURIComponent(deckId)}`);
+  await loadDeckEditor(deckId);
+}
+
+function deckEditorIsVisible() {
+  return !document.querySelector('[data-page="deck-editor"]')?.hidden;
+}
+
+function renderActiveDeck(deck) {
+  if (deckEditorIsVisible()) {
+    renderDeckEditor(deck);
+  } else {
+    renderDeckDetail(deck);
   }
 }
 
@@ -2890,7 +3040,7 @@ async function addOwnedCardToActiveDeck(card, quantity = 1) {
     }),
   });
   const deck = await api(`/api/decks/${encodeURIComponent(deckId)}`);
-  renderDeckDetail(deck);
+  renderActiveDeck(deck);
   await loadDecks();
   els.deckCardSearchStatus.textContent = `Added ${integer.format(selectedQuantity)} ${cardTitle(card)}.`;
   await searchOwnedCardsForDeck();
@@ -2908,7 +3058,7 @@ async function removeCardFromActiveDeck(card) {
     }),
   });
   const deck = await api(`/api/decks/${encodeURIComponent(state.activeDeck.id)}`);
-  renderDeckDetail(deck);
+  renderActiveDeck(deck);
   await loadDecks();
 }
 
@@ -2918,9 +3068,15 @@ async function deleteActiveDeck() {
   if (!confirmed) return;
   const deckName = state.activeDeck.name;
   await api(`/api/decks/${encodeURIComponent(state.activeDeck.id)}`, { method: "DELETE" });
-  closeDeckDetailModal();
-  els.decksStatus.textContent = `Deleted ${deckName}.`;
+  if (deckEditorIsVisible()) {
+    state.activeDeck = null;
+    window.history.pushState({}, "", "/decks");
+    showPage("decks");
+  } else {
+    closeDeckDetailModal();
+  }
   await loadDecks();
+  els.decksStatus.textContent = `Deleted ${deckName}.`;
 }
 
 async function loadDecks() {
@@ -3476,6 +3632,10 @@ function escapeHtml(value) {
     .replaceAll('"', "&quot;");
 }
 
+function escapeAttribute(value) {
+  return escapeHtml(value).replaceAll("'", "&#39;");
+}
+
 function renderSharedCard(card) {
   state.sharedCard = card;
   const specialClass = isSpecialVariant(card.variant) ? " is-special" : "";
@@ -3882,8 +4042,10 @@ function renderSharedDeck(deck) {
           <span>${integer.format(cardCount)} cards</span>
         </div>
       </div>
+      ${deck.description ? `<p class="shared-card-note">${escapeHtml(deck.description)}</p>` : ""}
+      ${deck.external_notes ? `<p class="shared-card-note">${escapeHtml(deck.external_notes)}</p>` : ""}
       <div class="deck-detail-list">
-        ${deckRowsHtml(cards, "No favorite cards yet.")}
+        ${deckRowsHtml(cards, "No cards in this deck yet.")}
       </div>
     </section>
   `;
@@ -4046,6 +4208,19 @@ function wireEvents() {
     const setCode = setRouteCode();
     if (setCode) {
       loadSetPage(setCode);
+      return;
+    }
+    const deckId = deckRouteId();
+    if (deckId) {
+      if (isPrivateDeckRoute(deckId) && state.user) {
+        loadDeckEditor(deckId);
+      } else if (isPrivateDeckRoute(deckId)) {
+        activatePage("search", { replace: true, promptLogin: false });
+        openAuthModal("login", "Log in to edit this deck.");
+      } else {
+        document.body.classList.toggle("share-only", !isPrivateDeckRoute(deckId));
+        loadSharedDeck(deckId);
+      }
     }
   });
 
@@ -4897,7 +5072,9 @@ async function boot() {
   applySettings();
   const initialSharedId = sharedRouteId();
   const initialSetCode = setRouteCode();
-  const initialDeckShareId = deckRouteId();
+  const initialDeckRouteId = deckRouteId();
+  const initialDeckEditorId = isPrivateDeckRoute(initialDeckRouteId) ? initialDeckRouteId : "";
+  const initialDeckShareId = initialDeckRouteId && !initialDeckEditorId ? initialDeckRouteId : "";
   const initialWishlistShareId = wishlistRouteId();
   const initialContainerShareId = containerRouteId();
   const initialFavoritesShare = favoritesShareRoute();
@@ -4920,6 +5097,17 @@ async function boot() {
   } else if (initialDeckShareId) {
     document.body.classList.add("share-only");
     loadSharedDeck(initialDeckShareId);
+  } else if (initialDeckEditorId) {
+    if (state.user) {
+      loadDeckEditor(initialDeckEditorId);
+      refresh().catch((error) => {
+        setStatus(error.message, "error");
+        renderCollection();
+      });
+    } else {
+      activatePage("search", { replace: true, promptLogin: false });
+      openAuthModal("login", "Log in to edit this deck.");
+    }
   } else if (initialWishlistShareId) {
     document.body.classList.add("share-only");
     loadSharedWishlist(initialWishlistShareId);
