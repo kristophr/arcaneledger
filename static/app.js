@@ -1,6 +1,7 @@
 const state = {
   cards: [],
   favoriteCards: [],
+  favoriteDecks: [],
   missingCards: [],
   saleCards: [],
   wishlistCards: [],
@@ -1477,8 +1478,12 @@ async function loadCards() {
 }
 
 async function loadFavorites() {
-  const data = await api(`/api/cards?${favoriteQuery()}`);
-  state.favoriteCards = data.cards || [];
+  const [cardData, deckData] = await Promise.all([
+    api(`/api/cards?${favoriteQuery()}`),
+    api("/api/favorite-decks"),
+  ]);
+  state.favoriteCards = cardData.cards || [];
+  state.favoriteDecks = deckData.decks || [];
   renderFavorites();
 }
 
@@ -1563,10 +1568,11 @@ function renderCollection() {
   els.cardsGrid.className = state.collectionView === "list" ? "cards-list" : "cards-grid";
   els.tileViewButton.classList.toggle("is-active", state.collectionView === "tiles");
   els.listViewButton.classList.toggle("is-active", state.collectionView === "list");
+  const options = { selectable: true, hideWishlist: true };
   if (state.collectionView === "list") {
-    renderCardList(state.cards, els.cardsGrid, { selectable: true });
+    renderCardList(state.cards, els.cardsGrid, options);
   } else {
-    renderCards(state.cards, els.cardsGrid, { selectable: true });
+    renderCards(state.cards, els.cardsGrid, options);
   }
 }
 
@@ -1576,6 +1582,7 @@ function renderFavorites() {
   els.favoriteListViewButton.classList.toggle("is-active", state.favoritesView === "list");
   const options = {
     selectable: true,
+    hideWishlist: true,
     confirmUnfavorite: true,
     statusTarget: els.favoritesStatus,
     afterFavoriteChange: async () => {
@@ -1583,11 +1590,72 @@ function renderFavorites() {
       await refresh();
     },
   };
+  const container = document.createElement("div");
+  container.className = "favorites-mixed-shell";
+  const cardsShell = document.createElement("div");
+  cardsShell.className = state.favoritesView === "list" ? "cards-list favorites-card-list" : "cards-grid favorites-card-grid";
   if (state.favoritesView === "list") {
-    renderCardList(state.favoriteCards, els.favoritesGrid, options);
+    renderCardList(state.favoriteCards, cardsShell, options);
   } else {
-    renderCards(state.favoriteCards, els.favoritesGrid, options);
+    renderCards(state.favoriteCards, cardsShell, options);
   }
+  const decksShell = renderFavoriteDecks();
+  els.favoritesGrid.innerHTML = "";
+  if (state.favoriteDecks.length) container.appendChild(decksShell);
+  if (state.favoriteCards.length) container.appendChild(cardsShell);
+  if (!state.favoriteDecks.length && !state.favoriteCards.length) {
+    container.innerHTML = '<div class="empty-state">No favorites yet.</div>';
+  }
+  els.favoritesGrid.appendChild(container);
+}
+
+function renderFavoriteDecks() {
+  const section = document.createElement("section");
+  section.className = "favorite-decks-section";
+  section.innerHTML = `
+    <div class="favorite-section-head">
+      <span class="deck-icon" aria-hidden="true"></span>
+      <strong>Decks</strong>
+    </div>
+    <div class="favorite-decks-grid"></div>
+  `;
+  const grid = section.querySelector(".favorite-decks-grid");
+  for (const deck of state.favoriteDecks) {
+    const item = document.createElement("article");
+    item.className = "deck-card favorite-deck-card";
+    item.innerHTML = `
+      <button class="wishlist-open-button favorite-deck-open" type="button" aria-label="Open ${escapeHtml(deck.name || "deck")}">
+        <p class="eyebrow">Favorited deck</p>
+        <h3><span class="deck-icon" aria-hidden="true"></span><span>${escapeHtml(deck.name || "Deck")}</span></h3>
+      </button>
+      <strong>${integer.format(deck.card_count || 0)}</strong>
+      <span>${escapeHtml(deck.owner_name || "FoilFolio user")}</span>
+      <div class="wishlist-card-actions">
+        <button class="share-button favorite-deck-unfavorite" type="button" aria-label="Remove favorite deck" title="Remove favorite">☆</button>
+        <a class="share-button" href="${escapeHtml(deck.deck_url || `/decks/${encodeURIComponent(deck.share_id || "")}`)}" target="_blank" rel="noreferrer" aria-label="Open deck" title="Open deck">&#8599;</a>
+      </div>
+    `;
+    item.querySelector(".favorite-deck-open").addEventListener("click", () => {
+      const url = deck.deck_url || `/decks/${encodeURIComponent(deck.share_id || "")}`;
+      window.open(url, "_blank", "noopener,noreferrer");
+    });
+    item.querySelector(".favorite-deck-unfavorite").addEventListener("click", async () => {
+      try {
+        await api(`/api/shared-decks/${encodeURIComponent(deck.share_id)}/favorite`, {
+          method: "POST",
+          body: JSON.stringify({ favorite: false }),
+          promptLogin: true,
+        });
+        setStatus("Deck removed from favorites.", "success", els.favoritesStatus);
+        await loadFavorites();
+        await refresh();
+      } catch (error) {
+        setStatus(error.message, "error", els.favoritesStatus);
+      }
+    });
+    grid.appendChild(item);
+  }
+  return section;
 }
 
 function renderWishlist() {
@@ -2141,7 +2209,11 @@ function renderCards(cards, target = els.cardsGrid, options = {}) {
         setStatus(error.message, "error", options.statusTarget || els.status);
       }
     });
-    wireWishlistButton(wishlistButton, card, options);
+    if (options.hideWishlist) {
+      wishlistButton.hidden = true;
+    } else {
+      wireWishlistButton(wishlistButton, card, options);
+    }
     if (catalogOnly) {
       refreshButton.hidden = true;
       editButton.hidden = true;
@@ -2233,7 +2305,11 @@ function renderCardList(cards, target = els.cardsGrid, options = {}) {
       wireDeleteCardButton(deleteButton, card);
       wireCardDetailNavigation(node, card);
     }
-    wireWishlistButton(wishlistButton, card, options);
+    if (options.hideWishlist) {
+      wishlistButton.hidden = true;
+    } else {
+      wireWishlistButton(wishlistButton, card, options);
+    }
 
     target.appendChild(node);
   }
@@ -3807,8 +3883,8 @@ function renderCardDetail(card) {
         </div>
       </div>
       <aside class="card-detail-toolbar" aria-label="Card actions">
-        ${owned ? '<button class="detail-action-button detail-edit-button" type="button" aria-label="Edit card" title="Edit card"><span class="edit-icon" aria-hidden="true"></span></button>' : ""}
-        <button class="detail-action-button detail-refresh-button" type="button" aria-label="Refresh from Scryfall" title="Refresh from Scryfall">&#8635;</button>
+        <button class="detail-action-button detail-add-button" type="button" aria-label="Add to collection" title="Add to collection">+</button>
+        ${owned ? '<button class="detail-action-button detail-refresh-button" type="button" aria-label="Refresh from Scryfall" title="Refresh from Scryfall">&#8635;</button>' : ""}
         <a class="detail-action-button detail-scryfall-button" href="${escapeHtml(card.scryfall_uri || "#")}" target="_blank" rel="noreferrer" aria-label="View on Scryfall" title="View on Scryfall">S</a>
         <button class="detail-action-button detail-share-button" type="button" aria-label="Share card" title="Share card">&#8599;</button>
         <button class="detail-action-button detail-email-button" type="button" aria-label="Email card" title="Email card"><span class="send-icon" aria-hidden="true"></span></button>
@@ -3824,6 +3900,7 @@ function renderCardDetail(card) {
     </section>` : ""}
   `;
   els.cardDetailShell.querySelector("#addPurchaseButton")?.addEventListener("click", () => openAddPurchaseModal(card));
+  els.cardDetailShell.querySelector(".detail-add-button").addEventListener("click", () => openAddCardModal(card));
   els.cardDetailShell.querySelector(".detail-wishlist-button") && wireWishlistButton(els.cardDetailShell.querySelector(".detail-wishlist-button"), card, {
     statusTarget: els.status,
     afterWishlistChange: async () => {
@@ -3831,8 +3908,7 @@ function renderCardDetail(card) {
       await loadWishlists();
     },
   });
-  els.cardDetailShell.querySelector(".detail-edit-button")?.addEventListener("click", () => openEditModal(card));
-  els.cardDetailShell.querySelector(".detail-refresh-button").addEventListener("click", (event) => {
+  els.cardDetailShell.querySelector(".detail-refresh-button")?.addEventListener("click", (event) => {
     refreshCardDetailMetadata(event.currentTarget, card).catch((error) => setStatus(error.message, "error"));
   });
   els.cardDetailShell.querySelector(".detail-share-button").addEventListener("click", () => openShareModal(card));
@@ -4036,29 +4112,97 @@ function wishlistRowsHtml(cards) {
     return '<div class="empty-state">No cards in this wishlist yet.</div>';
   }
   return cards.map((card) => `
-    <article class="deck-card-row wishlist-shared-row">
+    <article class="deck-card-row wishlist-shared-row ${card.fulfilled ? "is-fulfilled" : ""}">
       <img src="${escapeHtml(card.image_small || card.image_normal || "")}" alt="">
       <div>
         <strong>${escapeHtml(cardTitle(card))}</strong>
         <span>${escapeHtml(card.set_name || "")} #${escapeHtml(card.collector_number || "")} - ${escapeHtml(card.variant || "Normal")}</span>
         <div class="deck-card-tags">${cardMetadataPillsHtml(card)}</div>
       </div>
-      <b>${dollars.format(card.display_price || 0)}</b>
+      <b>${card.wishlist_quantity ? `Need ${integer.format(card.wishlist_quantity)}` : dollars.format(card.display_price || 0)}${card.fulfilled ? " ✓" : ""}</b>
     </article>
   `).join("");
+}
+
+async function toggleSharedDeckFavorite(deck, button) {
+  if (!state.user) {
+    openAuthModal("login", "Log in to favorite another user's deck.");
+    return;
+  }
+  const nextFavorite = !deck.favorite_deck;
+  button.disabled = true;
+  try {
+    const result = await api(`/api/shared-decks/${encodeURIComponent(deck.share_id)}/favorite`, {
+      method: "POST",
+      body: JSON.stringify({ favorite: nextFavorite }),
+      promptLogin: true,
+    });
+    renderSharedDeck(result.deck || { ...deck, favorite_deck: nextFavorite });
+  } catch (error) {
+    setStatus(error.message, "error");
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function importSharedDeck(deck, button) {
+  if (!state.user) {
+    openAuthModal("login", "Log in to import another user's deck.");
+    return;
+  }
+  if (!window.confirm(`Import "${deck.name || "this deck"}" into your account as a wishlist?`)) {
+    return;
+  }
+  button.disabled = true;
+  const original = button.innerHTML;
+  button.textContent = "Importing...";
+  try {
+    const result = await api(`/api/shared-decks/${encodeURIComponent(deck.share_id)}/import`, {
+      method: "POST",
+      body: "{}",
+      promptLogin: true,
+    });
+    const message = `Created wishlist "${result.wishlist?.name || "Imported Deck"}". ${integer.format(result.fulfilled || 0)} fulfilled, ${integer.format(result.missing || 0)} missing.`;
+    const status = els.deckShareShell.querySelector(".shared-deck-action-status");
+    if (status) {
+      status.textContent = message;
+      status.dataset.tone = "success";
+    }
+    await loadWishlists();
+    await refresh();
+  } catch (error) {
+    const status = els.deckShareShell.querySelector(".shared-deck-action-status");
+    if (status) {
+      status.textContent = error.message;
+      status.dataset.tone = "error";
+    } else {
+      setStatus(error.message, "error");
+    }
+  } finally {
+    button.disabled = false;
+    button.innerHTML = original;
+  }
 }
 
 function renderSharedDeck(deck) {
   const cards = deck.cards || [];
   const cardCount = Number(deck.card_count || cards.reduce((total, card) => total + deckQuantity(card), 0));
+  const actionHtml = deck.can_favorite || deck.can_import ? `
+    <div class="shared-deck-actions" aria-label="Deck actions">
+      ${deck.can_favorite ? `<button class="share-button shared-deck-favorite-button ${deck.favorite_deck ? "is-favorite" : ""}" type="button" aria-label="${deck.favorite_deck ? "Remove deck from favorites" : "Favorite this deck"}" title="${deck.favorite_deck ? "Remove from favorites" : "Favorite this deck"}">☆</button>` : ""}
+      ${deck.can_import ? `<button class="share-button shared-deck-import-button" type="button" aria-label="Import deck to wishlist" title="Import this deck into my account"><span class="copy-deck-icon" aria-hidden="true"></span></button>` : ""}
+    </div>
+    <div class="shared-deck-action-status status" aria-live="polite"></div>
+  ` : "";
   els.deckShareShell.innerHTML = `
     <section class="shared-deck-card">
       <div class="shared-deck-head">
         <div>
           <p class="eyebrow">Shared deck</p>
           <h2>${escapeHtml(deck.name || "Deck")}</h2>
-          <span>${integer.format(cardCount)} cards</span>
+          <span>${integer.format(cardCount)} cards${deck.owner_name ? ` - ${escapeHtml(deck.owner_name)}` : ""}</span>
         </div>
+        ${actionHtml}
       </div>
       <div class="shared-deck-content">
         <div class="deck-detail-list shared-deck-list">
@@ -4077,6 +4221,14 @@ function renderSharedDeck(deck) {
       </div>
     </section>
   `;
+  const favoriteButton = els.deckShareShell.querySelector(".shared-deck-favorite-button");
+  if (favoriteButton) {
+    favoriteButton.addEventListener("click", () => toggleSharedDeckFavorite(deck, favoriteButton));
+  }
+  const importButton = els.deckShareShell.querySelector(".shared-deck-import-button");
+  if (importButton) {
+    importButton.addEventListener("click", () => importSharedDeck(deck, importButton));
+  }
 }
 
 function renderSharedWishlist(wishlist) {
@@ -4120,15 +4272,31 @@ function renderSharedContainer(container) {
 
 function renderSharedFavorites(payload) {
   const cards = payload.cards || [];
+  const decks = payload.decks || [];
+  const deckRows = decks.length ? `
+    <div class="favorite-decks-share-list">
+      ${decks.map((deck) => `
+        <article class="deck-card-row favorite-deck-share-row">
+          <span class="deck-icon" aria-hidden="true"></span>
+          <div>
+            <strong>${escapeHtml(deck.name || "Deck")}</strong>
+            <span>${escapeHtml(deck.owner_name || "FoilFolio user")} - ${integer.format(deck.card_count || 0)} cards</span>
+          </div>
+          <a class="share-button" href="${escapeHtml(deck.deck_url || `/decks/${encodeURIComponent(deck.share_id || "")}`)}" target="_blank" rel="noreferrer" aria-label="Open deck" title="Open deck">&#8599;</a>
+        </article>
+      `).join("")}
+    </div>
+  ` : "";
   els.favoritesShareShell.innerHTML = `
     <section class="shared-deck-card">
       <div class="shared-deck-head">
         <div>
           <p class="eyebrow">Shared favorites</p>
           <h2>Favorites</h2>
-          <span>${integer.format(cards.length)} favorite cards</span>
+          <span>${integer.format(cards.length)} favorite cards - ${integer.format(decks.length)} favorite decks</span>
         </div>
       </div>
+      ${deckRows}
       <div class="deck-detail-list">
         ${deckRowsHtml(cards)}
       </div>
@@ -4751,6 +4919,10 @@ function wireEvents() {
       const searchVisible = Array.from(els.pages).some((page) => page.dataset.page === "search" && !page.hidden);
       if (searchVisible && state.catalogSearchResults.length) {
         await searchCatalog();
+      }
+      const detailVisible = Array.from(els.pages).some((page) => page.dataset.page === "card-detail" && !page.hidden);
+      if (detailVisible) {
+        await loadCardDetail(payload.scryfall_id, payload.variant || "Normal");
       }
     } catch (error) {
       els.addSearchStatus.textContent = error.message;

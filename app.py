@@ -1056,10 +1056,24 @@ def init_db(conn):
             user_id INTEGER NOT NULL,
             card_id TEXT NOT NULL,
             variant TEXT NOT NULL DEFAULT 'Normal',
+            quantity INTEGER NOT NULL DEFAULT 1,
             card_json TEXT,
             updated_at TEXT NOT NULL,
             PRIMARY KEY (wishlist_id, card_id, variant),
             FOREIGN KEY (wishlist_id) REFERENCES wishlists(id) ON DELETE CASCADE,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS favorite_decks (
+            user_id INTEGER NOT NULL,
+            share_id TEXT NOT NULL,
+            deck_name TEXT NOT NULL DEFAULT '',
+            deck_url TEXT NOT NULL DEFAULT '',
+            owner_name TEXT NOT NULL DEFAULT '',
+            card_count INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (user_id, share_id),
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
         );
 
@@ -1566,6 +1580,7 @@ def migrate_wishlists_schema(conn):
             user_id INTEGER NOT NULL,
             card_id TEXT NOT NULL,
             variant TEXT NOT NULL DEFAULT 'Normal',
+            quantity INTEGER NOT NULL DEFAULT 1,
             card_json TEXT,
             updated_at TEXT NOT NULL,
             PRIMARY KEY (wishlist_id, card_id, variant),
@@ -1576,6 +1591,34 @@ def migrate_wishlists_schema(conn):
     )
     if "share_id" not in table_columns(conn, "wishlists"):
         conn.execute("ALTER TABLE wishlists ADD COLUMN share_id TEXT")
+    if "quantity" not in table_columns(conn, "wishlist_items"):
+        conn.execute("ALTER TABLE wishlist_items ADD COLUMN quantity INTEGER NOT NULL DEFAULT 1")
+    conn.execute(
+        """
+        UPDATE wishlist_items
+        SET quantity = 1
+        WHERE quantity IS NULL OR quantity < 1
+        """
+    )
+
+
+def migrate_favorite_decks_schema(conn):
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS favorite_decks (
+            user_id INTEGER NOT NULL,
+            share_id TEXT NOT NULL,
+            deck_name TEXT NOT NULL DEFAULT '',
+            deck_url TEXT NOT NULL DEFAULT '',
+            owner_name TEXT NOT NULL DEFAULT '',
+            card_count INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (user_id, share_id),
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        )
+        """
+    )
 
 
 def cross_entity_name_exists(conn, user_id, name, exclude_table=None, exclude_id=None):
@@ -1729,6 +1772,7 @@ def migrate_user_schema(conn):
     migrate_wishlist_cards_user_schema(conn)
     migrate_card_sales_user_schema(conn)
     migrate_wishlists_schema(conn)
+    migrate_favorite_decks_schema(conn)
     user_columns = table_columns(conn, "users")
     if "name" not in user_columns:
         conn.execute("ALTER TABLE users ADD COLUMN name TEXT NOT NULL DEFAULT ''")
@@ -1771,6 +1815,7 @@ def migrate_user_schema(conn):
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_wishlists_share_id ON wishlists(share_id)")
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_containers_share_id ON containers(share_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_wishlist_items_user_card ON wishlist_items(user_id, card_id, variant)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_favorite_decks_user ON favorite_decks(user_id, updated_at)")
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_collection_share_id ON collection(share_id)")
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_decks_share_id ON decks(share_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_collection_user_quantity ON collection(user_id, quantity)")
@@ -2083,7 +2128,7 @@ def clear_user_data(conn, user_id):
             f"DELETE FROM {table} WHERE {id_column} IN (SELECT id FROM {owner_table} WHERE user_id = ?)",
             (user_id,),
         )
-    for table in ("card_sale_journal", "card_sales", "wishlist_cards", "card_meta", "card_purchases", "collection", "wishlists", "containers", "decks"):
+    for table in ("favorite_decks", "card_sale_journal", "card_sales", "wishlist_cards", "card_meta", "card_purchases", "collection", "wishlists", "containers", "decks"):
         conn.execute(f"DELETE FROM {table} WHERE user_id = ?", (user_id,))
     conn.commit()
     return {"ok": True}
@@ -2365,6 +2410,47 @@ def card_summary(card, owned_quantity=0):
         },
         "owned_quantity": owned_quantity,
     }
+
+
+def scryfall_card_detail_payload(card, variant="Normal", user_id=None, conn=None):
+    summary = card_summary(card, 0)
+    price = scryfall_price(card, variant)
+    summary.update({
+        "variant": variant or "Normal",
+        "quantity": 0,
+        "paid_price": 0.01,
+        "acquired_date": "",
+        "card_condition": DEFAULT_CARD_CONDITION,
+        "graded": 0,
+        "notes": "",
+        "favorite": 0,
+        "missing_list": 0,
+        "wishlist": 0,
+        "display_price": price,
+        "market_price": price,
+        "owned_value": 0,
+        "total_value": 0,
+        "gain_loss": 0,
+        "purchases": [],
+        "movements": [],
+        "deck_memberships": [],
+        "container_memberships": [],
+        "catalog_only": True,
+    })
+    if conn is not None and user_id is not None and summary.get("scryfall_id"):
+        meta = conn.execute(
+            """
+            SELECT favorite, missing_list, wishlist
+            FROM card_meta
+            WHERE user_id = ? AND card_id = ? AND variant = ?
+            """,
+            (user_id, summary["scryfall_id"], variant or "Normal"),
+        ).fetchone()
+        if meta:
+            summary["favorite"] = meta["favorite"] or 0
+            summary["missing_list"] = meta["missing_list"] or 0
+            summary["wishlist"] = meta["wishlist"] or 0
+    return summary
 
 
 def owned_quantities_for_cards(conn, card_ids, user_id=None):
@@ -3233,6 +3319,10 @@ def dashboard(conn, user_id):
         """,
         (user_id,),
     ).fetchone()["count"]
+    favorite_deck_count = conn.execute(
+        "SELECT COUNT(*) AS count FROM favorite_decks WHERE user_id = ?",
+        (user_id,),
+    ).fetchone()["count"]
     wishlist_count = conn.execute(
         """
         SELECT COUNT(*) AS count
@@ -3289,7 +3379,7 @@ def dashboard(conn, user_id):
     result["cards_in_decks"] = cards_in_decks
     result["container_count"] = container_count
     result["uncontained_cards"] = uncontained_cards
-    result["favorite_count"] = favorite_count
+    result["favorite_count"] = favorite_count + favorite_deck_count
     result["wishlist_count"] = wishlist_count
     result["sale_count"] = sale_summary["count"] or 0
     result["sale_asking_total"] = sale_summary["asking_total"] or 0
@@ -3470,18 +3560,168 @@ def deck_detail(conn, user_id, deck_id):
 
 
 def shared_deck(conn, share_id):
-    deck = conn.execute("SELECT id, user_id FROM decks WHERE share_id = ?", (share_id,)).fetchone()
+    deck = conn.execute(
+        """
+        SELECT d.id, d.user_id, d.name, d.share_id,
+               COALESCE(u.name, u.email, 'FoilFolio user') AS owner_name
+        FROM decks d
+        LEFT JOIN users u ON u.id = d.user_id
+        WHERE d.share_id = ?
+        """,
+        (share_id,),
+    ).fetchone()
     if not deck:
         raise KeyError("Shared deck not found")
     payload = deck_detail(conn, deck["user_id"], deck["id"])
     payload.pop("internal_notes", None)
     payload["readonly"] = True
+    payload["owner_user_id"] = deck["user_id"]
+    payload["owner_name"] = deck["owner_name"]
+    return payload
+
+
+def shared_deck_for_viewer(conn, share_id, viewer_user_id=None):
+    payload = shared_deck(conn, share_id)
+    is_owner = bool(viewer_user_id and int(viewer_user_id) == int(payload.get("owner_user_id") or 0))
+    payload["viewer_is_owner"] = is_owner
+    payload["can_favorite"] = bool(viewer_user_id and not is_owner)
+    payload["can_import"] = bool(viewer_user_id and not is_owner)
+    payload["favorite_deck"] = False
+    if viewer_user_id and not is_owner:
+        payload["favorite_deck"] = bool(conn.execute(
+            "SELECT 1 FROM favorite_decks WHERE user_id = ? AND share_id = ?",
+            (viewer_user_id, share_id),
+        ).fetchone())
     return payload
 
 
 def deck_share_url(deck):
     share_id = deck.get("share_id") if isinstance(deck, dict) else deck["share_id"]
     return f"{verification_base_url()}/decks/{urllib.parse.quote(share_id)}"
+
+
+def unique_import_wishlist_name(conn, user_id, base):
+    clean_base = re.sub(r"\s+", " ", (base or "Imported Deck").strip()) or "Imported Deck"
+    clean_base = clean_base[:30].strip() or "Imported Deck"
+    candidate = clean_base
+    suffix = 2
+    while cross_entity_name_exists(conn, user_id, candidate):
+        suffix_text = f" {suffix}"
+        candidate = f"{clean_base[:30 - len(suffix_text)].rstrip()}{suffix_text}"
+        suffix += 1
+    return candidate
+
+
+def list_favorite_decks(conn, user_id):
+    rows = conn.execute(
+        """
+        SELECT fd.share_id, fd.deck_name AS name, fd.deck_url, fd.owner_name,
+               fd.card_count, fd.created_at, fd.updated_at,
+               d.id AS deck_id,
+               CASE WHEN d.id IS NULL THEN 1 ELSE 0 END AS unavailable
+        FROM favorite_decks fd
+        LEFT JOIN decks d ON d.share_id = fd.share_id
+        WHERE fd.user_id = ?
+        ORDER BY fd.updated_at DESC, fd.deck_name COLLATE NOCASE
+        """,
+        (user_id,),
+    ).fetchall()
+    return rows_to_dicts(rows)
+
+
+def update_favorite_deck(conn, user_id, share_id, payload):
+    deck = shared_deck(conn, share_id)
+    if int(deck.get("owner_user_id") or 0) == int(user_id):
+        raise ValueError("This is already your deck.")
+    favorite = bool(payload.get("favorite"))
+    if favorite:
+        timestamp = now_iso()
+        conn.execute(
+            """
+            INSERT INTO favorite_decks (user_id, share_id, deck_name, deck_url, owner_name, card_count, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(user_id, share_id) DO UPDATE SET
+                deck_name = excluded.deck_name,
+                deck_url = excluded.deck_url,
+                owner_name = excluded.owner_name,
+                card_count = excluded.card_count,
+                updated_at = excluded.updated_at
+            """,
+            (
+                user_id,
+                share_id,
+                deck.get("name") or "Deck",
+                deck_share_url(deck),
+                deck.get("owner_name") or "FoilFolio user",
+                int(deck.get("card_count") or 0),
+                timestamp,
+                timestamp,
+            ),
+        )
+    else:
+        conn.execute("DELETE FROM favorite_decks WHERE user_id = ? AND share_id = ?", (user_id, share_id))
+    conn.commit()
+    return {"ok": True, "favorite": favorite, "deck": shared_deck_for_viewer(conn, share_id, user_id)}
+
+
+def import_shared_deck_to_wishlist(conn, user_id, share_id):
+    deck = shared_deck(conn, share_id)
+    if int(deck.get("owner_user_id") or 0) == int(user_id):
+        raise ValueError("This deck is already in your account.")
+    timestamp = now_iso()
+    wishlist_name = unique_import_wishlist_name(conn, user_id, deck.get("name") or "Imported Deck")
+    cursor = conn.execute(
+        "INSERT INTO wishlists (user_id, share_id, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+        (user_id, new_wishlist_share_id(conn), wishlist_name, timestamp, timestamp),
+    )
+    wishlist_id = cursor.lastrowid
+    imported = 0
+    fulfilled = 0
+    missing = 0
+    for card in deck.get("cards") or []:
+        card_id = card.get("scryfall_id") or card.get("card_id")
+        if not card_id:
+            continue
+        variant = card.get("variant") or "Normal"
+        wanted_quantity = max(1, int(card.get("deck_quantity") or card.get("quantity") or 1))
+        summary = wishlist_payload_summary(card_id, {"card": card, "variant": variant})
+        summary["wishlist_quantity"] = wanted_quantity
+        summary_json = json.dumps(summary)
+        conn.execute(
+            """
+            INSERT INTO wishlist_items (wishlist_id, user_id, card_id, variant, quantity, card_json, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(wishlist_id, card_id, variant) DO UPDATE SET
+                quantity = excluded.quantity,
+                card_json = COALESCE(excluded.card_json, wishlist_items.card_json),
+                updated_at = excluded.updated_at
+            """,
+            (wishlist_id, user_id, card_id, variant, wanted_quantity, summary_json, timestamp),
+        )
+        conn.execute(
+            """
+            INSERT INTO card_meta (user_id, card_id, variant, favorite, missing_list, wishlist, updated_at)
+            VALUES (?, ?, ?, 0, 0, 1, ?)
+            ON CONFLICT(user_id, card_id, variant) DO UPDATE SET
+                wishlist = 1,
+                updated_at = excluded.updated_at
+            """,
+            (user_id, card_id, variant, timestamp),
+        )
+        imported += 1
+        if owned_quantity(conn, user_id, card_id, variant) >= wanted_quantity:
+            fulfilled += 1
+        else:
+            missing += 1
+    conn.commit()
+    return {
+        "ok": True,
+        "wishlist": wishlist_detail(conn, user_id, wishlist_id),
+        "imported": imported,
+        "fulfilled": fulfilled,
+        "missing": missing,
+        "ready_for_deck": imported > 0 and missing == 0,
+    }
 
 
 def add_cards_to_deck(conn, user_id, deck_id, payload):
@@ -3557,9 +3797,14 @@ def remove_card_from_deck(conn, user_id, deck_id, payload):
 
 
 def delete_deck(conn, user_id, deck_id):
+    deck = conn.execute("SELECT share_id FROM decks WHERE id = ? AND user_id = ?", (deck_id, user_id)).fetchone()
+    if not deck:
+        raise KeyError("Deck not found")
     cursor = conn.execute("DELETE FROM decks WHERE id = ? AND user_id = ?", (deck_id, user_id))
     if cursor.rowcount == 0:
         raise KeyError("Deck not found")
+    if deck["share_id"]:
+        conn.execute("DELETE FROM favorite_decks WHERE share_id = ?", (deck["share_id"],))
     conn.commit()
     return {"ok": True, "deleted": deck_id}
 
@@ -4034,7 +4279,7 @@ def list_wishlists(conn, user_id):
     rows = conn.execute(
         """
         SELECT w.id, w.share_id, w.name, w.created_at, w.updated_at,
-               COUNT(wi.card_id) AS item_count,
+               COALESCE(SUM(wi.quantity), 0) AS item_count,
                COUNT(DISTINCT wi.card_id || '::' || wi.variant) AS unique_card_count
         FROM wishlists w
         LEFT JOIN wishlist_items wi ON wi.wishlist_id = w.id
@@ -4399,7 +4644,9 @@ def list_wishlist_cards(conn, query, user_id, wishlist_id=None):
     price_expr = current_price_sql("c")
     cards = rows_to_dicts(conn.execute(
         f"""
-        SELECT c.*, wi.variant, 0 AS quantity, 0 AS owned_quantity,
+        SELECT c.*, wi.variant, COALESCE(wi.quantity, 1) AS wishlist_quantity,
+               COALESCE(col.quantity, 0) AS owned_quantity,
+               COALESCE(col.quantity, 0) AS quantity,
                NULL AS share_id, NULL AS acquired_date,
                0.01 AS paid_price,
                ? AS card_condition,
@@ -4412,13 +4659,13 @@ def list_wishlist_cards(conn, query, user_id, wishlist_id=None):
                w.name AS wishlist_name,
                ({price_expr}) AS display_price,
                0 AS owned_value,
-               0 AS gain_loss
+               0 AS gain_loss,
+               CASE WHEN COALESCE(col.quantity, 0) >= COALESCE(wi.quantity, 1) THEN 1 ELSE 0 END AS fulfilled
         FROM wishlist_items wi
         JOIN wishlists w ON w.id = wi.wishlist_id
         JOIN cards c ON c.scryfall_id = wi.card_id
-        LEFT JOIN collection col ON col.user_id = wi.user_id AND col.card_id = wi.card_id AND COALESCE(col.quantity, 0) > 0
+        LEFT JOIN collection col ON col.user_id = wi.user_id AND col.card_id = wi.card_id AND col.variant = wi.variant AND COALESCE(col.quantity, 0) > 0
         WHERE wi.user_id = ?
-          AND col.card_id IS NULL
           {wishlist_filter}
           {search_filter}
         ORDER BY {order_sql}
@@ -4426,7 +4673,7 @@ def list_wishlist_cards(conn, query, user_id, wishlist_id=None):
         """,
         [DEFAULT_CARD_CONDITION] + values + [limit],
     ).fetchall())
-    seen = {card.get("scryfall_id") for card in cards}
+    seen = {(card.get("scryfall_id"), card.get("variant") or "Normal") for card in cards}
     card_json_values = [user_id]
     card_json_filter = ""
     if wishlist_id is not None:
@@ -4434,21 +4681,23 @@ def list_wishlist_cards(conn, query, user_id, wishlist_id=None):
         card_json_values.append(wishlist_id)
     rows = conn.execute(
         f"""
-        SELECT wi.card_id, wi.variant, wi.card_json, wi.wishlist_id, w.name AS wishlist_name
+        SELECT wi.card_id, wi.variant, COALESCE(wi.quantity, 1) AS wishlist_quantity,
+               wi.card_json, wi.wishlist_id, w.name AS wishlist_name,
+               COALESCE(col.quantity, 0) AS owned_quantity
         FROM wishlist_items wi
         JOIN wishlists w ON w.id = wi.wishlist_id
         LEFT JOIN cards c ON c.scryfall_id = wi.card_id
-        LEFT JOIN collection col ON col.user_id = wi.user_id AND col.card_id = wi.card_id AND COALESCE(col.quantity, 0) > 0
+        LEFT JOIN collection col ON col.user_id = wi.user_id AND col.card_id = wi.card_id AND col.variant = wi.variant AND COALESCE(col.quantity, 0) > 0
         WHERE wi.user_id = ?
           AND c.scryfall_id IS NULL
-          AND col.card_id IS NULL
           {card_json_filter}
         ORDER BY wi.updated_at DESC
         """,
         card_json_values,
     ).fetchall()
     for row in rows:
-        if row["card_id"] in seen and wishlist_id is None:
+        key = (row["card_id"], row["variant"] or "Normal")
+        if key in seen and wishlist_id is None:
             continue
         try:
             card = json.loads(row["card_json"] or "{}")
@@ -4463,8 +4712,10 @@ def list_wishlist_cards(conn, query, user_id, wishlist_id=None):
         card.update({
             "scryfall_id": card.get("scryfall_id") or row["card_id"],
             "variant": row["variant"] or card.get("variant") or "Normal",
-            "quantity": 0,
-            "owned_quantity": 0,
+            "quantity": int(row["owned_quantity"] or 0),
+            "owned_quantity": int(row["owned_quantity"] or 0),
+            "wishlist_quantity": int(row["wishlist_quantity"] or 1),
+            "fulfilled": 1 if int(row["owned_quantity"] or 0) >= int(row["wishlist_quantity"] or 1) else 0,
             "wishlist": 1,
             "wishlist_id": row["wishlist_id"],
             "wishlist_name": row["wishlist_name"],
@@ -4477,7 +4728,7 @@ def list_wishlist_cards(conn, query, user_id, wishlist_id=None):
             "card_condition": DEFAULT_CARD_CONDITION,
         })
         cards.append(card)
-        seen.add(row["card_id"])
+        seen.add(key)
     if sort == "name":
         cards.sort(key=lambda card: (card.get("flavor_name") or card.get("name") or "").lower())
     elif sort == "price":
@@ -4808,7 +5059,8 @@ def card_detail(conn, user_id, card_id, variant="Normal"):
         (variant, user_id, variant, user_id, variant, card_id),
     ).fetchone()
     if not row:
-        raise KeyError("Card not found")
+        scryfall_card = request_json(SCRYFALL_ID_URL.format(card_id=urllib.parse.quote(card_id)))
+        return scryfall_card_detail_payload(scryfall_card, variant, user_id=user_id, conn=conn)
     card = dict(row)
     card["purchases"] = purchase_history(conn, user_id, card_id, variant)
     card["movements"] = movement_history(conn, user_id, card_id, variant)
@@ -4838,7 +5090,10 @@ def public_card_detail(conn, card_id, variant="Normal"):
         (variant, variant, variant, card_id),
     ).fetchone()
     if not row:
-        raise KeyError("Card not found")
+        scryfall_card = request_json(SCRYFALL_ID_URL.format(card_id=urllib.parse.quote(card_id)))
+        card = scryfall_card_detail_payload(scryfall_card, variant)
+        card["readonly"] = 1
+        return card
     return dict(row)
 
 
@@ -5030,6 +5285,13 @@ def wishlist_payload_summary(card_id, payload):
     return summary
 
 
+def cache_card_by_id(conn, card_id, scryfall_card=None):
+    if scryfall_card is None:
+        scryfall_card = request_json(SCRYFALL_ID_URL.format(card_id=urllib.parse.quote(card_id)))
+    upsert_card(conn, scryfall_card, now_iso())
+    return scryfall_card
+
+
 def update_wishlist(conn, user_id, card_id, payload):
     card = conn.execute("SELECT 1 FROM cards WHERE scryfall_id = ?", (card_id,)).fetchone()
     variant = payload.get("variant") or "Normal"
@@ -5044,6 +5306,7 @@ def update_wishlist(conn, user_id, card_id, payload):
     if wishlist and wishlist_id is None:
         wishlist_id = ensure_default_wishlist(conn, user_id)
     summary_json = None
+    scryfall_card_to_cache = None
     if wishlist:
         owned = conn.execute(
             """
@@ -5057,9 +5320,19 @@ def update_wishlist(conn, user_id, card_id, payload):
         if owned:
             raise ValueError("Owned cards cannot be added to Wishlist.")
         if payload.get("card") or not card:
-            summary_json = json.dumps(wishlist_payload_summary(card_id, payload))
+            if payload.get("card"):
+                summary_json = json.dumps(wishlist_payload_summary(card_id, payload))
+            else:
+                scryfall_card_to_cache = request_json(SCRYFALL_ID_URL.format(card_id=urllib.parse.quote(card_id)))
+                summary = card_summary(scryfall_card_to_cache, 0)
+                summary["quantity"] = 0
+                summary["variant"] = variant
+                summary["wishlist"] = 1
+                summary["catalog_only"] = True
+                summary_json = json.dumps(summary)
     if not card:
         if wishlist:
+            cache_card_by_id(conn, card_id, scryfall_card_to_cache)
             conn.execute(
                 """
                 INSERT INTO wishlist_items (wishlist_id, user_id, card_id, variant, card_json, updated_at)
@@ -5071,6 +5344,16 @@ def update_wishlist(conn, user_id, card_id, payload):
                 (wishlist_id, user_id, card_id, variant, summary_json, now_iso()),
             )
             conn.execute("UPDATE wishlists SET updated_at = ? WHERE id = ?", (now_iso(), wishlist_id))
+            conn.execute(
+                """
+                INSERT INTO card_meta (user_id, card_id, variant, favorite, missing_list, wishlist, updated_at)
+                VALUES (?, ?, ?, 0, 0, 1, ?)
+                ON CONFLICT(user_id, card_id, variant) DO UPDATE SET
+                    wishlist = 1,
+                    updated_at = excluded.updated_at
+                """,
+                (user_id, card_id, variant, now_iso()),
+            )
         else:
             if wishlist_id is None:
                 conn.execute("DELETE FROM wishlist_items WHERE user_id = ? AND card_id = ?", (user_id, card_id))
@@ -5182,7 +5465,9 @@ def update_cards_missing_list(conn, user_id, payload):
             continue
         card = conn.execute("SELECT 1 FROM cards WHERE scryfall_id = ?", (card_id,)).fetchone()
         if not card:
-            continue
+            if not missing_list:
+                continue
+            cache_card_by_id(conn, card_id)
         if missing_list:
             owned = conn.execute(
                 """
@@ -5747,6 +6032,8 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_header("Content-Type", "application/json")
         if cookie:
             self.send_header("Set-Cookie", cookie)
+        elif getattr(self, "_refresh_session_cookie", None):
+            self.send_header("Set-Cookie", cookie_header(self._refresh_session_cookie))
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
@@ -5761,7 +6048,11 @@ class Handler(SimpleHTTPRequestHandler):
         return parse_cookies(self.headers.get("Cookie", "")).get(SESSION_COOKIE)
 
     def current_user(self, conn):
-        return current_user_from_token(conn, self.session_token())
+        token = self.session_token()
+        user = current_user_from_token(conn, token)
+        if user and token:
+            self._refresh_session_cookie = token
+        return user
 
     def require_user(self, conn):
         user = self.current_user(conn)
@@ -5803,6 +6094,9 @@ class Handler(SimpleHTTPRequestHandler):
                 if parsed.path == "/api/wishlists":
                     user = self.require_user(conn)
                     return self.send_json({"wishlists": list_wishlists(conn, user["id"])})
+                if parsed.path == "/api/favorite-decks":
+                    user = self.require_user(conn)
+                    return self.send_json({"decks": list_favorite_decks(conn, user["id"])})
                 match = re.match(r"^/api/wishlists/([0-9]+)$", parsed.path)
                 if match:
                     user = self.require_user(conn)
@@ -5852,7 +6146,12 @@ class Handler(SimpleHTTPRequestHandler):
                     return self.send_json(shared_card(conn, urllib.parse.unquote(match.group(1)), user["id"] if user else None))
                 match = re.match(r"^/api/shared-decks/([^/]+)$", parsed.path)
                 if match:
-                    return self.send_json(shared_deck(conn, urllib.parse.unquote(match.group(1))))
+                    user = self.current_user(conn)
+                    return self.send_json(shared_deck_for_viewer(
+                        conn,
+                        urllib.parse.unquote(match.group(1)),
+                        user["id"] if user else None,
+                    ))
                 match = re.match(r"^/api/shared-wishlists/([^/]+)$", parsed.path)
                 if match:
                     return self.send_json(shared_wishlist(conn, urllib.parse.unquote(match.group(1))))
@@ -5863,6 +6162,7 @@ class Handler(SimpleHTTPRequestHandler):
                     user = self.require_user(conn)
                     return self.send_json({
                         "cards": list_cards(conn, "owned=owned&favorite=1&sort=value&limit=5000", user["id"]),
+                        "decks": list_favorite_decks(conn, user["id"]),
                         "readonly": True,
                     })
                 if parsed.path == "/api/scryfall/search":
@@ -5995,6 +6295,14 @@ class Handler(SimpleHTTPRequestHandler):
                 if match:
                     user = self.require_user(conn)
                     return self.send_json(email_wishlist(conn, user, int(match.group(1)), self.read_json()))
+                match = re.match(r"^/api/shared-decks/([^/]+)/favorite$", parsed.path)
+                if match:
+                    user = self.require_user(conn)
+                    return self.send_json(update_favorite_deck(conn, user["id"], urllib.parse.unquote(match.group(1)), self.read_json()))
+                match = re.match(r"^/api/shared-decks/([^/]+)/import$", parsed.path)
+                if match:
+                    user = self.require_user(conn)
+                    return self.send_json(import_shared_deck_to_wishlist(conn, user["id"], urllib.parse.unquote(match.group(1))), HTTPStatus.CREATED)
                 match = re.match(r"^/api/decks/([0-9]+)/cards$", parsed.path)
                 if match:
                     user = self.require_user(conn)

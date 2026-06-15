@@ -1849,6 +1849,10 @@ main {
   position: relative;
 }
 
+.wishlist-button[hidden] {
+  display: none !important;
+}
+
 .favorite-button::before {
   content: "☆";
   font-size: 1.34rem;
@@ -2172,6 +2176,36 @@ main {
 .share-button:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+}
+
+.shared-deck-favorite-button.is-favorite {
+  border-color: var(--accent-3);
+  background: color-mix(in srgb, var(--accent-3) 20%, var(--button-bg));
+  color: var(--accent-3);
+}
+
+.copy-deck-icon {
+  position: relative;
+  display: inline-block;
+  width: 17px;
+  height: 17px;
+}
+
+.copy-deck-icon::before,
+.copy-deck-icon::after {
+  content: "";
+  position: absolute;
+  border: 1.8px solid currentColor;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--button-bg) 86%, transparent);
+}
+
+.copy-deck-icon::before {
+  inset: 4px 1px 1px 4px;
+}
+
+.copy-deck-icon::after {
+  inset: 1px 5px 5px 1px;
 }
 
 .scryfall-button {
@@ -3039,6 +3073,40 @@ main {
   height: 36px;
 }
 
+.favorites-mixed-shell {
+  display: grid;
+  gap: 16px;
+}
+
+.favorites-card-grid,
+.favorites-card-list {
+  width: 100%;
+}
+
+.favorite-decks-section {
+  display: grid;
+  gap: 10px;
+}
+
+.favorite-section-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink);
+  font-weight: 900;
+}
+
+.favorite-decks-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
+  gap: 14px;
+}
+
+.favorite-deck-card .deck-icon,
+.favorite-deck-share-row .deck-icon {
+  color: var(--accent);
+}
+
 .send-icon {
   position: relative;
   width: 17px;
@@ -3854,6 +3922,24 @@ main {
   padding: 18px 18px 0;
 }
 
+.shared-deck-actions {
+  display: grid;
+  gap: 8px;
+  justify-items: end;
+  align-content: start;
+}
+
+.shared-deck-actions .share-button {
+  width: 42px;
+  height: 42px;
+}
+
+.shared-deck-action-status {
+  grid-column: 1 / -1;
+  min-width: 180px;
+  text-align: right;
+}
+
 .shared-deck-head h2 {
   margin: 0;
   font-size: clamp(1.8rem, 4vw, 3rem);
@@ -3905,6 +3991,26 @@ main {
   line-height: 1.45;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.wishlist-shared-row.is-fulfilled {
+  opacity: 0.62;
+  background: color-mix(in srgb, var(--panel-soft) 74%, var(--button-bg));
+}
+
+.wishlist-shared-row.is-fulfilled strong,
+.wishlist-shared-row.is-fulfilled b {
+  color: var(--muted);
+}
+
+.favorite-decks-share-list {
+  display: grid;
+  gap: 10px;
+  padding: 16px 16px 0;
+}
+
+.favorite-deck-share-row {
+  grid-template-columns: auto minmax(0, 1fr) auto;
 }
 
 .selected-add-card strong {
