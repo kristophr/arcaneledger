@@ -3935,28 +3935,23 @@ function renderCardAggregateStats(stats = {}) {
   const deckCount = Number(stats.deck_count || 0);
   const favoriteCount = Number(stats.favorite_count || 0);
   const wishlistCount = Number(stats.wishlist_count || 0);
+  const saleUserCount = Number(stats.sale_user_count || 0);
+  const rows = [
+    [integer.format(userCount), userCount === 1 ? "user owns" : "users own"],
+    [integer.format(totalQuantity), totalQuantity === 1 ? "copy owned" : "copies owned"],
+    [integer.format(deckCount), deckCount === 1 ? "deck" : "decks"],
+    [integer.format(favoriteCount), favoriteCount === 1 ? "favorite" : "favorites"],
+    [integer.format(wishlistCount), wishlistCount === 1 ? "wishlist" : "wishlists"],
+    [integer.format(saleUserCount), saleUserCount === 1 ? "user selling" : "users selling"],
+  ];
   return `
     <div class="card-meta-grid">
-      <div>
-        <strong>${integer.format(userCount)}</strong>
-        <span>${userCount === 1 ? "user owns this card" : "users own this card"}</span>
-      </div>
-      <div>
-        <strong>${integer.format(totalQuantity)}</strong>
-        <span>${totalQuantity === 1 ? "total copy owned" : "total copies owned"}</span>
-      </div>
-      <div>
-        <strong>${integer.format(deckCount)}</strong>
-        <span>${deckCount === 1 ? "deck includes it" : "decks include it"}</span>
-      </div>
-      <div>
-        <strong>${integer.format(favoriteCount)}</strong>
-        <span>${favoriteCount === 1 ? "user favorited it" : "users favorited it"}</span>
-      </div>
-      <div>
-        <strong>${integer.format(wishlistCount)}</strong>
-        <span>${wishlistCount === 1 ? "user wishlisted it" : "users wishlisted it"}</span>
-      </div>
+      ${rows.map(([value, label]) => `
+        <div>
+          <strong>${value}</strong>
+          <span>${label}</span>
+        </div>
+      `).join("")}
     </div>
   `;
 }

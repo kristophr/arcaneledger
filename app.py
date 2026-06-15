@@ -5206,12 +5206,21 @@ def card_aggregate_stats(conn, card_id):
         """,
         (card_id, card_id, card_id),
     ).fetchone()["wishlist_count"] or 0
+    sale_user_count = conn.execute(
+        """
+        SELECT COUNT(DISTINCT user_id) AS sale_user_count
+        FROM card_sales
+        WHERE card_id = ? AND COALESCE(quantity, 0) > 0
+        """,
+        (card_id,),
+    ).fetchone()["sale_user_count"] or 0
     return {
         "user_count": int(row["user_count"] or 0),
         "total_quantity": int(row["total_quantity"] or 0),
         "deck_count": int(deck_count),
         "favorite_count": int(favorite_count),
         "wishlist_count": int(wishlist_count),
+        "sale_user_count": int(sale_user_count),
     }
 
 
