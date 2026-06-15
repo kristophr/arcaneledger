@@ -85,6 +85,11 @@ DEFAULT_CARD_CONDITION = "Near Mint"
 CONTAINER_TYPES = ("binder", "box", "other")
 DEFAULT_CONTAINER_TYPE = "other"
 THEMES = {"light", "dark", "retro", "neon", "red", "blue", "black", "green", "pride"}
+DISALLOWED_DISPLAY_NAME_WORDS = {
+    "fuck", "shit", "bitch", "cunt", "asshole", "whore", "slut",
+    "nigger", "nigga", "fag", "faggot", "retard", "kike", "spic",
+    "chink", "gook", "tranny", "nazi", "hitler",
+}
 
 
 def configure_logging():
@@ -200,10 +205,54 @@ def validate_password(value):
 def validate_display_name(value):
     name = re.sub(r"\s+", " ", (value or "").strip())
     if len(name) < 2:
-        raise ValueError("Enter your name.")
+        raise ValueError("Enter a display name.")
     if len(name) > 80:
-        raise ValueError("Name must be 80 characters or fewer.")
+        raise ValueError("Display name must be 80 characters or fewer.")
+    if contains_disallowed_name_word(name):
+        raise ValueError("Choose a respectful display name.")
     return name
+
+
+def contains_disallowed_name_word(value):
+    normalized = re.sub(r"[^a-z0-9]+", " ", (value or "").lower())
+    tokens = set(normalized.split())
+    compact = normalized.replace(" ", "")
+    return bool(tokens & DISALLOWED_DISPLAY_NAME_WORDS or any(word in compact for word in DISALLOWED_DISPLAY_NAME_WORDS if len(word) >= 4))
+
+
+def validate_user_content_name(value, label, limit):
+    name = re.sub(r"\s+", " ", (value or "").strip())
+    if not name:
+        raise ValueError(f"{label} is required.")
+    if len(name) > limit:
+        raise ValueError(f"{label} must be {limit} characters or fewer.")
+    if contains_disallowed_name_word(name):
+        raise ValueError(f"{label} contains language that is not allowed.")
+    return name
+
+
+def validate_optional_email(value):
+    email = (value or "").strip()
+    return validate_email(email) if email else ""
+
+
+def clean_contact_handle(value, field_name, max_length=80):
+    text = re.sub(r"\s+", " ", (value or "").strip())
+    if len(text) > max_length:
+        raise ValueError(f"{field_name} must be {max_length} characters or fewer.")
+    if any(char in text for char in "\r\n<>"):
+        raise ValueError(f"{field_name} contains unsupported characters.")
+    return text
+
+
+def clean_contact_url(value):
+    text = clean_contact_handle(value, "Website", 160)
+    if text and not re.match(r"^https?://", text, flags=re.I):
+        text = f"https://{text}"
+    parsed = urllib.parse.urlparse(text) if text else None
+    if text and (parsed.scheme not in {"http", "https"} or not parsed.netloc or " " in text):
+        raise ValueError("Enter a valid website URL.")
+    return text
 
 
 def hash_password(password, salt=None, iterations=260000):
@@ -931,6 +980,12 @@ def init_db(conn):
             theme TEXT NOT NULL DEFAULT 'light',
             email_verified INTEGER NOT NULL DEFAULT 0,
             store_share_id TEXT UNIQUE,
+            public_email TEXT NOT NULL DEFAULT '',
+            contact_whatsapp TEXT NOT NULL DEFAULT '',
+            contact_signal TEXT NOT NULL DEFAULT '',
+            contact_telegram TEXT NOT NULL DEFAULT '',
+            contact_discord TEXT NOT NULL DEFAULT '',
+            contact_website TEXT NOT NULL DEFAULT '',
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         );
@@ -1812,6 +1867,9 @@ def migrate_user_schema(conn):
         conn.execute("ALTER TABLE users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0")
     if "store_share_id" not in user_columns:
         conn.execute("ALTER TABLE users ADD COLUMN store_share_id TEXT")
+    for column in ("public_email", "contact_whatsapp", "contact_signal", "contact_telegram", "contact_discord", "contact_website"):
+        if column not in user_columns:
+            conn.execute(f"ALTER TABLE users ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
     conn.execute("UPDATE users SET name = email WHERE trim(COALESCE(name, '')) = ''")
     conn.execute("UPDATE users SET email_verified = 1 WHERE email_verified = 0 AND trim(COALESCE(password_hash, '')) != ''")
     rows = conn.execute("SELECT id FROM users WHERE store_share_id IS NULL OR store_share_id = ''").fetchall()
@@ -1866,6 +1924,12 @@ def user_payload(row):
         "language": scryfall_language(row["language"]),
         "theme": clean_theme(row["theme"]),
         "email_verified": bool(row["email_verified"]),
+        "public_email": row["public_email"] if "public_email" in row.keys() else "",
+        "contact_whatsapp": row["contact_whatsapp"] if "contact_whatsapp" in row.keys() else "",
+        "contact_signal": row["contact_signal"] if "contact_signal" in row.keys() else "",
+        "contact_telegram": row["contact_telegram"] if "contact_telegram" in row.keys() else "",
+        "contact_discord": row["contact_discord"] if "contact_discord" in row.keys() else "",
+        "contact_website": row["contact_website"] if "contact_website" in row.keys() else "",
         "created_at": row["created_at"],
     }
 
@@ -2146,9 +2210,34 @@ def logout_user(conn, token):
 def update_user_settings(conn, user_id, payload):
     language = scryfall_language(payload.get("language"))
     theme = clean_theme(payload.get("theme"))
+    display_name = validate_display_name(payload.get("name"))
+    public_email = validate_optional_email(payload.get("public_email"))
+    contact_whatsapp = clean_contact_handle(payload.get("contact_whatsapp"), "WhatsApp username")
+    contact_signal = clean_contact_handle(payload.get("contact_signal"), "Signal username")
+    contact_telegram = clean_contact_handle(payload.get("contact_telegram"), "Telegram username")
+    contact_discord = clean_contact_handle(payload.get("contact_discord"), "Discord username")
+    contact_website = clean_contact_url(payload.get("contact_website"))
     conn.execute(
-        "UPDATE users SET language = ?, theme = ?, updated_at = ? WHERE id = ?",
-        (language, theme, now_iso(), user_id),
+        """
+        UPDATE users
+        SET name = ?, language = ?, theme = ?, public_email = ?, contact_whatsapp = ?,
+            contact_signal = ?, contact_telegram = ?, contact_discord = ?, contact_website = ?,
+            updated_at = ?
+        WHERE id = ?
+        """,
+        (
+            display_name,
+            language,
+            theme,
+            public_email,
+            contact_whatsapp,
+            contact_signal,
+            contact_telegram,
+            contact_discord,
+            contact_website,
+            now_iso(),
+            user_id,
+        ),
     )
     conn.commit()
     return {"ok": True, "user": user_payload(conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone())}
@@ -3468,7 +3557,19 @@ def list_decks(conn, user_id):
                COALESCE(d.external_notes, '') AS external_notes,
                d.created_at, d.updated_at,
                COALESCE(SUM(dc.quantity), 0) AS card_count,
-               COUNT(dc.card_id) AS unique_card_count
+               COUNT(dc.card_id) AS unique_card_count,
+               (
+                   SELECT GROUP_CONCAT(image, '|||')
+                   FROM (
+                       SELECT DISTINCT COALESCE(NULLIF(c2.image_normal, ''), NULLIF(c2.image_small, '')) AS image
+                       FROM deck_cards dc2
+                       JOIN cards c2 ON c2.scryfall_id = dc2.card_id
+                       WHERE dc2.deck_id = d.id
+                         AND COALESCE(NULLIF(c2.image_normal, ''), NULLIF(c2.image_small, '')) IS NOT NULL
+                       ORDER BY RANDOM()
+                       LIMIT 5
+                   )
+               ) AS preview_images
         FROM decks d
         LEFT JOIN deck_cards dc ON dc.deck_id = d.id
         WHERE d.user_id = ?
@@ -3477,15 +3578,14 @@ def list_decks(conn, user_id):
         """,
         (user_id,),
     ).fetchall()
-    return rows_to_dicts(rows)
+    decks = rows_to_dicts(rows)
+    for deck in decks:
+        deck["preview_images"] = [image for image in (deck.get("preview_images") or "").split("|||") if image][:5]
+    return decks
 
 
 def create_deck(conn, user_id, payload):
-    name = re.sub(r"\s+", " ", (payload.get("name") or "").strip())
-    if not name:
-        raise ValueError("Deck name is required.")
-    if len(name) > 20:
-        raise ValueError("Deck name must be 20 characters or fewer.")
+    name = validate_user_content_name(payload.get("name"), "Deck name", 20)
     if name_exists(conn, "decks", name, user_id):
         raise ValueError("Deck name must be unique across your decks, containers, and wishlists.")
     description = clean_deck_text(payload.get("description"), 500, "Description")
@@ -3529,11 +3629,7 @@ def update_deck(conn, user_id, deck_id, payload):
     deck = conn.execute("SELECT id, name FROM decks WHERE id = ? AND user_id = ?", (deck_id, user_id)).fetchone()
     if not deck:
         raise KeyError("Deck not found")
-    name = re.sub(r"\s+", " ", (payload.get("name") or deck["name"] or "").strip())
-    if not name:
-        raise ValueError("Deck name is required.")
-    if len(name) > 20:
-        raise ValueError("Deck name must be 20 characters or fewer.")
+    name = validate_user_content_name(payload.get("name") or deck["name"], "Deck name", 20)
     if name_exists(conn, "decks", name, user_id, exclude_id=deck_id):
         raise ValueError("Deck name must be unique across your decks, containers, and wishlists.")
     description = clean_deck_text(payload.get("description"), 500, "Description")
@@ -3577,7 +3673,13 @@ def deck_cards(conn, user_id, deck_id):
         """,
         (user_id, deck_id),
     ).fetchall()
-    return rows_to_dicts(rows)
+    cards = rows_to_dicts(rows)
+    for card in cards:
+        deck_quantity = int(card.get("deck_quantity") or 0)
+        owned_quantity = int(card.get("quantity") or 0)
+        card["owned_quantity"] = owned_quantity
+        card["short_quantity"] = max(0, deck_quantity - owned_quantity)
+    return cards
 
 
 def deck_detail(conn, user_id, deck_id):
@@ -3602,6 +3704,415 @@ def deck_detail(conn, user_id, deck_id):
     payload = dict(deck)
     payload["cards"] = deck_cards(conn, user_id, deck_id)
     return payload
+
+
+def deck_export_card(card):
+    return {
+        "scryfall_id": card.get("scryfall_id") or card.get("card_id") or "",
+        "name": card.get("name") or "",
+        "set_code": card.get("set_code") or "",
+        "set_name": card.get("set_name") or "",
+        "collector_number": card.get("collector_number") or "",
+        "rarity": card.get("rarity") or "",
+        "variant": card.get("variant") or "Normal",
+        "quantity": int(card.get("deck_quantity") or card.get("quantity") or 1),
+        "type_line": card.get("type_line") or "",
+        "type_category": card.get("type_category") or "",
+        "colors": card.get("colors") or "",
+        "color_identity": card.get("color_identity") or "",
+        "image_small": card.get("image_small") or "",
+        "image_normal": card.get("image_normal") or "",
+        "scryfall_uri": card.get("scryfall_uri") or "",
+    }
+
+
+def deck_export_payload(conn, user_id):
+    decks = []
+    for deck in list_decks(conn, user_id):
+        detail = deck_detail(conn, user_id, deck["id"])
+        decks.append({
+            "name": detail.get("name") or "Deck",
+            "description": detail.get("description") or "",
+            "internal_notes": detail.get("internal_notes") or "",
+            "external_notes": detail.get("external_notes") or "",
+            "cards": [deck_export_card(card) for card in detail.get("cards") or []],
+        })
+    return {
+        "format": "foilfolio.decks",
+        "version": 1,
+        "exported_at": now_iso(),
+        "deck_count": len(decks),
+        "decks": decks,
+    }
+
+
+def export_decks_csv(conn, user_id):
+    output = io.StringIO()
+    fieldnames = [
+        "deck_name", "description", "internal_notes", "external_notes",
+        "scryfall_id", "card_name", "set_code", "set_name", "collector_number",
+        "rarity", "variant", "quantity", "type_line", "type_category",
+        "colors", "color_identity", "image_small", "image_normal", "scryfall_uri",
+    ]
+    writer = csv.DictWriter(output, fieldnames=fieldnames)
+    writer.writeheader()
+    for deck in deck_export_payload(conn, user_id)["decks"]:
+        cards = deck.get("cards") or []
+        if not cards:
+            writer.writerow({
+                "deck_name": deck.get("name") or "",
+                "description": deck.get("description") or "",
+                "internal_notes": deck.get("internal_notes") or "",
+                "external_notes": deck.get("external_notes") or "",
+            })
+            continue
+        for card in cards:
+            writer.writerow({
+                "deck_name": deck.get("name") or "",
+                "description": deck.get("description") or "",
+                "internal_notes": deck.get("internal_notes") or "",
+                "external_notes": deck.get("external_notes") or "",
+                "scryfall_id": card.get("scryfall_id") or "",
+                "card_name": card.get("name") or "",
+                "set_code": card.get("set_code") or "",
+                "set_name": card.get("set_name") or "",
+                "collector_number": card.get("collector_number") or "",
+                "rarity": card.get("rarity") or "",
+                "variant": card.get("variant") or "Normal",
+                "quantity": card.get("quantity") or 1,
+                "type_line": card.get("type_line") or "",
+                "type_category": card.get("type_category") or "",
+                "colors": card.get("colors") or "",
+                "color_identity": card.get("color_identity") or "",
+                "image_small": card.get("image_small") or "",
+                "image_normal": card.get("image_normal") or "",
+                "scryfall_uri": card.get("scryfall_uri") or "",
+            })
+    return output.getvalue()
+
+
+def parse_decks_csv(text):
+    try:
+        reader = csv.DictReader(io.StringIO(text or ""))
+        if not reader.fieldnames:
+            raise ValueError("CSV file is missing a header row.")
+        normalized_headers = {field.strip().lower(): field for field in reader.fieldnames if field}
+        if "deck_name" not in normalized_headers:
+            raise ValueError("CSV must include a deck_name column.")
+        decks = {}
+        for row_number, row in enumerate(reader, start=2):
+            row = {str(key or "").strip().lower(): (value or "").strip() for key, value in row.items()}
+            name = row.get("deck_name") or row.get("name") or ""
+            if not name:
+                continue
+            deck = decks.setdefault(name, {
+                "name": name,
+                "description": row.get("description") or "",
+                "internal_notes": row.get("internal_notes") or "",
+                "external_notes": row.get("external_notes") or "",
+                "cards": [],
+            })
+            card_id = row.get("scryfall_id") or row.get("card_id") or row.get("id") or ""
+            if not card_id:
+                continue
+            deck["cards"].append({
+                "scryfall_id": card_id,
+                "name": row.get("card_name") or row.get("name") or "",
+                "set_code": row.get("set_code") or "",
+                "set_name": row.get("set_name") or "",
+                "collector_number": row.get("collector_number") or "",
+                "rarity": row.get("rarity") or "",
+                "variant": row.get("variant") or "Normal",
+                "quantity": row.get("quantity") or 1,
+                "type_line": row.get("type_line") or "",
+                "type_category": row.get("type_category") or "",
+                "colors": row.get("colors") or "",
+                "color_identity": row.get("color_identity") or "",
+                "image_small": row.get("image_small") or "",
+                "image_normal": row.get("image_normal") or "",
+                "scryfall_uri": row.get("scryfall_uri") or "",
+                "row_number": row_number,
+            })
+        if not decks:
+            raise ValueError("CSV did not include any decks.")
+        return list(decks.values())
+    except csv.Error as exc:
+        raise ValueError(f"CSV is not valid: {exc}") from exc
+
+
+def normalize_import_deck_source(payload):
+    payload = payload or {}
+    source = payload.get("decks") if isinstance(payload.get("decks"), list) else None
+    content = payload.get("content") or payload.get("json") or ""
+    import_format = (payload.get("format") or "json").lower()
+    if source is None:
+        if import_format == "csv":
+            source = parse_decks_csv(content)
+        else:
+            try:
+                parsed = json.loads(content) if isinstance(content, str) else content
+            except json.JSONDecodeError as exc:
+                raise ValueError("Deck JSON is not valid JSON.") from exc
+            if isinstance(parsed, list):
+                source = parsed
+            elif isinstance(parsed, dict) and isinstance(parsed.get("decks"), list):
+                source = parsed["decks"]
+            elif isinstance(parsed, dict):
+                source = [parsed.get("deck") if isinstance(parsed.get("deck"), dict) else parsed]
+            else:
+                raise ValueError("Deck JSON must be an object, an array, or a FoilFolio decks export.")
+    decks = []
+    for index, deck_source in enumerate(source or [], start=1):
+        if not isinstance(deck_source, dict):
+            continue
+        cards = deck_source.get("cards") or []
+        if not isinstance(cards, list):
+            cards = []
+        name = re.sub(r"\s+", " ", (deck_source.get("name") or deck_source.get("deck_name") or "").strip())
+        decks.append({
+            "index": index,
+            "name": name,
+            "original_name": name,
+            "description": str(deck_source.get("description") or "")[:500],
+            "internal_notes": str(deck_source.get("internal_notes") or "")[:2000],
+            "external_notes": str(deck_source.get("external_notes") or "")[:2000],
+            "cards": cards,
+        })
+    if not decks:
+        raise ValueError("Import did not include any decks.")
+    return decks
+
+
+def deck_import_name_issues(conn, user_id, decks):
+    issues_by_index = {}
+    seen = {}
+    for deck in decks:
+        issues = []
+        name = re.sub(r"\s+", " ", (deck.get("name") or "").strip())
+        deck["name"] = name
+        try:
+            validate_user_content_name(name, "Deck name", 20)
+        except ValueError as exc:
+            issues.append(str(exc))
+        lower_name = name.lower()
+        if lower_name:
+            if lower_name in seen:
+                issues.append("Deck name is duplicated in this import.")
+                issues_by_index.setdefault(seen[lower_name], []).append("Deck name is duplicated in this import.")
+            else:
+                seen[lower_name] = deck["index"]
+            if cross_entity_name_exists(conn, user_id, name):
+                issues.append("Deck name already exists in your account.")
+        if issues:
+            issues_by_index.setdefault(deck["index"], []).extend(issues)
+    return issues_by_index
+
+
+def preview_deck_import(conn, user_id, payload):
+    decks = normalize_import_deck_source(payload)
+    issues_by_index = deck_import_name_issues(conn, user_id, decks)
+    preview = []
+    for deck in decks:
+        card_count = 0
+        unique_cards = set()
+        for card in deck.get("cards") or []:
+            if not isinstance(card, dict):
+                continue
+            card_id = card.get("scryfall_id") or card.get("card_id") or card.get("id")
+            if not card_id:
+                continue
+            variant = card.get("variant") or "Normal"
+            quantity = max(1, int(money(card.get("deck_quantity") or card.get("quantity"), fallback=1)))
+            card_count += quantity
+            unique_cards.add((str(card_id), str(variant)))
+        preview.append({
+            "index": deck["index"],
+            "name": deck.get("name") or "",
+            "original_name": deck.get("original_name") or "",
+            "card_count": card_count,
+            "unique_card_count": len(unique_cards),
+            "issues": list(dict.fromkeys(issues_by_index.get(deck["index"], []))),
+            "needs_rename": bool(issues_by_index.get(deck["index"])),
+        })
+    return {"ok": True, "decks": preview, "normalized_decks": decks}
+
+
+def json_list(value):
+    if isinstance(value, list):
+        return json.dumps(normalized_color_list(value))
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return "[]"
+        try:
+            parsed = json.loads(stripped)
+            if isinstance(parsed, list):
+                return json.dumps(normalized_color_list(parsed))
+        except json.JSONDecodeError:
+            pass
+        return json.dumps(normalized_color_list([part.strip() for part in re.split(r"[,/ ]+", stripped) if part.strip()]))
+    return "[]"
+
+
+def ensure_import_card_cached(conn, card):
+    card_id = card.get("scryfall_id") or card.get("card_id") or card.get("id")
+    if not card_id:
+        raise ValueError("Every imported deck card needs a scryfall_id.")
+    if conn.execute("SELECT 1 FROM cards WHERE scryfall_id = ?", (card_id,)).fetchone():
+        return
+    name = card.get("name") or card.get("display_name") or card.get("card_name")
+    set_code = (card.get("set_code") or card.get("set") or "").lower()
+    set_name = card.get("set_name") or (set_code.upper() if set_code else "")
+    collector_number = card.get("collector_number") or ""
+    if not (name and set_code and set_name and collector_number):
+        cache_card_by_id(conn, str(card_id))
+        return
+    timestamp = now_iso()
+    upsert_set_metadata(conn, {"code": set_code, "name": set_name}, timestamp)
+    display_price = money(card.get("display_price") or card.get("market_price") or card.get("current_usd"))
+    conn.execute(
+        """
+        INSERT INTO cards (
+            scryfall_id, oracle_id, name, set_code, set_name, collector_number, rarity,
+            type_line, type_category, colors, color_identity, flavor_name, flavor_text, layout,
+            finishes, image_small, image_normal, image_art, scryfall_uri,
+            current_usd, current_usd_foil, current_usd_etched, last_synced_at
+        )
+        VALUES (?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '', 'normal', '', ?, ?, '', ?, ?, ?, ?, ?)
+        ON CONFLICT(scryfall_id) DO NOTHING
+        """,
+        (
+            card_id,
+            name,
+            set_code,
+            set_name,
+            collector_number,
+            card.get("rarity") or "",
+            card.get("type_line") or "",
+            card.get("type_category") or card_type_category(card.get("type_line")),
+            json_list(card.get("colors")),
+            json_list(card.get("color_identity")),
+            card.get("image_small") or "",
+            card.get("image_normal") or "",
+            card.get("scryfall_uri") or "",
+            display_price,
+            money(card.get("current_usd_foil")),
+            money(card.get("current_usd_etched")),
+            timestamp,
+        ),
+    )
+
+
+def commit_deck_import(conn, user_id, payload):
+    decks = normalize_import_deck_source(payload)
+    issues_by_index = deck_import_name_issues(conn, user_id, decks)
+    if issues_by_index:
+        raise ValueError("Resolve duplicate or invalid deck names before importing.")
+    timestamp = now_iso()
+    imported = []
+    for deck in decks:
+        requested = {}
+        card_payloads = {}
+        for card in deck.get("cards") or []:
+            if not isinstance(card, dict):
+                continue
+            card_id = card.get("scryfall_id") or card.get("card_id") or card.get("id")
+            if not card_id:
+                continue
+            variant = card.get("variant") or "Normal"
+            quantity = max(1, int(money(card.get("deck_quantity") or card.get("quantity"), fallback=1)))
+            key = (str(card_id), str(variant))
+            requested[key] = requested.get(key, 0) + quantity
+            card_payloads[key] = card
+        for key in requested:
+            ensure_import_card_cached(conn, card_payloads[key])
+        cursor = conn.execute(
+            """
+            INSERT INTO decks (user_id, share_id, name, description, internal_notes, external_notes, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                user_id,
+                new_deck_share_id(conn),
+                deck["name"],
+                clean_deck_text(deck.get("description"), 500, "Description"),
+                clean_deck_text(deck.get("internal_notes"), 2000, "Internal notes"),
+                clean_deck_text(deck.get("external_notes"), 2000, "External notes"),
+                timestamp,
+                timestamp,
+            ),
+        )
+        deck_id = cursor.lastrowid
+        for (card_id, variant), quantity in requested.items():
+            conn.execute(
+                """
+                INSERT INTO deck_cards (deck_id, card_id, variant, quantity, added_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (deck_id, card_id, variant, quantity, timestamp),
+            )
+        imported.append(deck_detail(conn, user_id, deck_id))
+    conn.commit()
+    return {"ok": True, "imported": len(imported), "decks": imported}
+
+
+def import_deck_json(conn, user_id, payload):
+    source = payload or {}
+    if isinstance(source.get("json"), str):
+        try:
+            source = json.loads(source["json"])
+        except json.JSONDecodeError as exc:
+            raise ValueError("Deck JSON is not valid JSON.") from exc
+    if not isinstance(source, dict):
+        raise ValueError("Deck JSON must be an object.")
+    deck_source = source.get("deck") if isinstance(source.get("deck"), dict) else source
+    cards = deck_source.get("cards") or source.get("cards") or []
+    if not isinstance(cards, list):
+        raise ValueError("Deck JSON cards must be a list.")
+    name = validate_user_content_name(deck_source.get("name") or source.get("name"), "Deck name", 20)
+    if name_exists(conn, "decks", name, user_id):
+        raise ValueError("Deck name must be unique across your decks, containers, and wishlists.")
+    description = clean_deck_text(deck_source.get("description"), 500, "Description")
+    internal_notes = clean_deck_text(deck_source.get("internal_notes"), 2000, "Internal notes")
+    external_notes = clean_deck_text(deck_source.get("external_notes"), 2000, "External notes")
+    requested = {}
+    labels = {}
+    for card in cards:
+        if not isinstance(card, dict):
+            continue
+        card_id = card.get("scryfall_id") or card.get("card_id") or card.get("id")
+        if not card_id:
+            continue
+        variant = card.get("variant") or "Normal"
+        quantity = max(1, int(money(card.get("deck_quantity") or card.get("quantity"), fallback=1)))
+        key = (str(card_id), str(variant))
+        requested[key] = requested.get(key, 0) + quantity
+        labels[key] = card.get("name") or card.get("display_name") or str(card_id)
+    if not requested:
+        raise ValueError("Deck JSON does not include any cards.")
+    for (card_id, _variant), _quantity in requested.items():
+        if not conn.execute("SELECT 1 FROM cards WHERE scryfall_id = ?", (card_id,)).fetchone():
+            cache_card_by_id(conn, card_id)
+    timestamp = now_iso()
+    share_id = new_deck_share_id(conn)
+    cursor = conn.execute(
+        """
+        INSERT INTO decks (user_id, share_id, name, description, internal_notes, external_notes, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (user_id, share_id, name, description, internal_notes, external_notes, timestamp, timestamp),
+    )
+    deck_id = cursor.lastrowid
+    for (card_id, variant), quantity in requested.items():
+        conn.execute(
+            """
+            INSERT INTO deck_cards (deck_id, card_id, variant, quantity, added_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (deck_id, card_id, variant, quantity, timestamp),
+        )
+    conn.commit()
+    return {"ok": True, "deck": deck_detail(conn, user_id, deck_id), "imported": len(requested)}
 
 
 def shared_deck(conn, share_id):
@@ -3722,63 +4233,69 @@ def update_favorite_deck(conn, user_id, share_id, payload):
     return {"ok": True, "favorite": favorite, "deck": shared_deck_for_viewer(conn, share_id, user_id)}
 
 
-def import_shared_deck_to_wishlist(conn, user_id, share_id):
+def import_shared_deck_to_deck(conn, user_id, share_id, payload=None):
     deck = shared_deck(conn, share_id)
     if int(deck.get("owner_user_id") or 0) == int(user_id):
         raise ValueError("This deck is already in your account.")
+    payload = payload or {}
+    name = validate_user_content_name(payload.get("name") or deck.get("name") or "Imported Deck", "Deck name", 20)
+    replace = bool(payload.get("replace"))
+    existing_deck = conn.execute(
+        "SELECT id FROM decks WHERE user_id = ? AND lower(name) = lower(?)",
+        (user_id, name),
+    ).fetchone()
+    if existing_deck and not replace:
+        return {"ok": False, "duplicate": True, "name": name}
+    if not existing_deck and cross_entity_name_exists(conn, user_id, name):
+        raise ValueError("Deck name must be unique across your decks, containers, and wishlists.")
     timestamp = now_iso()
-    wishlist_name = unique_import_wishlist_name(conn, user_id, deck.get("name") or "Imported Deck")
-    cursor = conn.execute(
-        "INSERT INTO wishlists (user_id, share_id, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-        (user_id, new_wishlist_share_id(conn), wishlist_name, timestamp, timestamp),
-    )
-    wishlist_id = cursor.lastrowid
     imported = 0
-    fulfilled = 0
-    missing = 0
+    if existing_deck:
+        deck_id = existing_deck["id"]
+        conn.execute(
+            """
+            UPDATE decks
+            SET description = ?, internal_notes = '', external_notes = '', updated_at = ?
+            WHERE id = ? AND user_id = ?
+            """,
+            (clean_deck_text(deck.get("description"), 500, "Description"), timestamp, deck_id, user_id),
+        )
+        conn.execute("DELETE FROM deck_cards WHERE deck_id = ?", (deck_id,))
+    else:
+        cursor = conn.execute(
+            """
+            INSERT INTO decks (user_id, share_id, name, description, internal_notes, external_notes, created_at, updated_at)
+            VALUES (?, ?, ?, ?, '', '', ?, ?)
+            """,
+            (
+                user_id,
+                new_deck_share_id(conn),
+                name,
+                clean_deck_text(deck.get("description"), 500, "Description"),
+                timestamp,
+                timestamp,
+            ),
+        )
+        deck_id = cursor.lastrowid
     for card in deck.get("cards") or []:
         card_id = card.get("scryfall_id") or card.get("card_id")
         if not card_id:
             continue
         variant = card.get("variant") or "Normal"
-        wanted_quantity = max(1, int(card.get("deck_quantity") or card.get("quantity") or 1))
-        summary = wishlist_payload_summary(card_id, {"card": card, "variant": variant})
-        summary["wishlist_quantity"] = wanted_quantity
-        summary_json = json.dumps(summary)
         conn.execute(
             """
-            INSERT INTO wishlist_items (wishlist_id, user_id, card_id, variant, quantity, card_json, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(wishlist_id, card_id, variant) DO UPDATE SET
-                quantity = excluded.quantity,
-                card_json = COALESCE(excluded.card_json, wishlist_items.card_json),
-                updated_at = excluded.updated_at
+            INSERT INTO deck_cards (deck_id, card_id, variant, quantity, added_at)
+            VALUES (?, ?, ?, ?, ?)
             """,
-            (wishlist_id, user_id, card_id, variant, wanted_quantity, summary_json, timestamp),
-        )
-        conn.execute(
-            """
-            INSERT INTO card_meta (user_id, card_id, variant, favorite, missing_list, wishlist, updated_at)
-            VALUES (?, ?, ?, 0, 0, 1, ?)
-            ON CONFLICT(user_id, card_id, variant) DO UPDATE SET
-                wishlist = 1,
-                updated_at = excluded.updated_at
-            """,
-            (user_id, card_id, variant, timestamp),
+            (deck_id, card_id, variant, max(1, int(card.get("deck_quantity") or card.get("quantity") or 1)), timestamp),
         )
         imported += 1
-        if owned_quantity(conn, user_id, card_id, variant) >= wanted_quantity:
-            fulfilled += 1
-        else:
-            missing += 1
     conn.commit()
     return {
         "ok": True,
-        "wishlist": wishlist_detail(conn, user_id, wishlist_id),
+        "deck": deck_detail(conn, user_id, deck_id),
         "imported": imported,
-        "fulfilled": fulfilled,
-        "missing": missing,
-        "ready_for_deck": imported > 0 and missing == 0,
+        "replaced": bool(existing_deck),
     }
 
 
@@ -3798,29 +4315,8 @@ def add_cards_to_deck(conn, user_id, deck_id, payload):
         quantity = max(1, int(money(item.get("quantity"), fallback=1)))
         if not card_id:
             continue
-        owned = conn.execute(
-            """
-            SELECT COALESCE(quantity, 0) AS quantity
-            FROM collection
-            WHERE user_id = ? AND card_id = ? AND variant = ? AND quantity > 0
-            """,
-            (user_id, card_id, variant),
-        ).fetchone()
-        if not owned:
-            continue
-        owned_count = int(owned["quantity"] or 0)
-        existing = conn.execute(
-            """
-            SELECT COALESCE(quantity, 0) AS quantity
-            FROM deck_cards
-            WHERE deck_id = ? AND card_id = ? AND variant = ?
-            """,
-            (deck_id, card_id, variant),
-        ).fetchone()
-        current_deck_count = int(existing["quantity"] or 0) if existing else 0
-        if current_deck_count + quantity > owned_count:
-            available = max(0, owned_count - current_deck_count)
-            raise ValueError(f"Only {available} copy/copies are available to add for this card.")
+        if not conn.execute("SELECT 1 FROM cards WHERE scryfall_id = ?", (card_id,)).fetchone():
+            cache_card_by_id(conn, card_id)
         conn.execute(
             """
             INSERT INTO deck_cards (deck_id, card_id, variant, quantity, added_at)
@@ -3939,7 +4435,7 @@ def clean_container_type(value):
 
 
 def create_container(conn, user_id, payload):
-    name = clean_limited_text(payload, "name", "Container name", 30, required=True)
+    name = validate_user_content_name(payload.get("name"), "Container name", 30)
     if name_exists(conn, "containers", name, user_id):
         raise ValueError("Container name must be unique across your decks, containers, and wishlists.")
     storage_type = clean_container_type(payload.get("storage_type"))
@@ -3978,7 +4474,7 @@ def update_container(conn, user_id, container_id, payload):
     exists = conn.execute("SELECT id FROM containers WHERE id = ? AND user_id = ?", (container_id, user_id)).fetchone()
     if not exists:
         raise KeyError("Container not found")
-    name = clean_limited_text(payload, "name", "Container name", 30, required=True)
+    name = validate_user_content_name(payload.get("name"), "Container name", 30)
     if name_exists(conn, "containers", name, user_id, exclude_id=container_id):
         raise ValueError("Container name must be unique across your decks, containers, and wishlists.")
     storage_type = clean_container_type(payload.get("storage_type"))
@@ -4209,7 +4705,7 @@ def list_cards(conn, query, user_id):
                ({allocated_expr}) AS container_quantity,
                ({deck_allocated_expr}) AS deck_quantity,
                MAX(COALESCE(col.quantity, 0) - ({allocated_expr}), 0) AS unassigned_quantity,
-               MAX(COALESCE(col.quantity, 0) - ({deck_allocated_expr}), 0) AS saleable_quantity,
+               COALESCE(col.quantity, 0) AS saleable_quantity,
                ({price_expr}) AS display_price,
                COALESCE(col.quantity, 0) * ({price_expr}) AS owned_value,
                COALESCE(col.quantity, 0) * (({price_expr}) - COALESCE(col.paid_price, 0.01)) AS gain_loss
@@ -4226,7 +4722,7 @@ def list_cards(conn, query, user_id):
         ORDER BY {order_sql}
         LIMIT ?
         """,
-        [user_id, user_id, user_id, user_id, user_id, user_id, user_id] + values + [limit],
+        [user_id, user_id, user_id, user_id, user_id, user_id] + values + [limit],
     ).fetchall()
     cards = rows_to_dicts(rows)
     condition_inventory = {}
@@ -4272,14 +4768,12 @@ def list_cards(conn, query, user_id):
                     "card_condition": card_condition(card.get("card_condition")),
                     "quantity": card.get("quantity") or 0,
                 }]
-            saleable_remaining = max(0, int(card.get("saleable_quantity") or 0))
             for bucket in buckets:
                 sale = sale_lookup.get((key[0], key[1], bucket["card_condition"]))
                 bucket["sale_quantity"] = sale["sale_quantity"] if sale else 0
                 bucket["sale_price"] = sale["sale_price"] if sale else card.get("display_price") or 0.01
                 bucket_quantity = int(bucket.get("quantity") or 0)
-                bucket["sale_available_quantity"] = min(bucket_quantity, saleable_remaining)
-                saleable_remaining = max(0, saleable_remaining - bucket_quantity)
+                bucket["sale_available_quantity"] = bucket_quantity
             card["condition_inventory"] = buckets
     memberships = {}
     deck_rows = conn.execute(
@@ -4351,7 +4845,7 @@ def list_wishlists(conn, user_id):
 
 
 def create_wishlist(conn, user_id, payload):
-    name = clean_limited_text(payload, "name", "Wishlist name", 30, required=True)
+    name = validate_user_content_name(payload.get("name"), "Wishlist name", 30)
     if name_exists(conn, "wishlists", name, user_id):
         raise ValueError("Wishlist name must be unique across your decks, containers, and wishlists.")
     timestamp = now_iso()
@@ -4919,15 +5413,31 @@ def card_sale_sellers(conn, card_id):
 
 def shared_store(conn, share_id):
     user = conn.execute(
-        "SELECT id, name, store_share_id FROM users WHERE store_share_id = ?",
+        """
+        SELECT id, name, email, store_share_id, public_email, contact_whatsapp, contact_signal,
+               contact_telegram, contact_discord, contact_website
+        FROM users
+        WHERE store_share_id = ?
+        """,
         (share_id,),
     ).fetchone()
     if not user:
         raise KeyError("Store not found")
     cards = list_sale_cards(conn, "sort=value&limit=5000", user["id"])
+    contact_email = user["public_email"] or user["email"]
+    contacts = [
+        {"label": "Email", "value": contact_email, "href": f"mailto:{contact_email}"},
+        {"label": "WhatsApp", "value": user["contact_whatsapp"], "href": ""},
+        {"label": "Signal", "value": user["contact_signal"], "href": ""},
+        {"label": "Telegram", "value": user["contact_telegram"], "href": f"https://t.me/{user['contact_telegram'].lstrip('@')}" if user["contact_telegram"] else ""},
+        {"label": "Discord", "value": user["contact_discord"], "href": ""},
+        {"label": "Website", "value": user["contact_website"], "href": user["contact_website"]},
+    ]
     return {
         "share_id": share_id,
         "seller_name": public_display_name(user, "Seller"),
+        "contact_email": contact_email,
+        "contacts": [contact for contact in contacts if contact["value"]],
         "cards": cards,
         "card_count": len(cards),
         "sale_quantity": sum(int(card.get("sale_quantity") or 0) for card in cards),
@@ -5194,6 +5704,7 @@ def condition_inventory_for_card(conn, user_id, card_id):
             "card_condition": card_condition(row["card_condition"]),
             "quantity": quantity,
             "available_quantity": available,
+            "sale_available_quantity": quantity,
             "deck_reserved_quantity": max(0, deck_by_variant.get(variant, 0)),
         })
     return inventory
@@ -5396,6 +5907,20 @@ def card_detail(conn, user_id, card_id, variant="Normal"):
     card["condition_inventory"] = condition_inventory_for_card(conn, user_id, card_id)
     card["deck_memberships"] = card_deck_memberships(conn, user_id, card_id, variant)
     card["container_memberships"] = card_container_memberships(conn, user_id, card_id, variant)
+    sale = conn.execute(
+        """
+        SELECT COALESCE(SUM(quantity), 0) AS sale_quantity,
+               COALESCE(MAX(asking_price), 0) AS sale_price
+        FROM card_sales
+        WHERE user_id = ? AND card_id = ? AND COALESCE(NULLIF(variant, ''), 'Normal') = ?
+        """,
+        (user_id, card_id, variant),
+    ).fetchone()
+    container_quantity = sum(int(item.get("quantity") or 0) for item in card["container_memberships"])
+    card["container_quantity"] = container_quantity
+    card["unassigned_quantity"] = max(0, int(card.get("quantity") or 0) - container_quantity)
+    card["sale_quantity"] = int(sale["sale_quantity"] or 0) if sale else 0
+    card["sale_price"] = float(sale["sale_price"] or 0) if sale else 0
     card["price_history"] = card_price_history(conn, card_id, variant)
     card["aggregate_stats"] = card_aggregate_stats(conn, card_id)
     card["private_notes"] = card_private_notes(conn, user_id, card_id, variant)
@@ -5993,8 +6518,6 @@ def update_cards_for_sale(conn, user_id, payload):
         max_quantity = int((condition_owned and condition_owned["quantity"]) or 0)
         if max_quantity <= 0 and sale_condition == card_condition(owned["card_condition"]):
             max_quantity = int(owned["quantity"] or 0)
-        deck_quantity = deck_allocated_quantity(conn, user_id, card_id, variant)
-        saleable_total = max(0, int(owned["quantity"] or 0) - deck_quantity)
         existing_other_sale = conn.execute(
             """
             SELECT COALESCE(SUM(quantity), 0) AS quantity
@@ -6006,16 +6529,16 @@ def update_cards_for_sale(conn, user_id, payload):
             """,
             (user_id, card_id, variant, sale_condition),
         ).fetchone()
-        saleable_for_condition = max(0, saleable_total - int((existing_other_sale and existing_other_sale["quantity"]) or 0))
+        saleable_for_condition = max_quantity
+        if max_quantity <= 0:
+            saleable_for_condition = max(0, int(owned["quantity"] or 0) - int((existing_other_sale and existing_other_sale["quantity"]) or 0))
         quantity = int(money(item.get("quantity"), fallback=1))
         if quantity < 1:
             raise ValueError("Sale quantity must be at least 1.")
         if quantity > max_quantity:
             raise ValueError("Sale quantity cannot exceed owned quantity.")
         if quantity > saleable_for_condition:
-            if saleable_for_condition <= 0:
-                raise ValueError("These cards cannot be sold as they are in a deck. Please remove them from the deck before selling or removing these cards from your collection.")
-            raise ValueError(f"Only {saleable_for_condition} copy/copies are available to sell because deck cards are reserved.")
+            raise ValueError(f"Only {saleable_for_condition} copy/copies are available to list for sale.")
         card_price = conn.execute(
             """
             SELECT current_usd, current_usd_foil, current_usd_etched
@@ -6360,6 +6883,14 @@ def refresh_card_metadata(conn, card_id):
     return {"ok": True, "card": dict(refreshed), "refreshed_at": synced_at}
 
 
+def scryfall_card_json(card_id):
+    card_id = (card_id or "").strip()
+    if not card_id:
+        raise ValueError("Card id is required.")
+    url = SCRYFALL_ID_URL.format(card_id=urllib.parse.quote(card_id))
+    return request_json(url)
+
+
 def refresh_owned_price_snapshots(conn, user_id=None, limit=250):
     limit = max(1, min(int(limit or 250), 1000))
     if user_id is None:
@@ -6644,6 +7175,9 @@ class Handler(SimpleHTTPRequestHandler):
                         urllib.parse.unquote(match.group(1)),
                         params.get("variant", ["Normal"])[0],
                     ))
+                match = re.match(r"^/api/cards/([^/]+)/scryfall-json$", parsed.path)
+                if match:
+                    return self.send_json(scryfall_card_json(urllib.parse.unquote(match.group(1))))
                 match = re.match(r"^/api/cards/([^/]+)/deck-references$", parsed.path)
                 if match:
                     self.require_user(conn)
@@ -6655,6 +7189,26 @@ class Handler(SimpleHTTPRequestHandler):
                 if parsed.path == "/api/decks":
                     user = self.require_user(conn)
                     return self.send_json({"decks": list_decks(conn, user["id"])})
+                if parsed.path == "/api/decks/export.json":
+                    user = self.require_user(conn)
+                    data = json.dumps(deck_export_payload(conn, user["id"]), indent=2).encode("utf-8")
+                    self.send_response(HTTPStatus.OK)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Content-Disposition", "attachment; filename=foilfolio-decks.json")
+                    self.send_header("Content-Length", str(len(data)))
+                    self.end_headers()
+                    self.wfile.write(data)
+                    return
+                if parsed.path == "/api/decks/export.csv":
+                    user = self.require_user(conn)
+                    data = export_decks_csv(conn, user["id"]).encode("utf-8")
+                    self.send_response(HTTPStatus.OK)
+                    self.send_header("Content-Type", "text/csv; charset=utf-8")
+                    self.send_header("Content-Disposition", "attachment; filename=foilfolio-decks.csv")
+                    self.send_header("Content-Length", str(len(data)))
+                    self.end_headers()
+                    self.wfile.write(data)
+                    return
                 match = re.match(r"^/api/decks/([0-9]+)$", parsed.path)
                 if match:
                     user = self.require_user(conn)
@@ -6830,6 +7384,15 @@ class Handler(SimpleHTTPRequestHandler):
                 if parsed.path == "/api/decks":
                     user = self.require_user(conn)
                     return self.send_json(create_deck(conn, user["id"], self.read_json()), HTTPStatus.CREATED)
+                if parsed.path == "/api/decks/import":
+                    user = self.require_user(conn)
+                    return self.send_json(import_deck_json(conn, user["id"], self.read_json()), HTTPStatus.CREATED)
+                if parsed.path == "/api/decks/import/preview":
+                    user = self.require_user(conn)
+                    return self.send_json(preview_deck_import(conn, user["id"], self.read_json()))
+                if parsed.path == "/api/decks/import/commit":
+                    user = self.require_user(conn)
+                    return self.send_json(commit_deck_import(conn, user["id"], self.read_json()), HTTPStatus.CREATED)
                 if parsed.path == "/api/wishlists":
                     user = self.require_user(conn)
                     return self.send_json(create_wishlist(conn, user["id"], self.read_json()), HTTPStatus.CREATED)
@@ -6848,7 +7411,7 @@ class Handler(SimpleHTTPRequestHandler):
                 match = re.match(r"^/api/shared-decks/([^/]+)/import$", parsed.path)
                 if match:
                     user = self.require_user(conn)
-                    return self.send_json(import_shared_deck_to_wishlist(conn, user["id"], urllib.parse.unquote(match.group(1))), HTTPStatus.CREATED)
+                    return self.send_json(import_shared_deck_to_deck(conn, user["id"], urllib.parse.unquote(match.group(1)), self.read_json()), HTTPStatus.CREATED)
                 match = re.match(r"^/api/decks/([0-9]+)/cards$", parsed.path)
                 if match:
                     user = self.require_user(conn)

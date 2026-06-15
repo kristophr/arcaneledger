@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>FoilFolio</title>
-    <link rel="stylesheet" href="/styles.css?v=88">
+    <link rel="stylesheet" href="/styles.css?v=98">
   </head>
   <body>
     <header class="topbar">
@@ -206,7 +206,11 @@
             <p class="eyebrow">Build and organize</p>
             <h2>Decks</h2>
           </div>
-          <button id="addDeckButton" class="primary-button" type="button">Add Deck</button>
+          <div class="panel-head-actions">
+            <button id="exportDecksButton" class="secondary-button" type="button">Export All</button>
+            <button id="importDeckButton" class="secondary-button" type="button">Import</button>
+            <button id="addDeckButton" class="primary-button" type="button">Add Deck</button>
+          </div>
         </div>
         <div id="decksStatus" class="status" aria-live="polite"></div>
         <div id="decksGrid" class="decks-grid"></div>
@@ -377,6 +381,10 @@
                 <option value="edhrec">EDHREC</option>
               </select>
             </label>
+            <label class="catalog-checkbox-filter">
+              <input id="catalogHideOwnedFilter" type="checkbox">
+              <span>Hide owned cards</span>
+            </label>
           </div>
         </form>
         <div id="catalogSearchStatus" class="status" aria-live="polite"></div>
@@ -423,6 +431,34 @@
               <span id="settingsAccountEmail"></span>
             </div>
             <form id="settingsPageForm" class="settings-form">
+              <label>
+                Display Name
+                <input name="name" type="text" maxlength="80" autocomplete="name" required>
+              </label>
+              <label>
+                Alternate Store Email
+                <input name="public_email" type="email" autocomplete="email" placeholder="Leave blank to show account email">
+              </label>
+              <label>
+                WhatsApp Username
+                <input name="contact_whatsapp" type="text" maxlength="80" autocomplete="off">
+              </label>
+              <label>
+                Signal Username
+                <input name="contact_signal" type="text" maxlength="80" autocomplete="off">
+              </label>
+              <label>
+                Telegram Username
+                <input name="contact_telegram" type="text" maxlength="80" autocomplete="off" placeholder="@username">
+              </label>
+              <label>
+                Discord Username
+                <input name="contact_discord" type="text" maxlength="80" autocomplete="off">
+              </label>
+              <label>
+                Website
+                <input name="contact_website" type="text" maxlength="160" autocomplete="url" placeholder="https://example.com">
+              </label>
               <label>
                 Language
                 <select name="language">
@@ -775,8 +811,8 @@
             <input name="email" type="email" autocomplete="email" required>
           </label>
           <label id="authNameField" hidden>
-            Name
-            <input name="name" type="text" autocomplete="name" maxlength="80" disabled>
+            Display Name
+            <input name="name" type="text" autocomplete="nickname" maxlength="80" placeholder="How others see you in FoilFolio" disabled>
           </label>
           <label id="authPasswordField">
             Password
@@ -947,6 +983,77 @@
       </section>
     </div>
 
+    <div id="deckJsonOverlay" class="modal-overlay" hidden>
+      <section class="json-modal" role="dialog" aria-modal="true" aria-labelledby="deckJsonTitle">
+        <header class="edit-modal-head">
+          <div>
+            <p class="eyebrow">Deck JSON</p>
+            <h2 id="deckJsonTitle">Export Deck</h2>
+          </div>
+          <button id="closeDeckJsonButton" class="modal-close" type="button" aria-label="Close deck JSON dialog">x</button>
+        </header>
+        <div class="json-modal-content">
+          <textarea id="deckJsonText" readonly spellcheck="false"></textarea>
+          <div id="deckJsonStatus" class="status" aria-live="polite"></div>
+          <div class="modal-actions">
+            <button id="copyDeckJsonButton" class="primary-button" type="button">Copy</button>
+            <button id="dismissDeckJsonButton" class="secondary-button" type="button">Close</button>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <div id="exportDecksOverlay" class="modal-overlay" hidden>
+      <section class="settings-modal" role="dialog" aria-modal="true" aria-labelledby="exportDecksTitle">
+        <header class="edit-modal-head">
+          <div>
+            <p class="eyebrow">All decks</p>
+            <h2 id="exportDecksTitle">Export Decks</h2>
+          </div>
+          <button id="closeExportDecksButton" class="modal-close" type="button" aria-label="Close export decks dialog">x</button>
+        </header>
+        <div class="settings-form">
+          <p class="modal-copy">Download every deck in your account. JSON is best for moving between FoilFolio installs; CSV is easier to inspect in a spreadsheet.</p>
+          <div id="exportDecksStatus" class="status" aria-live="polite"></div>
+          <div class="modal-actions">
+            <button id="downloadDecksJsonButton" class="primary-button" type="button">Download JSON</button>
+            <button id="downloadDecksCsvButton" class="secondary-button" type="button">Download CSV</button>
+            <button id="cancelExportDecksButton" class="secondary-button" type="button">Close</button>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <div id="importDeckOverlay" class="modal-overlay" hidden>
+      <section class="json-modal deck-import-modal" role="dialog" aria-modal="true" aria-labelledby="importDeckTitle">
+        <header class="edit-modal-head">
+          <div>
+            <p class="eyebrow">Import decks</p>
+            <h2 id="importDeckTitle">Review Deck Import</h2>
+          </div>
+          <button id="closeImportDeckButton" class="modal-close" type="button" aria-label="Close import deck dialog">x</button>
+        </header>
+        <form id="importDeckForm" class="json-modal-content">
+          <div class="import-mode-row" role="group" aria-label="Deck import format">
+            <label><input type="radio" name="deck_import_format" value="json" checked> JSON</label>
+            <label><input type="radio" name="deck_import_format" value="csv"> CSV</label>
+          </div>
+          <label class="file-import-field">
+            Upload JSON or CSV
+            <input id="importDeckFileInput" type="file" accept=".json,.csv,application/json,text/csv">
+          </label>
+          <textarea id="importDeckJsonText" spellcheck="false" placeholder="Paste FoilFolio deck JSON or deck CSV here"></textarea>
+          <div id="importDeckPreview" class="deck-import-preview" hidden></div>
+          <div id="importDeckStatus" class="status" aria-live="polite"></div>
+          <div class="modal-actions">
+            <button id="cancelImportDeckButton" class="secondary-button" type="button">Cancel</button>
+            <button id="reviewImportDeckButton" class="secondary-button" type="button">Review</button>
+            <button id="commitImportDeckButton" class="primary-button" type="submit" disabled>Import</button>
+          </div>
+        </form>
+      </section>
+    </div>
+
     <div id="addDeckOverlay" class="modal-overlay" hidden>
       <section class="settings-modal" role="dialog" aria-modal="true" aria-labelledby="addDeckTitle">
         <header class="edit-modal-head">
@@ -1085,6 +1192,7 @@
             Deck
             <select name="deck_id" required></select>
           </label>
+          <button id="assignCreateDeckButton" class="secondary-button inline-create-button" type="button">Add New Deck</button>
           <div id="assignDeckCards" class="assign-deck-cards"></div>
           <div class="modal-actions">
             <button id="cancelAssignDeckButton" class="secondary-button" type="button">Cancel</button>
@@ -1207,6 +1315,7 @@
             Container
             <select name="container_id" required></select>
           </label>
+          <button id="assignCreateContainerButton" class="secondary-button inline-create-button" type="button">Add New Container</button>
           <div id="assignContainerCards" class="assign-container-cards"></div>
           <div class="modal-actions">
             <button id="cancelAssignContainerButton" class="secondary-button" type="button">Cancel</button>
@@ -1227,6 +1336,7 @@
         </header>
         <form id="saleForm" class="settings-form">
           <div id="saleCards" class="sale-cards"></div>
+          <div id="saleModalStatus" class="status" aria-live="polite"></div>
           <div class="modal-actions">
             <button id="cancelSaleButton" class="secondary-button" type="button">Discard</button>
             <button class="primary-button" type="submit">Mark for Sale</button>
@@ -1291,6 +1401,38 @@
       </section>
     </div>
 
+    <div id="deckCardPreviewOverlay" class="modal-overlay" hidden>
+      <section class="deck-card-preview-modal" role="dialog" aria-modal="true" aria-labelledby="deckCardPreviewTitle">
+        <header class="edit-modal-head">
+          <div>
+            <p class="eyebrow">Deck card</p>
+            <h2 id="deckCardPreviewTitle">Card</h2>
+          </div>
+          <button id="closeDeckCardPreviewButton" class="modal-close" type="button" aria-label="Close card preview dialog">x</button>
+        </header>
+        <div id="deckCardPreviewShell" class="deck-card-preview-shell"></div>
+      </section>
+    </div>
+
+    <div id="scryfallJsonOverlay" class="modal-overlay" hidden>
+      <section class="json-modal" role="dialog" aria-modal="true" aria-labelledby="scryfallJsonTitle">
+        <header class="edit-modal-head">
+          <div>
+            <p class="eyebrow">Scryfall</p>
+            <h2 id="scryfallJsonTitle">Card JSON</h2>
+          </div>
+          <button id="closeScryfallJsonButton" class="modal-close" type="button" aria-label="Close Scryfall JSON dialog">x</button>
+        </header>
+        <div class="json-modal-content">
+          <textarea id="scryfallJsonText" readonly spellcheck="false"></textarea>
+          <div id="scryfallJsonStatus" class="status" aria-live="polite"></div>
+          <div class="modal-actions">
+            <button id="dismissScryfallJsonButton" class="secondary-button" type="button">Close</button>
+          </div>
+        </div>
+      </section>
+    </div>
+
     <div id="cardContainersOverlay" class="modal-overlay" hidden>
       <section class="settings-modal" role="dialog" aria-modal="true" aria-labelledby="cardContainersTitle">
         <header class="edit-modal-head">
@@ -1339,6 +1481,6 @@
       </section>
     </div>
 
-    <script src="/app.js?v=94"></script>
+  <script src="/app.js?v=111"></script>
   </body>
 </html>

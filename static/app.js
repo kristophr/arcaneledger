@@ -6,6 +6,7 @@ const state = {
   saleCards: [],
   wishlistCards: [],
   wishlists: [],
+  catalogSearchAllResults: [],
   catalogSearchResults: [],
   dashboard: null,
   searchTimer: null,
@@ -34,6 +35,7 @@ const state = {
   activeSaleCard: null,
   importRows: [],
   importIssues: [],
+  pendingDeckImport: null,
   selectedCards: new Map(),
   selectedSetMissingCards: new Map(),
   user: null,
@@ -59,6 +61,11 @@ const compactDollars = new Intl.NumberFormat("en-US", {
 
 const integer = new Intl.NumberFormat("en-US");
 const cardConditions = ["Near Mint", "Lightly Played", "Moderately Played", "Heavily Played", "Damaged"];
+const disallowedNameWords = new Set([
+  "fuck", "shit", "bitch", "cunt", "asshole", "whore", "slut",
+  "nigger", "nigga", "fag", "faggot", "retard", "kike", "spic",
+  "chink", "gook", "tranny", "nazi", "hitler",
+]);
 const pageRoutes = {
   dashboard: "/",
   search: "/search",
@@ -105,6 +112,7 @@ const els = {
   favoritesStatus: document.querySelector("#favoritesStatus"),
   missingStatus: document.querySelector("#missingStatus"),
   saleStatus: document.querySelector("#saleStatus"),
+  saleModalStatus: document.querySelector("#saleModalStatus"),
   wishlistStatus: document.querySelector("#wishlistStatus"),
   catalogSearchStatus: document.querySelector("#catalogSearchStatus"),
   searchInput: document.querySelector("#searchInput"),
@@ -121,6 +129,7 @@ const els = {
   catalogTypeSelect: document.querySelector("#catalogTypeSelect"),
   catalogRaritySelect: document.querySelector("#catalogRaritySelect"),
   catalogFormatSelect: document.querySelector("#catalogFormatSelect"),
+  catalogHideOwnedFilter: document.querySelector("#catalogHideOwnedFilter"),
   ownedFilter: document.querySelector("#ownedFilter"),
   sortSelect: document.querySelector("#sortSelect"),
   favoriteSortSelect: document.querySelector("#favoriteSortSelect"),
@@ -202,6 +211,8 @@ const els = {
   toggleAuthModeButton: document.querySelector("#toggleAuthModeButton"),
   submitAuthButton: document.querySelector("#submitAuthButton"),
   addDeckButton: document.querySelector("#addDeckButton"),
+  importDeckButton: document.querySelector("#importDeckButton"),
+  exportDecksButton: document.querySelector("#exportDecksButton"),
   addDeckOverlay: document.querySelector("#addDeckOverlay"),
   addDeckForm: document.querySelector("#addDeckForm"),
   closeAddDeckButton: document.querySelector("#closeAddDeckButton"),
@@ -232,6 +243,7 @@ const els = {
   assignDeckOverlay: document.querySelector("#assignDeckOverlay"),
   assignDeckForm: document.querySelector("#assignDeckForm"),
   assignDeckCards: document.querySelector("#assignDeckCards"),
+  assignCreateDeckButton: document.querySelector("#assignCreateDeckButton"),
   closeAssignDeckButton: document.querySelector("#closeAssignDeckButton"),
   cancelAssignDeckButton: document.querySelector("#cancelAssignDeckButton"),
   deckDetailOverlay: document.querySelector("#deckDetailOverlay"),
@@ -242,6 +254,16 @@ const els = {
   deleteDeckButton: document.querySelector("#deleteDeckButton"),
   closeDeckDetailButton: document.querySelector("#closeDeckDetailButton"),
   addDeckCardButton: document.querySelector("#addDeckCardButton"),
+  deckCardPreviewOverlay: document.querySelector("#deckCardPreviewOverlay"),
+  deckCardPreviewTitle: document.querySelector("#deckCardPreviewTitle"),
+  deckCardPreviewShell: document.querySelector("#deckCardPreviewShell"),
+  closeDeckCardPreviewButton: document.querySelector("#closeDeckCardPreviewButton"),
+  scryfallJsonOverlay: document.querySelector("#scryfallJsonOverlay"),
+  scryfallJsonTitle: document.querySelector("#scryfallJsonTitle"),
+  scryfallJsonText: document.querySelector("#scryfallJsonText"),
+  scryfallJsonStatus: document.querySelector("#scryfallJsonStatus"),
+  closeScryfallJsonButton: document.querySelector("#closeScryfallJsonButton"),
+  dismissScryfallJsonButton: document.querySelector("#dismissScryfallJsonButton"),
   deckCardSearchOverlay: document.querySelector("#deckCardSearchOverlay"),
   deckCardSearchTitle: document.querySelector("#deckCardSearchTitle"),
   deckCardSearchForm: document.querySelector("#deckCardSearchForm"),
@@ -268,6 +290,7 @@ const els = {
   assignContainerOverlay: document.querySelector("#assignContainerOverlay"),
   assignContainerForm: document.querySelector("#assignContainerForm"),
   assignContainerCards: document.querySelector("#assignContainerCards"),
+  assignCreateContainerButton: document.querySelector("#assignCreateContainerButton"),
   closeAssignContainerButton: document.querySelector("#closeAssignContainerButton"),
   cancelAssignContainerButton: document.querySelector("#cancelAssignContainerButton"),
   saleOverlay: document.querySelector("#saleOverlay"),
@@ -304,6 +327,29 @@ const els = {
   shareUrlInput: document.querySelector("#shareUrlInput"),
   copyShareButton: document.querySelector("#copyShareButton"),
   closeShareButton: document.querySelector("#closeShareButton"),
+  deckJsonOverlay: document.querySelector("#deckJsonOverlay"),
+  deckJsonTitle: document.querySelector("#deckJsonTitle"),
+  deckJsonText: document.querySelector("#deckJsonText"),
+  deckJsonStatus: document.querySelector("#deckJsonStatus"),
+  copyDeckJsonButton: document.querySelector("#copyDeckJsonButton"),
+  closeDeckJsonButton: document.querySelector("#closeDeckJsonButton"),
+  dismissDeckJsonButton: document.querySelector("#dismissDeckJsonButton"),
+  exportDecksOverlay: document.querySelector("#exportDecksOverlay"),
+  exportDecksStatus: document.querySelector("#exportDecksStatus"),
+  closeExportDecksButton: document.querySelector("#closeExportDecksButton"),
+  cancelExportDecksButton: document.querySelector("#cancelExportDecksButton"),
+  downloadDecksJsonButton: document.querySelector("#downloadDecksJsonButton"),
+  downloadDecksCsvButton: document.querySelector("#downloadDecksCsvButton"),
+  importDeckOverlay: document.querySelector("#importDeckOverlay"),
+  importDeckForm: document.querySelector("#importDeckForm"),
+  importDeckJsonText: document.querySelector("#importDeckJsonText"),
+  importDeckFileInput: document.querySelector("#importDeckFileInput"),
+  importDeckPreview: document.querySelector("#importDeckPreview"),
+  importDeckStatus: document.querySelector("#importDeckStatus"),
+  closeImportDeckButton: document.querySelector("#closeImportDeckButton"),
+  cancelImportDeckButton: document.querySelector("#cancelImportDeckButton"),
+  reviewImportDeckButton: document.querySelector("#reviewImportDeckButton"),
+  commitImportDeckButton: document.querySelector("#commitImportDeckButton"),
   sharedCardShell: document.querySelector("#sharedCardShell"),
   favoritesShareShell: document.querySelector("#favoritesShareShell"),
   wishlistShareShell: document.querySelector("#wishlistShareShell"),
@@ -488,7 +534,7 @@ function setAuthMode(mode) {
   els.authForm.password.required = !(isRegister || isResetRequest);
   els.authForm.password.disabled = isRegister || isResetRequest;
   els.authHint.textContent = isComplete
-    ? "Email verified. Add your name and a strong password to finish creating your account."
+    ? "Email verified. Add a display name and a strong password to finish creating your account."
     : isRegister
       ? "Enter your email and we will send a verification link before you create a password. Use this again to resend a verification email."
       : isResetRequest
@@ -1570,6 +1616,28 @@ function buildCatalogSearchQuery() {
   return parts.join(" ").trim();
 }
 
+function applyCatalogOwnedFilter() {
+  const allResults = state.catalogSearchAllResults || [];
+  const hideOwned = Boolean(els.catalogHideOwnedFilter?.checked);
+  state.catalogSearchResults = hideOwned
+    ? allResults.filter((card) => Number(card.owned_quantity || 0) <= 0)
+    : [...allResults];
+  return {
+    total: allResults.length,
+    visible: state.catalogSearchResults.length,
+    hiddenOwned: allResults.length - state.catalogSearchResults.length,
+    hideOwned,
+  };
+}
+
+function catalogSearchStatusText(stats) {
+  const resultText = `${integer.format(stats.visible)} result${stats.visible === 1 ? "" : "s"}`;
+  if (stats.hideOwned && stats.hiddenOwned > 0) {
+    return `${resultText} - ${integer.format(stats.hiddenOwned)} owned hidden`;
+  }
+  return resultText;
+}
+
 async function searchCatalog() {
   const query = buildCatalogSearchQuery();
   if (query.length < 2) {
@@ -1582,9 +1650,10 @@ async function searchCatalog() {
     const language = (state.settings && state.settings.language) || "en";
     const order = els.catalogSortSelect.value || "released";
     const result = await api(`/api/scryfall/search?q=${encodeURIComponent(query)}&lang=${encodeURIComponent(language)}&order=${encodeURIComponent(order)}`);
-    state.catalogSearchResults = result.cards || [];
+    state.catalogSearchAllResults = result.cards || [];
+    const stats = applyCatalogOwnedFilter();
     renderCatalogSearchResults();
-    els.catalogSearchStatus.textContent = `${integer.format(state.catalogSearchResults.length)} result${state.catalogSearchResults.length === 1 ? "" : "s"}`;
+    els.catalogSearchStatus.textContent = catalogSearchStatusText(stats);
   } catch (error) {
     els.catalogSearchStatus.textContent = error.message;
   } finally {
@@ -1894,7 +1963,10 @@ async function deleteActiveWishlist() {
 function renderCatalogSearchResults() {
   els.catalogSearchGrid.innerHTML = "";
   if (!state.catalogSearchResults.length) {
-    els.catalogSearchGrid.innerHTML = '<div class="empty-state">Search Scryfall to add cards to Wishlist or Collection.</div>';
+    const ownedHidden = Boolean(els.catalogHideOwnedFilter?.checked) && (state.catalogSearchAllResults || []).length > 0;
+    els.catalogSearchGrid.innerHTML = ownedHidden
+      ? '<div class="empty-state">All matching results are already in your collection.</div>'
+      : '<div class="empty-state">Search Scryfall to add cards to Wishlist or Collection.</div>';
     return;
   }
   for (const card of state.catalogSearchResults) {
@@ -1903,7 +1975,7 @@ function renderCatalogSearchResults() {
     item.className = "catalog-result-card";
     item.classList.toggle("is-owned", owned);
     item.innerHTML = `
-      <a class="catalog-result-art" href="${escapeHtml(card.scryfall_uri || "#")}" target="_blank" rel="noreferrer" title="Open on Scryfall">
+      <a class="catalog-result-art" href="${escapeHtml(cardDetailUrl(card))}" title="Open card details">
         <img src="${escapeHtml(card.image_normal || card.image_small || "")}" alt="${escapeHtml(cardTitle(card))}">
       </a>
       <div class="catalog-result-copy">
@@ -1918,10 +1990,15 @@ function renderCatalogSearchResults() {
         </div>
       </div>
       <div class="catalog-result-actions">
+        <a class="scryfall-button catalog-scryfall-button" href="${escapeHtml(card.scryfall_uri || "#")}" target="_blank" rel="noreferrer" aria-label="Open on Scryfall" title="Open on Scryfall">S</a>
         <button class="wishlist-button ${card.wishlist ? "is-wishlist" : ""}" type="button" aria-label="${card.wishlist ? "Remove from Wishlist" : "Add to Wishlist"}" title="${owned ? "Owned cards are not available for Wishlist" : card.wishlist ? "Remove from Wishlist" : "Add to Wishlist"}" ${owned ? "disabled" : ""}></button>
         <button class="primary-button catalog-add-button" type="button">Add to Collection</button>
       </div>
     `;
+    item.addEventListener("click", (event) => {
+      if (event.target.closest("a, button, input, select, textarea")) return;
+      window.location.href = cardDetailUrl(card);
+    });
     const wishlistButton = item.querySelector(".wishlist-button");
     wishlistButton.addEventListener("click", async () => {
       if (owned) return;
@@ -2617,6 +2694,280 @@ async function copyShareUrl() {
   }
 }
 
+function deckJsonCard(card) {
+  return {
+    scryfall_id: card.scryfall_id || card.card_id || "",
+    name: cardTitle(card),
+    set_code: card.set_code || "",
+    set_name: card.set_name || "",
+    collector_number: card.collector_number || "",
+    rarity: card.rarity || "",
+    variant: card.variant || "Normal",
+    quantity: deckQuantity(card),
+    owned_quantity: Number(card.owned_quantity ?? card.quantity ?? 0),
+    short_quantity: Math.max(0, Number(card.short_quantity ?? deckQuantity(card) - Number(card.owned_quantity ?? card.quantity ?? 0))),
+    display_price: Number(card.display_price || 0),
+    type_line: card.type_line || "",
+    type_category: card.type_category || "",
+    colors: card.colors || "",
+    color_identity: card.color_identity || "",
+    mana_cost: card.mana_cost || "",
+    image_small: card.image_small || "",
+    image_normal: card.image_normal || "",
+    scryfall_uri: card.scryfall_uri || "",
+  };
+}
+
+function deckJsonPayload(deck, includeNotes = false) {
+  const payload = {
+    format: includeNotes ? "foilfolio.deck.full" : "foilfolio.deck",
+    version: 1,
+    exported_at: new Date().toISOString(),
+    name: deck.name || "Deck",
+    cards: (deck.cards || []).map(deckJsonCard),
+  };
+  if (includeNotes) {
+    payload.description = deck.description || "";
+    payload.internal_notes = deck.internal_notes || "";
+    payload.external_notes = deck.external_notes || "";
+  }
+  return payload;
+}
+
+function openDeckJsonModal(deck, includeNotes = false) {
+  if (!deck) return;
+  els.deckJsonTitle.textContent = includeNotes ? "Export Full Deck" : "Export Deck List";
+  els.deckJsonText.value = JSON.stringify(deckJsonPayload(deck, includeNotes), null, 2);
+  setStatus("", "", els.deckJsonStatus);
+  els.deckJsonOverlay.hidden = false;
+  document.body.classList.add("modal-open");
+  els.deckJsonText.focus();
+  els.deckJsonText.select();
+}
+
+function closeDeckJsonModal() {
+  els.deckJsonOverlay.hidden = true;
+  document.body.classList.remove("modal-open");
+  els.deckJsonText.value = "";
+  setStatus("", "", els.deckJsonStatus);
+}
+
+async function copyDeckJson() {
+  const text = els.deckJsonText.value;
+  if (!text) return;
+  try {
+    await navigator.clipboard.writeText(text);
+    setStatus("Deck JSON copied.", "success", els.deckJsonStatus);
+  } catch {
+    els.deckJsonText.focus();
+    els.deckJsonText.select();
+    setStatus("Deck JSON selected.", "", els.deckJsonStatus);
+  }
+}
+
+function openImportDeckModal() {
+  els.importDeckForm.reset();
+  state.pendingDeckImport = null;
+  renderDeckImportPreview([]);
+  setStatus("", "", els.importDeckStatus);
+  els.commitImportDeckButton.disabled = true;
+  els.importDeckOverlay.hidden = false;
+  document.body.classList.add("modal-open");
+  els.importDeckJsonText.focus();
+}
+
+function closeImportDeckModal() {
+  els.importDeckOverlay.hidden = true;
+  document.body.classList.remove("modal-open");
+  els.importDeckForm.reset();
+  state.pendingDeckImport = null;
+  renderDeckImportPreview([]);
+  els.commitImportDeckButton.disabled = true;
+  setStatus("", "", els.importDeckStatus);
+}
+
+function openExportDecksModal() {
+  setStatus("", "", els.exportDecksStatus);
+  els.exportDecksOverlay.hidden = false;
+  document.body.classList.add("modal-open");
+}
+
+function closeExportDecksModal() {
+  els.exportDecksOverlay.hidden = true;
+  document.body.classList.remove("modal-open");
+  setStatus("", "", els.exportDecksStatus);
+}
+
+function downloadDecks(format) {
+  const endpoint = format === "csv" ? "/api/decks/export.csv" : "/api/decks/export.json";
+  window.location.href = endpoint;
+  setStatus(`Preparing ${format.toUpperCase()} download...`, "success", els.exportDecksStatus);
+}
+
+function deckImportFormat() {
+  return els.importDeckForm.deck_import_format?.value || "json";
+}
+
+function deckImportPayloadFromText(text) {
+  return {
+    format: deckImportFormat(),
+    content: text,
+  };
+}
+
+function renderDeckImportPreview(decks = []) {
+  if (!decks.length) {
+    els.importDeckPreview.hidden = true;
+    els.importDeckPreview.innerHTML = "";
+    return;
+  }
+  els.importDeckPreview.hidden = false;
+  els.importDeckPreview.innerHTML = `
+    <div class="deck-import-preview-head">
+      <strong>${integer.format(decks.length)} deck${decks.length === 1 ? "" : "s"} found</strong>
+      <span>Rename any rows marked for review, then import.</span>
+    </div>
+    <div class="deck-import-list">
+      ${decks.map((deck) => `
+        <article class="deck-import-row ${deck.issues?.length ? "needs-review" : ""}" data-import-index="${escapeHtml(deck.index)}">
+          <div>
+            <label>
+              Deck name
+              <input type="text" maxlength="20" value="${escapeHtml(deck.name || "")}" data-import-name="${escapeHtml(deck.index)}">
+            </label>
+            ${deck.issues?.length ? `<p>${escapeHtml(deck.issues.join(" "))}</p>` : `<p>Ready to import.</p>`}
+          </div>
+          <span>${integer.format(deck.card_count || 0)} card${Number(deck.card_count || 0) === 1 ? "" : "s"}</span>
+        </article>
+      `).join("")}
+    </div>
+  `;
+}
+
+function deckImportNamesFromPreview() {
+  const names = new Map();
+  for (const input of els.importDeckPreview.querySelectorAll("[data-import-name]")) {
+    names.set(Number(input.dataset.importName), input.value.trim().replace(/\s+/g, " "));
+  }
+  return names;
+}
+
+function containsDisallowedNameWord(value) {
+  const normalized = String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const tokens = normalized.split(/\s+/).filter(Boolean);
+  const compact = tokens.join("");
+  return tokens.some((token) => disallowedNameWords.has(token))
+    || Array.from(disallowedNameWords).some((word) => word.length >= 4 && compact.includes(word));
+}
+
+function deckImportClientNameIssues(decks) {
+  const issues = new Map();
+  const seen = new Map();
+  const existingNames = new Set((state.decks || []).map((deck) => String(deck.name || "").trim().replace(/\s+/g, " ").toLowerCase()).filter(Boolean));
+  for (const deck of decks) {
+    const name = String(deck.name || "").trim().replace(/\s+/g, " ");
+    const deckIssues = [];
+    if (!name) deckIssues.push("Deck name is required.");
+    if (name.length > 20) deckIssues.push("Deck name must be 20 characters or fewer.");
+    if (containsDisallowedNameWord(name)) deckIssues.push("Deck name contains language that is not allowed.");
+    const lowerName = name.toLowerCase();
+    if (lowerName) {
+      if (seen.has(lowerName)) {
+        deckIssues.push("Deck name is duplicated in this import.");
+        issues.set(seen.get(lowerName), [...(issues.get(seen.get(lowerName)) || []), "Deck name is duplicated in this import."]);
+      } else {
+        seen.set(lowerName, deck.index);
+      }
+      if (existingNames.has(lowerName)) {
+        deckIssues.push("Deck name already exists in your account.");
+      }
+    }
+    if (deckIssues.length) issues.set(deck.index, deckIssues);
+  }
+  return issues;
+}
+
+function applyDeckImportPreviewNames() {
+  if (!state.pendingDeckImport) return [];
+  const names = deckImportNamesFromPreview();
+  return state.pendingDeckImport.normalized_decks.map((deck) => ({
+    ...deck,
+    name: names.get(Number(deck.index)) || deck.name,
+  }));
+}
+
+async function previewDeckImport() {
+  const text = els.importDeckJsonText.value.trim();
+  if (!text) {
+    setStatus("Paste or upload deck JSON/CSV first.", "error", els.importDeckStatus);
+    return;
+  }
+  state.pendingDeckImport = null;
+  els.commitImportDeckButton.disabled = true;
+  setStatus("Reviewing import...", "", els.importDeckStatus);
+  await loadDecks();
+  const preview = await api("/api/decks/import/preview", {
+    method: "POST",
+    body: JSON.stringify(deckImportPayloadFromText(text)),
+  });
+  state.pendingDeckImport = preview;
+  renderDeckImportPreview(preview.decks || []);
+  const needsReview = (preview.decks || []).some((deck) => deck.needs_rename || deck.issues?.length);
+  els.commitImportDeckButton.disabled = needsReview;
+  setStatus(
+    needsReview ? "Rename the highlighted decks before importing." : "Import looks good.",
+    needsReview ? "error" : "success",
+    els.importDeckStatus,
+  );
+}
+
+function refreshDeckImportReviewState() {
+  if (!state.pendingDeckImport) return;
+  const decks = applyDeckImportPreviewNames();
+  const issues = deckImportClientNameIssues(decks);
+  const previewDecks = (state.pendingDeckImport.decks || []).map((deck) => {
+    const renamed = decks.find((item) => Number(item.index) === Number(deck.index));
+    return {
+      ...deck,
+      name: renamed?.name || "",
+      issues: issues.get(Number(deck.index)) || [],
+      needs_rename: issues.has(Number(deck.index)),
+    };
+  });
+  renderDeckImportPreview(previewDecks);
+  els.commitImportDeckButton.disabled = previewDecks.some((deck) => deck.needs_rename);
+  if (els.commitImportDeckButton.disabled) {
+    setStatus("Resolve highlighted deck names before importing.", "error", els.importDeckStatus);
+  } else {
+    setStatus("Names look good. Ready to import.", "success", els.importDeckStatus);
+  }
+}
+
+async function commitDeckImport() {
+  if (!state.pendingDeckImport) {
+    await previewDeckImport();
+    if (!state.pendingDeckImport || els.commitImportDeckButton.disabled) return;
+  }
+  const decks = applyDeckImportPreviewNames();
+  const issues = deckImportClientNameIssues(decks);
+  if (issues.size) {
+    refreshDeckImportReviewState();
+    return;
+  }
+  setStatus("Importing decks...", "", els.importDeckStatus);
+  const result = await api("/api/decks/import/commit", {
+    method: "POST",
+    body: JSON.stringify({ decks }),
+  });
+  closeImportDeckModal();
+  await loadDecks();
+  if (result.decks?.length === 1) {
+    await openDeckPage(result.decks[0].id);
+  } else {
+    setStatus(`Imported ${integer.format(result.imported || 0)} decks.`, "success", els.decksStatus);
+  }
+}
+
 function todayValue() {
   const now = new Date();
   const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
@@ -2808,6 +3159,14 @@ function closeSettingsModal() {
 function renderSettingsPage() {
   if (!els.settingsPageForm) return;
   const settings = state.settings || defaultSettings();
+  const user = state.user || {};
+  els.settingsPageForm.name.value = user.name || "";
+  els.settingsPageForm.public_email.value = user.public_email || "";
+  els.settingsPageForm.contact_whatsapp.value = user.contact_whatsapp || "";
+  els.settingsPageForm.contact_signal.value = user.contact_signal || "";
+  els.settingsPageForm.contact_telegram.value = user.contact_telegram || "";
+  els.settingsPageForm.contact_discord.value = user.contact_discord || "";
+  els.settingsPageForm.contact_website.value = user.contact_website || "";
   els.settingsPageForm.language.value = settings.language || "en";
   els.settingsPageForm.theme.value = settings.theme || "light";
   if (els.settingsAccountEmail) {
@@ -2837,11 +3196,13 @@ function renderDecks(decks) {
   }
   for (const deck of decks) {
     const item = document.createElement("button");
-    item.className = "deck-card";
+    const previewImages = uniqueDeckPreviewImages(deck);
+    item.className = `deck-card${previewImages.length ? " has-deck-preview" : ""}`;
     item.type = "button";
     item.dataset.deckId = deck.id;
     item.setAttribute("aria-label", `Open ${deck.name}`);
     item.innerHTML = `
+      ${deckPreviewImagesHtml(previewImages)}
       <div>
         <p class="eyebrow">Deck</p>
         <h3>${escapeHtml(deck.name)}</h3>
@@ -2858,23 +3219,174 @@ function renderDecks(decks) {
   }
 }
 
+function uniqueDeckPreviewImages(deck) {
+  return Array.from(new Set((deck.preview_images || []).filter(Boolean))).slice(0, 5);
+}
+
+function deckPreviewImagesHtml(images) {
+  if (!images.length) return "";
+  return `
+    <div class="deck-card-art-stack" aria-hidden="true">
+      ${images.map((src, index) => `<img src="${escapeHtml(src)}" alt="" style="--slot:${index};">`).join("")}
+    </div>
+  `;
+}
+
 function renderDeckCardsEditable(deck) {
   const cards = deck.cards || [];
   if (!cards.length) {
     return '<div class="empty-state">No cards in this deck yet.</div>';
   }
   return cards.map((card) => `
-    <article class="deck-card-row">
+    <article class="deck-card-row deck-card-preview-trigger ${Number(card.short_quantity || 0) > 0 ? "is-short" : ""}" role="button" tabindex="0" data-card-id="${escapeHtml(card.scryfall_id || card.card_id || "")}" data-variant="${escapeHtml(card.variant || "Normal")}">
       <img src="${escapeHtml(card.image_small || card.image_normal || "")}" alt="">
       <div>
         <strong>${escapeHtml(cardTitle(card))}</strong>
         <span>${escapeHtml(card.set_name || "")} #${escapeHtml(card.collector_number || "")} - ${escapeHtml(card.variant || "Normal")}</span>
         <div class="deck-card-tags">${cardMetadataPillsHtml(card)}</div>
+        ${deckInventoryStatusHtml(card)}
       </div>
       <b>Qty ${integer.format(deckQuantity(card))}</b>
       <button class="remove-deck-card-button" type="button" data-card-id="${escapeHtml(card.scryfall_id || card.card_id || "")}" data-variant="${escapeHtml(card.variant || "Normal")}" aria-label="Remove card from deck" title="Remove card"><span class="trash-icon" aria-hidden="true"></span></button>
     </article>
   `).join("");
+}
+
+function deckPreviewCardByRow(row, cards) {
+  return (cards || []).find((candidate) => (
+    (candidate.scryfall_id || candidate.card_id) === row.dataset.cardId
+    && (candidate.variant || "Normal") === (row.dataset.variant || "Normal")
+  ));
+}
+
+function wireDeckCardPreviewRows(container, cards) {
+  if (!container) return;
+  for (const row of container.querySelectorAll(".deck-card-preview-trigger")) {
+    const open = () => {
+      const card = deckPreviewCardByRow(row, cards);
+      if (card) {
+        openDeckCardPreviewModal(card).catch((error) => setStatus(error.message, "error"));
+      }
+    };
+    row.addEventListener("click", open);
+    row.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        open();
+      }
+    });
+  }
+}
+
+function closeDeckCardPreviewModal() {
+  els.deckCardPreviewOverlay.hidden = true;
+  if (!document.querySelector(".modal-overlay:not([hidden])")) {
+    document.body.classList.remove("modal-open");
+  }
+  els.deckCardPreviewShell.innerHTML = "";
+}
+
+function closeScryfallJsonModal() {
+  els.scryfallJsonOverlay.hidden = true;
+  els.scryfallJsonText.value = "";
+  setStatus("", "", els.scryfallJsonStatus);
+  if (!document.querySelector(".modal-overlay:not([hidden])")) {
+    document.body.classList.remove("modal-open");
+  }
+}
+
+async function openScryfallJsonModal(card) {
+  const cardId = card.scryfall_id || card.card_id;
+  if (!cardId) return;
+  els.scryfallJsonTitle.textContent = `${cardTitle(card)} JSON`;
+  els.scryfallJsonText.value = "Loading Scryfall JSON...";
+  setStatus("", "", els.scryfallJsonStatus);
+  els.scryfallJsonOverlay.hidden = false;
+  document.body.classList.add("modal-open");
+  try {
+    const payload = await api(`/api/cards/${encodeURIComponent(cardId)}/scryfall-json`);
+    els.scryfallJsonText.value = JSON.stringify(payload, null, 2);
+    els.scryfallJsonText.focus();
+    els.scryfallJsonText.select();
+  } catch (error) {
+    els.scryfallJsonText.value = "";
+    setStatus(error.message, "error", els.scryfallJsonStatus);
+  }
+}
+
+function renderDeckCardPreviewModal(card, sourceCard) {
+  const specialClass = isSpecialVariant(card.variant) ? " is-special" : "";
+  const deckQty = deckQuantity(sourceCard || card);
+  els.deckCardPreviewTitle.textContent = cardTitle(card);
+  els.deckCardPreviewShell.innerHTML = `
+    <article class="shared-card deck-card-preview-card${specialClass}">
+      <div class="card-detail-media">
+        <a class="shared-card-art" href="${escapeHtml(card.scryfall_uri || "#")}" target="_blank" rel="noreferrer" title="Open on Scryfall">
+          <img src="${escapeHtml(card.image_normal || card.image_small || "")}" alt="${escapeHtml(cardTitle(card))}">
+        </a>
+      </div>
+      <div class="shared-card-copy">
+        <p class="eyebrow">Deck card</p>
+        <h2>${escapeHtml(cardTitle(card))}</h2>
+        <div class="card-divider"></div>
+        <p>${escapeHtml(card.set_name || "")} #${escapeHtml(card.collector_number || "")} - ${escapeHtml(card.rarity || "unknown")}</p>
+        ${cardRulesName(card) ? `<p>Rules: ${escapeHtml(cardRulesName(card))}</p>` : ""}
+        <p>${escapeHtml(card.type_line || "")}</p>
+        <div class="detail-pill-row">
+          <span>${escapeHtml(card.variant || "Normal")}</span>
+          <span>${escapeHtml(cardTypeLabel(card))}</span>
+          <span>${escapeHtml(cardColorLabel(card))}</span>
+        </div>
+        <dl class="shared-card-details">
+          <div>
+            <dt>Deck Qty</dt>
+            <dd>${integer.format(deckQty)}</dd>
+          </div>
+          <div>
+            <dt>Owned</dt>
+            <dd>${integer.format(card.owned_quantity ?? card.quantity ?? 0)}</dd>
+          </div>
+          <div>
+            <dt>Market Price</dt>
+            <dd>${dollars.format(card.market_price ?? card.display_price ?? 0)}</dd>
+          </div>
+          <div>
+            <dt>Set</dt>
+            <dd>${escapeHtml(card.set_name || "")}</dd>
+          </div>
+        </dl>
+      </div>
+      <aside class="card-detail-toolbar" aria-label="Card actions">
+        <a class="detail-action-button detail-card-page-button" href="${escapeHtml(cardDetailUrl(card))}" aria-label="Open full card page" title="Open full card page"><span class="open-card-page-icon" aria-hidden="true"></span></a>
+        <a class="detail-action-button detail-scryfall-button" href="${escapeHtml(card.scryfall_uri || "#")}" target="_blank" rel="noreferrer" aria-label="View on Scryfall" title="View on Scryfall">S</a>
+        <button class="detail-action-button detail-scryfall-json-button" type="button" aria-label="View Scryfall JSON" title="View Scryfall JSON">{}</button>
+      </aside>
+    </article>
+  `;
+  els.deckCardPreviewShell.querySelector(".detail-scryfall-json-button")?.addEventListener("click", () => {
+    openScryfallJsonModal(card).catch((error) => setStatus(error.message, "error"));
+  });
+  els.deckCardPreviewOverlay.hidden = false;
+  document.body.classList.add("modal-open");
+}
+
+async function openDeckCardPreviewModal(sourceCard) {
+  const cardId = sourceCard.scryfall_id || sourceCard.card_id;
+  if (!cardId) return;
+  els.deckCardPreviewTitle.textContent = cardTitle(sourceCard);
+  els.deckCardPreviewShell.innerHTML = '<div class="empty-state">Loading card...</div>';
+  els.deckCardPreviewOverlay.hidden = false;
+  document.body.classList.add("modal-open");
+  try {
+    const variant = sourceCard.variant || "Normal";
+    const endpoint = state.user
+      ? `/api/cards/${encodeURIComponent(cardId)}/detail?variant=${encodeURIComponent(variant)}`
+      : `/api/cards/${encodeURIComponent(cardId)}/public?variant=${encodeURIComponent(variant)}`;
+    const detail = await api(endpoint);
+    renderDeckCardPreviewModal({ ...sourceCard, ...detail, variant }, sourceCard);
+  } catch (error) {
+    els.deckCardPreviewShell.innerHTML = `<div class="empty-state">${escapeHtml(error.message)}</div>`;
+  }
 }
 
 function renderDeckEditor(deck) {
@@ -2918,6 +3430,8 @@ function renderDeckEditor(deck) {
             <button class="primary-button" type="submit">Save</button>
             <button class="share-button" type="button" data-deck-action="email" aria-label="Email deck" title="Email deck"><span class="send-icon" aria-hidden="true"></span></button>
             <button class="share-button" type="button" data-deck-action="share" aria-label="Share deck" title="Share deck">&#8599;</button>
+            <button class="share-button deck-json-button" type="button" data-deck-action="json" aria-label="Copy deck JSON" title="Copy deck JSON">{}</button>
+            <button class="share-button" type="button" data-deck-action="full-json" aria-label="Export full deck JSON" title="Export full deck JSON"><span class="extract-json-icon" aria-hidden="true"></span></button>
           </div>
           <button class="danger-action-button deck-editor-delete" type="button" data-deck-action="delete">
             <span class="trash-icon" aria-hidden="true"></span>
@@ -2928,6 +3442,7 @@ function renderDeckEditor(deck) {
       </aside>
     </section>
   `;
+  wireDeckCardPreviewRows(els.deckEditorShell.querySelector(".deck-editor-card-list"), cards);
   const status = els.deckEditorShell.querySelector("#deckEditorStatus");
   els.deckEditorShell.querySelector("#deckEditorForm").addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -2952,6 +3467,8 @@ function renderDeckEditor(deck) {
   els.deckEditorShell.querySelector('[data-deck-action="add-card"]').addEventListener("click", openDeckCardSearchModal);
   els.deckEditorShell.querySelector('[data-deck-action="email"]').addEventListener("click", () => openEmailDeckModal(state.activeDeck));
   els.deckEditorShell.querySelector('[data-deck-action="share"]').addEventListener("click", () => openDeckShareModal(state.activeDeck));
+  els.deckEditorShell.querySelector('[data-deck-action="json"]').addEventListener("click", () => openDeckJsonModal(state.activeDeck, false));
+  els.deckEditorShell.querySelector('[data-deck-action="full-json"]').addEventListener("click", () => openDeckJsonModal(state.activeDeck, true));
   els.deckEditorShell.querySelector('[data-deck-action="delete"]').addEventListener("click", () => {
     deleteActiveDeck().catch((error) => {
       status.textContent = error.message;
@@ -2959,7 +3476,8 @@ function renderDeckEditor(deck) {
     });
   });
   for (const button of els.deckEditorShell.querySelectorAll(".remove-deck-card-button")) {
-    button.addEventListener("click", () => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
       const card = cards.find((candidate) => (
         (candidate.scryfall_id || candidate.card_id) === button.dataset.cardId
         && (candidate.variant || "Normal") === (button.dataset.variant || "Normal")
@@ -3013,20 +3531,26 @@ function renderDeckDetail(deck, readonly = false) {
   }
   for (const card of cards) {
     const row = document.createElement("article");
-    row.className = "deck-card-row";
+    row.className = `deck-card-row deck-card-preview-trigger ${Number(card.short_quantity || 0) > 0 ? "is-short" : ""}`;
+    row.setAttribute("role", "button");
+    row.tabIndex = 0;
+    row.dataset.cardId = card.scryfall_id || card.card_id || "";
+    row.dataset.variant = card.variant || "Normal";
     row.innerHTML = `
       <img src="${escapeHtml(card.image_small || card.image_normal || "")}" alt="">
       <div>
         <strong>${escapeHtml(cardTitle(card))}</strong>
         <span>${escapeHtml(card.set_name || "")} #${escapeHtml(card.collector_number || "")} - ${escapeHtml(card.variant || "Normal")}</span>
         <div class="deck-card-tags">${cardMetadataPillsHtml(card)}</div>
+        ${deckInventoryStatusHtml(card)}
       </div>
       <b>Qty ${integer.format(deckQuantity(card))}</b>
       ${readonly ? "" : '<button class="remove-deck-card-button" type="button" aria-label="Remove card from deck" title="Remove card"><span class="trash-icon" aria-hidden="true"></span></button>'}
     `;
     if (!readonly) {
       const removeButton = row.querySelector(".remove-deck-card-button");
-      removeButton.addEventListener("click", () => {
+      removeButton.addEventListener("click", (event) => {
+        event.stopPropagation();
         removeCardFromActiveDeck(card).catch((error) => {
           els.decksStatus.textContent = error.message;
         });
@@ -3034,6 +3558,7 @@ function renderDeckDetail(deck, readonly = false) {
     }
     els.deckDetailCards.appendChild(row);
   }
+  wireDeckCardPreviewRows(els.deckDetailCards, cards);
 }
 
 async function openDeckDetailModal(deckId) {
@@ -3067,11 +3592,22 @@ function deckQuantity(card) {
   return Number(card.deck_quantity ?? card.quantity ?? 0);
 }
 
+function deckInventoryStatusHtml(card) {
+  const needed = deckQuantity(card);
+  const owned = Number(card.owned_quantity ?? card.quantity ?? 0);
+  const short = Math.max(0, Number(card.short_quantity ?? needed - owned));
+  const className = short > 0 ? "deck-inventory-status is-short" : "deck-inventory-status";
+  const text = short > 0
+    ? `Need ${integer.format(short)} more - Owned ${integer.format(owned)} / Deck ${integer.format(needed)}`
+    : `Owned ${integer.format(owned)} / Deck ${integer.format(needed)}`;
+  return `<span class="${className}">${escapeHtml(text)}</span>`;
+}
+
 function openDeckCardSearchModal() {
   if (!state.activeDeck) return;
   els.deckCardSearchForm.reset();
   els.deckCardSearchResults.innerHTML = "";
-  els.deckCardSearchStatus.textContent = "Search owned cards not already in this deck.";
+  els.deckCardSearchStatus.textContent = "Search Scryfall for any card to add to this deck.";
   els.deckCardSearchTitle.textContent = `Add to ${state.activeDeck.name || "Deck"}`;
   els.deckCardSearchOverlay.hidden = false;
   document.body.classList.add("modal-open");
@@ -3091,12 +3627,16 @@ function closeDeckCardSearchModal(options = {}) {
 function renderDeckCardSearchResults(cards) {
   els.deckCardSearchResults.innerHTML = "";
   if (!cards.length) {
-    els.deckCardSearchResults.innerHTML = '<div class="empty-state">No matching owned cards are available for this deck.</div>';
+    els.deckCardSearchResults.innerHTML = '<div class="empty-state">No matching Scryfall cards found.</div>';
     return;
   }
   for (const card of cards) {
-    const available = Math.max(1, Number(card.available_deck_quantity ?? card.quantity ?? 1));
-    const current = Number(card.deck_quantity || 0);
+    const current = Number(card.active_deck_quantity || 0);
+    const owned = Number(card.owned_quantity || 0);
+    const deckText = [
+      current ? `${integer.format(current)} already in this deck` : "",
+      `Owned ${integer.format(owned)}`,
+    ].filter(Boolean).join(" - ");
     const row = document.createElement("article");
     row.className = "deck-card-search-result";
     row.innerHTML = `
@@ -3104,18 +3644,18 @@ function renderDeckCardSearchResults(cards) {
       <span>
         <strong>${escapeHtml(cardTitle(card))}</strong>
         <small>${escapeHtml(card.set_name || "")} #${escapeHtml(card.collector_number || "")} - ${escapeHtml(card.variant || "Normal")}</small>
-        <small>${current ? `${integer.format(current)} already in deck - ` : ""}${integer.format(available)} available to add</small>
+        <small>${escapeHtml(deckText)}</small>
         <span class="deck-card-tags">${cardMetadataPillsHtml(card)}</span>
       </span>
       <label class="deck-quantity-field">
         Qty
-        <input type="number" min="1" max="${available}" step="1" value="1" aria-label="Quantity to add">
+        <input type="number" min="1" max="99" step="1" value="1" aria-label="Quantity to add">
       </label>
       <button class="primary-button deck-add-card-button" type="button">Add</button>
     `;
     const input = row.querySelector("input");
     row.querySelector(".deck-add-card-button").addEventListener("click", () => {
-      addOwnedCardToActiveDeck(card, Number(input.value || 1)).catch((error) => {
+      addCardToActiveDeck(card, Number(input.value || 1)).catch((error) => {
         els.deckCardSearchStatus.textContent = error.message;
       });
     });
@@ -3123,7 +3663,7 @@ function renderDeckCardSearchResults(cards) {
   }
 }
 
-async function searchOwnedCardsForDeck() {
+async function searchCardsForDeck() {
   if (!state.activeDeck) return;
   const query = els.deckCardSearchInput.value.trim();
   if (query.length < 2) {
@@ -3131,30 +3671,24 @@ async function searchOwnedCardsForDeck() {
     els.deckCardSearchResults.innerHTML = "";
     return;
   }
-  els.deckCardSearchStatus.textContent = "Searching your collection...";
-  const params = new URLSearchParams({
-    search: query,
-    owned: "owned",
-    sort: "name",
-    limit: "250",
-  });
-  const data = await api(`/api/cards?${params.toString()}`);
+  els.deckCardSearchStatus.textContent = "Searching Scryfall...";
+  const language = (state.settings && state.settings.language) || "en";
+  const data = await api(`/api/scryfall/search?q=${encodeURIComponent(query)}&lang=${encodeURIComponent(language)}&order=name`);
   const deckQuantities = activeDeckQuantities();
-  const cards = (data.cards || []).filter((card) => {
-    const inDeck = deckQuantities.get(deckCardKey(card)) || 0;
-    const available = Number(card.quantity || 0) - inDeck;
-    card.deck_quantity = inDeck;
-    card.available_deck_quantity = available;
-    return available > 0;
+  const cards = (data.cards || []).map((card) => {
+    const activeDeckQuantity = deckQuantities.get(deckCardKey(card)) || 0;
+    card.active_deck_quantity = activeDeckQuantity;
+    card.variant = card.variant || "Normal";
+    return card;
   });
-  els.deckCardSearchStatus.textContent = `${integer.format(cards.length)} available match${cards.length === 1 ? "" : "es"}.`;
+  els.deckCardSearchStatus.textContent = `${integer.format(cards.length)} match${cards.length === 1 ? "" : "es"}.`;
   renderDeckCardSearchResults(cards);
 }
 
-async function addOwnedCardToActiveDeck(card, quantity = 1) {
+async function addCardToActiveDeck(card, quantity = 1) {
   if (!state.activeDeck) return;
   const deckId = state.activeDeck.id;
-  const max = Math.max(1, Number(card.available_deck_quantity ?? card.quantity ?? 1));
+  const max = 99;
   const selectedQuantity = Math.min(Math.max(1, Number(quantity || 1)), max);
   await api(`/api/decks/${encodeURIComponent(deckId)}/cards`, {
     method: "POST",
@@ -3170,7 +3704,7 @@ async function addOwnedCardToActiveDeck(card, quantity = 1) {
   renderActiveDeck(deck);
   await loadDecks();
   els.deckCardSearchStatus.textContent = `Added ${integer.format(selectedQuantity)} ${cardTitle(card)}.`;
-  await searchOwnedCardsForDeck();
+  await searchCardsForDeck();
 }
 
 async function removeCardFromActiveDeck(card) {
@@ -3215,6 +3749,13 @@ async function loadDecks() {
 
 function openAddDeckModal() {
   els.addDeckForm.reset();
+  if (!els.assignDeckOverlay.hidden) {
+    els.addDeckOverlay.classList.add("modal-overlay-stacked");
+    state.returnToAssignDeck = true;
+  } else {
+    els.addDeckOverlay.classList.remove("modal-overlay-stacked");
+    state.returnToAssignDeck = false;
+  }
   els.addDeckOverlay.hidden = false;
   document.body.classList.add("modal-open");
   els.addDeckForm.querySelector('[name="name"]').focus();
@@ -3222,7 +3763,11 @@ function openAddDeckModal() {
 
 function closeAddDeckModal() {
   els.addDeckOverlay.hidden = true;
-  document.body.classList.remove("modal-open");
+  els.addDeckOverlay.classList.remove("modal-overlay-stacked");
+  if (els.assignDeckOverlay.hidden) {
+    document.body.classList.remove("modal-open");
+  }
+  state.returnToAssignDeck = false;
   els.addDeckForm.reset();
 }
 
@@ -3248,6 +3793,56 @@ function renderAssignDeckCards(deck = null) {
   }).join("");
 }
 
+function selectCardForDetailAssignment(card) {
+  clearSelectedCards();
+  const containerQuantity = containerMemberships(card).reduce((total, container) => total + Number(container.quantity || 0), 0);
+  state.selectedCards.set(cardSelectionKey(card), {
+    card_id: card.scryfall_id,
+    variant: card.variant || "Normal",
+    name: cardTitle(card),
+    quantity: Number(card.quantity || 0),
+    unassigned_quantity: Number(card.unassigned_quantity ?? Math.max(0, Number(card.quantity || 0) - containerQuantity)),
+    saleable_quantity: Number(card.saleable_quantity ?? card.quantity ?? 0),
+    deck_quantity: deckMemberships(card).reduce((total, deck) => total + Number(deck.deck_quantity || 0), 0),
+    display_price: Number(card.display_price || card.market_price || 0),
+    sale_quantity: Number(card.sale_quantity || 0),
+    sale_price: Number(card.sale_price || card.display_price || card.market_price || 0),
+    card_condition: conditionText(card),
+    condition_inventory: Array.isArray(card.condition_inventory) ? card.condition_inventory : [],
+    image_small: card.image_small || "",
+    image_normal: card.image_normal || "",
+  });
+  updateBulkBar();
+}
+
+async function openDetailAddToDeckModal(card) {
+  if (!state.user) {
+    openAuthModal("login", "Log in to add this card to a deck.");
+    return;
+  }
+  selectCardForDetailAssignment(card);
+  await openAssignDeckModal();
+}
+
+async function openDetailAddToContainerModal(card) {
+  if (!state.user) {
+    openAuthModal("login", "Log in to store this card in a container.");
+    return;
+  }
+  selectCardForDetailAssignment(card);
+  await openAssignContainerModal();
+}
+
+function openSaleManagementForCard(card) {
+  if (!state.user) {
+    openAuthModal("login", "Log in to manage sale listings.");
+    return;
+  }
+  els.saleSearchInput.value = cardTitle(card);
+  activatePage("for-sale", { push: true });
+  setStatus(`Showing sale listings for ${cardTitle(card)}.`, "success", els.saleStatus);
+}
+
 async function refreshAssignDeckCardsForSelectedDeck() {
   const deckId = els.assignDeckForm.deck_id.value;
   if (!deckId) {
@@ -3258,9 +3853,7 @@ async function refreshAssignDeckCardsForSelectedDeck() {
   renderAssignDeckCards(deck);
 }
 
-async function openAssignDeckModal() {
-  if (!state.selectedCards.size) return;
-  const decks = await loadDecks();
+function populateAssignDeckSelect(decks) {
   const select = els.assignDeckForm.deck_id;
   select.innerHTML = "";
   if (!decks.length) {
@@ -3268,14 +3861,21 @@ async function openAssignDeckModal() {
     option.value = "";
     option.textContent = "Create a deck first";
     select.appendChild(option);
-  } else {
-    for (const deck of decks) {
-      const option = document.createElement("option");
-      option.value = deck.id;
-      option.textContent = `${deck.name} (${integer.format(deck.card_count || 0)})`;
-      select.appendChild(option);
-    }
+    return;
   }
+  for (const deck of decks) {
+    const option = document.createElement("option");
+    option.value = deck.id;
+    option.textContent = `${deck.name} (${integer.format(deck.card_count || 0)})`;
+    select.appendChild(option);
+  }
+}
+
+async function openAssignDeckModal() {
+  if (!state.selectedCards.size) return;
+  const decks = await loadDecks();
+  const select = els.assignDeckForm.deck_id;
+  populateAssignDeckSelect(decks);
   if (decks.length) {
     await refreshAssignDeckCardsForSelectedDeck();
   } else {
@@ -3555,7 +4155,12 @@ async function loadContainers() {
 
 function openAddContainerModal() {
   state.editingContainer = null;
-  els.addContainerOverlay.classList.remove("modal-overlay-stacked");
+  if (!els.containerDetailOverlay.hidden || !els.assignContainerOverlay.hidden) {
+    els.addContainerOverlay.classList.add("modal-overlay-stacked");
+  } else {
+    els.addContainerOverlay.classList.remove("modal-overlay-stacked");
+  }
+  state.returnToAssignContainer = !els.assignContainerOverlay.hidden;
   els.addContainerForm.reset();
   els.addContainerForm.id.value = "";
   els.addContainerForm.storage_type.value = "other";
@@ -3591,9 +4196,10 @@ function openEditContainerModal(container) {
 function closeAddContainerModal() {
   els.addContainerOverlay.hidden = true;
   els.addContainerOverlay.classList.remove("modal-overlay-stacked");
-  if (els.containerDetailOverlay.hidden) {
+  if (els.containerDetailOverlay.hidden && els.assignContainerOverlay.hidden) {
     document.body.classList.remove("modal-open");
   }
+  state.returnToAssignContainer = false;
   state.editingContainer = null;
   els.addContainerForm.reset();
 }
@@ -3629,6 +4235,15 @@ async function openAssignContainerModal() {
   if (!state.selectedCards.size) return;
   const containers = await loadContainers();
   const select = els.assignContainerForm.container_id;
+  populateAssignContainerSelect(containers);
+  renderAssignContainerCards();
+  els.assignContainerOverlay.hidden = false;
+  document.body.classList.add("modal-open");
+  select.focus();
+}
+
+function populateAssignContainerSelect(containers) {
+  const select = els.assignContainerForm.container_id;
   select.innerHTML = "";
   if (!containers.length) {
     const option = document.createElement("option");
@@ -3643,10 +4258,6 @@ async function openAssignContainerModal() {
       select.appendChild(option);
     }
   }
-  renderAssignContainerCards();
-  els.assignContainerOverlay.hidden = false;
-  document.body.classList.add("modal-open");
-  select.focus();
 }
 
 function closeAssignContainerModal() {
@@ -3659,20 +4270,32 @@ function closeAssignContainerModal() {
 function renderSaleCards() {
   const cards = Array.from(state.selectedCards.values());
   els.saleCards.innerHTML = "";
+  const stats = {
+    rows: 0,
+    availableRows: 0,
+    blockedRows: 0,
+    totalAvailable: 0,
+    totalDeckQuantity: 0,
+    totalOwned: 0,
+  };
   if (!cards.length) {
     els.saleCards.innerHTML = '<div class="empty-state">Select owned cards first.</div>';
-    return;
+    return stats;
   }
   for (const card of cards) {
     const market = Number(card.display_price || 0);
     const buckets = Array.isArray(card.condition_inventory) ? card.condition_inventory : [];
+    const cardDeckQuantity = Number(card.deck_quantity || 0);
+    stats.totalOwned += Number(card.quantity || 0);
+    stats.totalDeckQuantity += cardDeckQuantity;
     const saleBuckets = buckets
       .map((bucket) => ({
         card_condition: bucket.card_condition || card.card_condition || "Near Mint",
         quantity: Number(bucket.quantity || 0),
-        sale_available_quantity: Number(bucket.sale_available_quantity ?? bucket.available_quantity ?? bucket.quantity ?? 0),
+        sale_available_quantity: Number(bucket.sale_available_quantity ?? bucket.quantity ?? 0),
         sale_quantity: Number(bucket.sale_quantity || 0),
         sale_price: Number(bucket.sale_price || card.sale_price || market || 0.01),
+        deck_reserved_quantity: Number(bucket.deck_reserved_quantity || 0),
       }))
       .filter((bucket) => bucket.quantity > 0);
     if (!saleBuckets.length && Number(card.quantity || 0) > 0) {
@@ -3682,6 +4305,7 @@ function renderSaleCards() {
         sale_available_quantity: Number(card.saleable_quantity ?? card.quantity ?? 0),
         sale_quantity: Number(card.sale_quantity || 0),
         sale_price: Number(card.sale_price || market || 0.01),
+        deck_reserved_quantity: cardDeckQuantity,
       });
     }
     for (const bucket of saleBuckets) {
@@ -3689,6 +4313,14 @@ function renderSaleCards() {
       const maxQuantity = Number(bucket.sale_available_quantity ?? bucket.quantity ?? 0);
       const existingQuantity = Number(bucket.sale_quantity || 0);
       const disabled = maxQuantity <= 0;
+      const deckReservedQuantity = Number(bucket.deck_reserved_quantity || 0);
+      stats.rows += 1;
+      stats.totalAvailable += Math.max(0, maxQuantity);
+      if (disabled) {
+        stats.blockedRows += 1;
+      } else {
+        stats.availableRows += 1;
+      }
       const row = document.createElement("article");
       row.className = "sale-modal-row";
       row.dataset.cardId = card.card_id;
@@ -3701,7 +4333,7 @@ function renderSaleCards() {
         <img src="${escapeHtml(card.image_small || card.image_normal || "")}" alt="">
         <div class="sale-modal-card-copy">
           <strong>${escapeHtml(card.name || "Card")}</strong>
-          <span>${escapeHtml(card.variant || "Normal")} - ${escapeHtml(condition)}${disabled ? " - remove from decks before selling" : Number(card.deck_quantity || 0) > 0 ? ` - ${integer.format(card.deck_quantity)} in decks` : ""}</span>
+          <span>${escapeHtml(card.variant || "Normal")} - ${escapeHtml(condition)}${disabled ? " - 0 available" : cardDeckQuantity > 0 ? ` - FYI: ${integer.format(cardDeckQuantity)} listed in decks` : ""}</span>
         </div>
         <label class="sale-readonly-field">
           Available Qty
@@ -3720,11 +4352,30 @@ function renderSaleCards() {
       els.saleCards.appendChild(row);
     }
   }
+  return stats;
+}
+
+function saleAvailabilityMessage(stats) {
+  if (!stats || !stats.rows) return "";
+  if (stats.totalAvailable <= 0) {
+    return "0 copies are available to sell for the selected card.";
+  }
+  if (stats.totalDeckQuantity > 0) {
+    return `FYI: ${integer.format(stats.totalDeckQuantity)} ${stats.totalDeckQuantity === 1 ? "copy is" : "copies are"} listed in decks. This listing will still use your actual collection inventory.`;
+  }
+  return "";
 }
 
 function openSaleModal() {
   if (!state.selectedCards.size) return;
-  renderSaleCards();
+  const stats = renderSaleCards();
+  const message = saleAvailabilityMessage(stats);
+  const tone = stats.totalAvailable <= 0 ? "error" : "";
+  setStatus(message, message ? tone : "", els.saleModalStatus);
+  const submitButton = els.saleForm.querySelector('button[type="submit"]');
+  if (submitButton) {
+    submitButton.disabled = stats.availableRows <= 0;
+  }
   els.saleOverlay.hidden = false;
   document.body.classList.add("modal-open");
 }
@@ -3735,7 +4386,7 @@ function selectedSaleCardFromDetail(card) {
     ? card.condition_inventory.filter((bucket) => (bucket.variant || variant) === variant)
     : [];
   const saleableQuantity = buckets.length
-    ? buckets.reduce((total, bucket) => total + Number(bucket.available_quantity ?? bucket.sale_available_quantity ?? bucket.quantity ?? 0), 0)
+    ? buckets.reduce((total, bucket) => total + Number(bucket.sale_available_quantity ?? bucket.quantity ?? 0), 0)
     : Number(card.saleable_quantity ?? card.quantity ?? 0);
   const deckQuantity = buckets.length
     ? buckets.reduce((total, bucket) => total + Number(bucket.deck_reserved_quantity || 0), 0)
@@ -3763,10 +4414,11 @@ function openSaleModalForCardDetail(card) {
     setStatus("Add this card to your collection before marking it for sale.", "error");
     return;
   }
+  const saleCard = selectedSaleCardFromDetail(card);
   const confirmed = window.confirm(`Mark ${cardTitle(card)} for sale?`);
   if (!confirmed) return;
   clearSelectedCards();
-  state.selectedCards.set(cardSelectionKey(card), selectedSaleCardFromDetail(card));
+  state.selectedCards.set(cardSelectionKey(card), saleCard);
   updateBulkBar();
   openSaleModal();
 }
@@ -3776,6 +4428,11 @@ function closeSaleModal() {
   document.body.classList.remove("modal-open");
   els.saleForm.reset();
   els.saleCards.innerHTML = "";
+  setStatus("", "", els.saleModalStatus);
+  const submitButton = els.saleForm.querySelector('button[type="submit"]');
+  if (submitButton) {
+    submitButton.disabled = false;
+  }
 }
 
 function openSoldModal(card) {
@@ -4049,6 +4706,7 @@ function renderCardDetail(card) {
   const canManageCollection = Boolean(state.user && !card.readonly);
   const hasDecks = deckMemberships(card).length > 0;
   const hasContainers = containerMemberships(card).length > 0;
+  const listedForSale = Number(card.sale_quantity || 0) > 0;
   const detailsHtml = owned ? `
           <div>
             <dt>Owned</dt>
@@ -4092,12 +4750,13 @@ function renderCardDetail(card) {
             <img src="${escapeHtml(card.image_normal || card.image_small || "")}" alt="${escapeHtml(cardTitle(card))}">
           </a>
           ${owned ? `<div class="detail-storage-actions">
-            <button class="detail-storage-button detail-decks-button" type="button" aria-label="View decks" title="${hasDecks ? "View decks" : "Not in any decks"}" ${hasDecks ? "" : "disabled"}>
-              <span class="deck-icon" aria-hidden="true"></span>
+            <button class="detail-storage-button detail-decks-button ${hasDecks ? "is-linked" : "is-add"}" type="button" aria-label="${hasDecks ? "View decks" : "Add to deck"}" title="${hasDecks ? "View decks" : "Add to deck"}">
+              ${hasDecks ? '<span class="deck-icon" aria-hidden="true"></span>' : '<span class="add-to-deck-icon" aria-hidden="true"></span>'}
             </button>
-            <button class="detail-storage-button detail-containers-button" type="button" aria-label="View containers" title="${hasContainers ? "View containers" : "Not stored in a container"}" ${hasContainers ? "" : "disabled"}>
-              ${containerIconHtml((containerMemberships(card)[0] || {}).storage_type)}
+            <button class="detail-storage-button detail-containers-button ${hasContainers ? "is-stored" : "is-missing-storage"}" type="button" aria-label="${hasContainers ? "View container" : "Not in a container"}" title="${hasContainers ? "View container" : "Not in a container - add to container"}">
+              ${hasContainers ? '<span class="storage-check-icon" aria-hidden="true"></span>' : '<span class="storage-x-icon" aria-hidden="true"></span>'}
             </button>
+            ${listedForSale ? '<button class="detail-storage-button detail-store-button" type="button" aria-label="Manage sale listing" title="Manage sale listing"><span class="sale-icon" aria-hidden="true"></span></button>' : ""}
           </div>` : ""}
         </div>
         <div class="shared-card-copy">
@@ -4199,8 +4858,21 @@ function renderCardDetail(card) {
   els.cardDetailShell.querySelector(".detail-delete-button")?.addEventListener("click", () => {
     deleteCardFromDetail(card).catch((error) => setStatus(error.message, "error"));
   });
-  els.cardDetailShell.querySelector(".detail-decks-button")?.addEventListener("click", () => openCardDecksModal(card));
-  els.cardDetailShell.querySelector(".detail-containers-button")?.addEventListener("click", () => openCardContainersModal(card));
+  els.cardDetailShell.querySelector(".detail-decks-button")?.addEventListener("click", () => {
+    if (hasDecks) {
+      openCardDecksModal(card);
+    } else {
+      openDetailAddToDeckModal(card).catch((error) => setStatus(error.message, "error"));
+    }
+  });
+  els.cardDetailShell.querySelector(".detail-containers-button")?.addEventListener("click", () => {
+    if (hasContainers) {
+      openCardContainersModal(card);
+    } else {
+      openDetailAddToContainerModal(card).catch((error) => setStatus(error.message, "error"));
+    }
+  });
+  els.cardDetailShell.querySelector(".detail-store-button")?.addEventListener("click", () => openSaleManagementForCard(card));
   els.cardDetailShell.querySelectorAll(".delete-movement-button").forEach((button) => {
     button.addEventListener("click", () => {
       deleteCardMovement(button).catch((error) => setStatus(error.message, "error"));
@@ -4517,12 +5189,13 @@ function deckRowsHtml(cards, emptyMessage = "No cards in this deck yet.") {
     return `<div class="empty-state">${escapeHtml(emptyMessage)}</div>`;
   }
   return cards.map((card) => `
-    <article class="deck-card-row">
+    <article class="deck-card-row deck-card-preview-trigger ${Number(card.short_quantity || 0) > 0 ? "is-short" : ""}" role="button" tabindex="0" data-card-id="${escapeHtml(card.scryfall_id || card.card_id || "")}" data-variant="${escapeHtml(card.variant || "Normal")}">
       <img src="${escapeHtml(card.image_small || card.image_normal || "")}" alt="">
       <div>
         <strong>${escapeHtml(cardTitle(card))}</strong>
         <span>${escapeHtml(card.set_name || "")} #${escapeHtml(card.collector_number || "")} - ${escapeHtml(card.variant || "Normal")}</span>
         <div class="deck-card-tags">${cardMetadataPillsHtml(card)}</div>
+        ${deckInventoryStatusHtml(card)}
       </div>
       <b>Qty ${integer.format(deckQuantity(card))}</b>
     </article>
@@ -4586,29 +5259,67 @@ async function toggleSharedDeckFavorite(deck, button) {
 
 async function importSharedDeck(deck, button) {
   if (!state.user) {
-    openAuthModal("login", "Log in to import another user's deck.");
+    openAuthModal("login", "Log in to save another user's deck.");
     return;
   }
-  if (!window.confirm(`Import "${deck.name || "this deck"}" into your account as a wishlist?`)) {
+  const defaultName = sharedDeckCopyName(deck);
+  const name = window.prompt("Save this shared deck to your Decks as:", defaultName);
+  if (name === null) {
     return;
+  }
+  const cleanName = name.trim();
+  if (!cleanName) {
+    setStatus("Deck name is required.", "error");
+    return;
+  }
+  if (cleanName.length > 20) {
+    setStatus("Deck name must be 20 characters or fewer.", "error");
+    return;
+  }
+  if (containsDisallowedNameWord(cleanName)) {
+    setStatus("Deck name contains language that is not allowed.", "error");
+    return;
+  }
+  const decks = await loadDecks();
+  let replace = false;
+  const duplicate = decks.find((existing) => String(existing.name || "").toLowerCase() === cleanName.toLowerCase());
+  if (duplicate) {
+    replace = window.confirm(`You already have a deck named "${cleanName}". Replace it with this shared deck?`);
+    if (!replace) return;
   }
   button.disabled = true;
   const original = button.innerHTML;
-  button.textContent = "Importing...";
+  button.textContent = "Saving...";
   try {
-    const result = await api(`/api/shared-decks/${encodeURIComponent(deck.share_id)}/import`, {
+    let result = await api(`/api/shared-decks/${encodeURIComponent(deck.share_id)}/import`, {
       method: "POST",
-      body: "{}",
+      body: JSON.stringify({ name: cleanName, replace }),
       promptLogin: true,
     });
-    const message = `Created wishlist "${result.wishlist?.name || "Imported Deck"}". ${integer.format(result.fulfilled || 0)} fulfilled, ${integer.format(result.missing || 0)} missing.`;
+    if (result.duplicate) {
+      const confirmed = window.confirm(`You already have a deck named "${result.name}". Replace it with this shared deck?`);
+      if (confirmed) {
+        result = await api(`/api/shared-decks/${encodeURIComponent(deck.share_id)}/import`, {
+          method: "POST",
+          body: JSON.stringify({ name: result.name, replace: true }),
+          promptLogin: true,
+        });
+      } else {
+        return;
+      }
+    }
+    const copiedDeck = result.deck || {};
+    const message = `${result.replaced ? "Replaced" : "Saved"} deck "${copiedDeck.name || cleanName}" with ${integer.format(result.imported || 0)} card${Number(result.imported || 0) === 1 ? "" : "s"}.`;
     const status = els.deckShareShell.querySelector(".shared-deck-action-status");
     if (status) {
       status.textContent = message;
       status.dataset.tone = "success";
     }
-    await loadWishlists();
+    await loadDecks();
     await refresh();
+    if (copiedDeck.id) {
+      await openDeckPage(copiedDeck.id);
+    }
   } catch (error) {
     const status = els.deckShareShell.querySelector(".shared-deck-action-status");
     if (status) {
@@ -4623,13 +5334,37 @@ async function importSharedDeck(deck, button) {
   }
 }
 
+function titleCaseDeckPrefix(value) {
+  return String(value || "")
+    .replace(/@.*$/, "")
+    .replace(/[^a-z0-9 ]+/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .split(" ")
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
+}
+
+function sharedDeckCopyName(deck) {
+  if (deck?._forcedName) return deck._forcedName;
+  const owner = titleCaseDeckPrefix(deck.owner_name || "User") || "User";
+  const deckName = String(deck.name || "Deck").replace(/\s+/g, " ").trim() || "Deck";
+  const combined = `${owner} ${deckName}`.trim();
+  if (combined.length <= 20) return combined;
+  if (owner.length >= 18) return owner.slice(0, 20).trim();
+  const prefix = `${owner} `;
+  const remaining = Math.max(1, 20 - prefix.length);
+  return `${prefix}${deckName.slice(0, remaining)}`.trim();
+}
+
 function renderSharedDeck(deck) {
   const cards = deck.cards || [];
   const cardCount = Number(deck.card_count || cards.reduce((total, card) => total + deckQuantity(card), 0));
   const actionHtml = deck.can_favorite || deck.can_import ? `
     <div class="shared-deck-actions" aria-label="Deck actions">
       ${deck.can_favorite ? `<button class="share-button shared-deck-favorite-button ${deck.favorite_deck ? "is-favorite" : ""}" type="button" aria-label="${deck.favorite_deck ? "Remove deck from favorites" : "Favorite this deck"}" title="${deck.favorite_deck ? "Remove from favorites" : "Favorite this deck"}">☆</button>` : ""}
-      ${deck.can_import ? `<button class="share-button shared-deck-import-button" type="button" aria-label="Import deck to wishlist" title="Import this deck into my account"><span class="copy-deck-icon" aria-hidden="true"></span></button>` : ""}
+      ${deck.can_import ? `<button class="share-button shared-deck-import-button" type="button" aria-label="Save to my Decks" title="Save to my Decks"><span class="copy-deck-icon" aria-hidden="true"></span></button>` : ""}
     </div>
     <div class="shared-deck-action-status status" aria-live="polite"></div>
   ` : "";
@@ -4668,6 +5403,7 @@ function renderSharedDeck(deck) {
   if (importButton) {
     importButton.addEventListener("click", () => importSharedDeck(deck, importButton));
   }
+  wireDeckCardPreviewRows(els.deckShareShell.querySelector(".shared-deck-list"), cards);
 }
 
 function renderSharedWishlist(wishlist) {
@@ -4711,6 +5447,18 @@ function renderSharedContainer(container) {
 
 function renderSharedStore(store) {
   const cards = store.cards || [];
+  const contacts = store.contacts || [];
+  const contactHtml = contacts.length ? `
+    <div class="store-contact-list" aria-label="Seller contact methods">
+      ${contacts.map((contact) => {
+        const value = escapeHtml(contact.value || "");
+        const label = escapeHtml(contact.label || "Contact");
+        return contact.href
+          ? `<a href="${escapeHtml(contact.href)}" target="${String(contact.href).startsWith("mailto:") ? "_self" : "_blank"}" rel="noreferrer"><strong>${label}</strong><span>${value}</span></a>`
+          : `<span><strong>${label}</strong><span>${value}</span></span>`;
+      }).join("")}
+    </div>
+  ` : "";
   const rows = cards.length ? cards.map((card) => `
     <article class="deck-card-row favorite-deck-share-row">
       <img src="${escapeHtml(card.image_small || card.image_normal || "")}" alt="">
@@ -4729,6 +5477,7 @@ function renderSharedStore(store) {
           <p class="eyebrow">FoilFolio store</p>
           <h2>${escapeHtml(store.seller_name || "Seller")}</h2>
           <span>${integer.format(store.card_count || cards.length)} listing${Number(store.card_count || cards.length) === 1 ? "" : "s"} - ${integer.format(store.sale_quantity || 0)} card${Number(store.sale_quantity || 0) === 1 ? "" : "s"} for sale</span>
+          ${contactHtml}
         </div>
       </div>
       <div class="deck-detail-list">
@@ -4986,6 +5735,12 @@ function wireEvents() {
       searchCatalog().catch((error) => setStatus(error.message, "error", els.catalogSearchStatus));
     }
   });
+  els.catalogHideOwnedFilter.addEventListener("change", () => {
+    if (!state.catalogSearchAllResults.length) return;
+    const stats = applyCatalogOwnedFilter();
+    renderCatalogSearchResults();
+    els.catalogSearchStatus.textContent = catalogSearchStatusText(stats);
+  });
 
   els.addCardButton.addEventListener("click", () => {
     if (!state.user) {
@@ -5009,6 +5764,8 @@ function wireEvents() {
     }
   });
   els.addDeckButton.addEventListener("click", openAddDeckModal);
+  els.importDeckButton.addEventListener("click", openImportDeckModal);
+  els.exportDecksButton.addEventListener("click", openExportDecksModal);
   els.addWishlistButton.addEventListener("click", openAddWishlistModal);
   els.addContainerButton.addEventListener("click", openAddContainerModal);
   els.refreshPriceSnapshotsButton?.addEventListener("click", () => {
@@ -5127,6 +5884,56 @@ function wireEvents() {
       closeAddDeckModal();
     }
   });
+  els.closeImportDeckButton.addEventListener("click", closeImportDeckModal);
+  els.cancelImportDeckButton.addEventListener("click", closeImportDeckModal);
+  els.closeExportDecksButton.addEventListener("click", closeExportDecksModal);
+  els.cancelExportDecksButton.addEventListener("click", closeExportDecksModal);
+  els.downloadDecksJsonButton.addEventListener("click", () => downloadDecks("json"));
+  els.downloadDecksCsvButton.addEventListener("click", () => downloadDecks("csv"));
+  els.exportDecksOverlay.addEventListener("click", (event) => {
+    if (event.target === els.exportDecksOverlay) {
+      closeExportDecksModal();
+    }
+  });
+  els.importDeckOverlay.addEventListener("click", (event) => {
+    if (event.target === els.importDeckOverlay) {
+      closeImportDeckModal();
+    }
+  });
+  els.importDeckFileInput.addEventListener("change", async () => {
+    const file = els.importDeckFileInput.files?.[0];
+    if (!file) return;
+    const text = await file.text();
+    els.importDeckJsonText.value = text;
+    const extension = file.name.toLowerCase().split(".").pop();
+    if (extension === "csv" || file.type.includes("csv")) {
+      els.importDeckForm.deck_import_format.value = "csv";
+    } else {
+      els.importDeckForm.deck_import_format.value = "json";
+    }
+    state.pendingDeckImport = null;
+    renderDeckImportPreview([]);
+    els.commitImportDeckButton.disabled = true;
+    setStatus("File loaded. Review it before importing.", "", els.importDeckStatus);
+  });
+  els.importDeckJsonText.addEventListener("input", () => {
+    state.pendingDeckImport = null;
+    renderDeckImportPreview([]);
+    els.commitImportDeckButton.disabled = true;
+    setStatus("", "", els.importDeckStatus);
+  });
+  els.importDeckPreview.addEventListener("change", (event) => {
+    if (event.target.matches("[data-import-name]")) {
+      refreshDeckImportReviewState();
+    }
+  });
+  els.reviewImportDeckButton.addEventListener("click", () => {
+    previewDeckImport().catch((error) => setStatus(error.message, "error", els.importDeckStatus));
+  });
+  els.importDeckForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    commitDeckImport().catch((error) => setStatus(error.message, "error", els.importDeckStatus));
+  });
   els.closeAddWishlistButton.addEventListener("click", closeAddWishlistModal);
   els.cancelAddWishlistButton.addEventListener("click", closeAddWishlistModal);
   els.addWishlistOverlay.addEventListener("click", (event) => {
@@ -5162,6 +5969,7 @@ function wireEvents() {
   });
   els.closeAssignDeckButton.addEventListener("click", closeAssignDeckModal);
   els.cancelAssignDeckButton.addEventListener("click", closeAssignDeckModal);
+  els.assignCreateDeckButton.addEventListener("click", openAddDeckModal);
   els.assignDeckForm.deck_id.addEventListener("change", () => {
     refreshAssignDeckCardsForSelectedDeck().catch((error) => {
       setStatus(error.message, "error", activeStatusTarget());
@@ -5173,6 +5981,19 @@ function wireEvents() {
     }
   });
   els.closeDeckDetailButton.addEventListener("click", closeDeckDetailModal);
+  els.closeDeckCardPreviewButton.addEventListener("click", closeDeckCardPreviewModal);
+  els.deckCardPreviewOverlay.addEventListener("click", (event) => {
+    if (event.target === els.deckCardPreviewOverlay) {
+      closeDeckCardPreviewModal();
+    }
+  });
+  els.closeScryfallJsonButton.addEventListener("click", closeScryfallJsonModal);
+  els.dismissScryfallJsonButton.addEventListener("click", closeScryfallJsonModal);
+  els.scryfallJsonOverlay.addEventListener("click", (event) => {
+    if (event.target === els.scryfallJsonOverlay) {
+      closeScryfallJsonModal();
+    }
+  });
   els.addDeckCardButton.addEventListener("click", openDeckCardSearchModal);
   els.emailDeckButton.addEventListener("click", () => {
     if (state.activeDeck) {
@@ -5196,7 +6017,7 @@ function wireEvents() {
   });
   els.deckCardSearchForm.addEventListener("submit", (event) => {
     event.preventDefault();
-    searchOwnedCardsForDeck().catch((error) => {
+    searchCardsForDeck().catch((error) => {
       els.deckCardSearchStatus.textContent = error.message;
     });
   });
@@ -5223,6 +6044,7 @@ function wireEvents() {
   });
   els.closeAssignContainerButton.addEventListener("click", closeAssignContainerModal);
   els.cancelAssignContainerButton.addEventListener("click", closeAssignContainerModal);
+  els.assignCreateContainerButton.addEventListener("click", openAddContainerModal);
   els.assignContainerOverlay.addEventListener("click", (event) => {
     if (event.target === els.assignContainerOverlay) {
       closeAssignContainerModal();
@@ -5322,6 +6144,14 @@ function wireEvents() {
       closeShareModal();
     }
   });
+  els.closeDeckJsonButton.addEventListener("click", closeDeckJsonModal);
+  els.dismissDeckJsonButton.addEventListener("click", closeDeckJsonModal);
+  els.copyDeckJsonButton.addEventListener("click", copyDeckJson);
+  els.deckJsonOverlay.addEventListener("click", (event) => {
+    if (event.target === els.deckJsonOverlay) {
+      closeDeckJsonModal();
+    }
+  });
   els.closeImportReviewButton.addEventListener("click", closeImportReviewModal);
   els.cancelImportReviewButton.addEventListener("click", closeImportReviewModal);
   els.importReviewOverlay.addEventListener("click", (event) => {
@@ -5360,6 +6190,15 @@ function wireEvents() {
     if (event.key === "Escape" && !els.shareOverlay.hidden) {
       closeShareModal();
     }
+    if (event.key === "Escape" && !els.deckJsonOverlay.hidden) {
+      closeDeckJsonModal();
+    }
+    if (event.key === "Escape" && !els.exportDecksOverlay.hidden) {
+      closeExportDecksModal();
+    }
+    if (event.key === "Escape" && !els.importDeckOverlay.hidden) {
+      closeImportDeckModal();
+    }
     if (event.key === "Escape" && !els.addDeckOverlay.hidden) {
       closeAddDeckModal();
     }
@@ -5380,6 +6219,14 @@ function wireEvents() {
     }
     if (event.key === "Escape" && !els.deckCardSearchOverlay.hidden) {
       closeDeckCardSearchModal({ keepDeckOpen: true });
+      return;
+    }
+    if (event.key === "Escape" && !els.scryfallJsonOverlay.hidden) {
+      closeScryfallJsonModal();
+      return;
+    }
+    if (event.key === "Escape" && !els.deckCardPreviewOverlay.hidden) {
+      closeDeckCardPreviewModal();
       return;
     }
     if (event.key === "Escape" && !els.deckDetailOverlay.hidden) {
@@ -5527,8 +6374,15 @@ function wireEvents() {
         body: JSON.stringify(payload),
       });
       els.decksStatus.textContent = `Added ${result.deck.name}.`;
+      const returnToAssignDeck = Boolean(state.returnToAssignDeck);
       closeAddDeckModal();
-      await loadDecks();
+      const decks = await loadDecks();
+      if (returnToAssignDeck && !els.assignDeckOverlay.hidden) {
+        populateAssignDeckSelect(decks);
+        els.assignDeckForm.deck_id.value = String(result.deck.id);
+        await refreshAssignDeckCardsForSelectedDeck();
+        els.assignDeckForm.deck_id.focus();
+      }
     } catch (error) {
       els.decksStatus.textContent = error.message;
     }
@@ -5638,8 +6492,15 @@ function wireEvents() {
         body: JSON.stringify(payload),
       });
       els.containersStatus.textContent = `${containerId ? "Updated" : "Added"} ${result.container.name}.`;
+      const returnToAssignContainer = Boolean(state.returnToAssignContainer);
       closeAddContainerModal();
-      await loadContainers();
+      const containers = await loadContainers();
+      if (returnToAssignContainer && !els.assignContainerOverlay.hidden) {
+        populateAssignContainerSelect(containers);
+        els.assignContainerForm.container_id.value = String(result.container.id);
+        renderAssignContainerCards();
+        els.assignContainerForm.container_id.focus();
+      }
       if (state.activeContainer && Number(state.activeContainer.id) === Number(result.container.id)) {
         renderContainerDetail(result.container);
       }
@@ -5732,11 +6593,11 @@ function wireEvents() {
       const max = Number(quantityInput?.max || 0);
       const askingPrice = Number(priceInput?.value || 0);
       if (quantity < 1 || quantity > max) {
-        setStatus(`Sale quantity must be between 1 and ${integer.format(max)}.`, "error");
+        setStatus(`Sale quantity must be between 1 and ${integer.format(max)}.`, "error", els.saleModalStatus);
         return;
       }
       if (askingPrice <= 0) {
-        setStatus("Asking price must be greater than $0.00.", "error");
+        setStatus("Asking price must be greater than $0.00.", "error", els.saleModalStatus);
         return;
       }
       cards.push({
@@ -5748,7 +6609,14 @@ function wireEvents() {
       });
     }
     if (!cards.length) {
-      setStatus("Keep at least one checked card to mark for sale.", "error");
+      const hasZeroAvailableRows = rows.some((row) => Number(row.querySelector('input[name="quantity"]')?.max || 0) <= 0);
+      setStatus(
+        hasZeroAvailableRows
+          ? "0 copies are available to sell for the selected card."
+          : "Keep at least one checked card to mark for sale.",
+        "error",
+        els.saleModalStatus,
+      );
       return;
     }
     try {
@@ -5761,7 +6629,7 @@ function wireEvents() {
       clearSelectedCards();
       await reloadVisibleCardPages();
     } catch (error) {
-      setStatus(error.message, "error");
+      setStatus(error.message, "error", els.saleModalStatus);
     }
   });
   els.editForm.addEventListener("submit", async (event) => {
