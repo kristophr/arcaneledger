@@ -3437,6 +3437,7 @@ async function loadContainers() {
 
 function openAddContainerModal() {
   state.editingContainer = null;
+  els.addContainerOverlay.classList.remove("modal-overlay-stacked");
   els.addContainerForm.reset();
   els.addContainerForm.id.value = "";
   els.addContainerForm.storage_type.value = "other";
@@ -3450,6 +3451,11 @@ function openAddContainerModal() {
 
 function openEditContainerModal(container) {
   state.editingContainer = container;
+  if (!els.containerDetailOverlay.hidden) {
+    els.addContainerOverlay.classList.add("modal-overlay-stacked");
+  } else {
+    els.addContainerOverlay.classList.remove("modal-overlay-stacked");
+  }
   els.addContainerForm.reset();
   els.addContainerForm.id.value = container.id || "";
   els.addContainerForm.name.value = container.name || "";
@@ -3466,7 +3472,10 @@ function openEditContainerModal(container) {
 
 function closeAddContainerModal() {
   els.addContainerOverlay.hidden = true;
-  document.body.classList.remove("modal-open");
+  els.addContainerOverlay.classList.remove("modal-overlay-stacked");
+  if (els.containerDetailOverlay.hidden) {
+    document.body.classList.remove("modal-open");
+  }
   state.editingContainer = null;
   els.addContainerForm.reset();
 }
