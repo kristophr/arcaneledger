@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>FoilFolio</title>
-    <link rel="stylesheet" href="/styles.css?v=83">
+    <link rel="stylesheet" href="/styles.css?v=86">
   </head>
   <body>
     <header class="topbar">
@@ -101,7 +101,10 @@
           <section class="panel chart-panel">
             <div class="panel-head">
               <h2>Value Over Time</h2>
-              <span id="historyCount"></span>
+              <div class="panel-head-actions">
+                <span id="historyCount"></span>
+                <button id="refreshPriceSnapshotsButton" class="secondary-button compact-button" type="button" title="Refresh owned card prices and save today's snapshot">Snapshot Prices</button>
+              </div>
             </div>
             <svg id="historyChart" role="img" aria-label="Collection value history"></svg>
           </section>
@@ -1319,6 +1322,6 @@
       </section>
     </div>
 
-    <script src="/app.js?v=86"></script>
+    <script src="/app.js?v=89"></script>
   </body>
 </html>

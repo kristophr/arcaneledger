@@ -1131,6 +1131,16 @@ def init_db(conn):
             UNIQUE(card_id, snapshot_date)
         );
 
+        CREATE TABLE IF NOT EXISTS card_notes (
+            user_id INTEGER NOT NULL,
+            card_id TEXT NOT NULL,
+            variant TEXT NOT NULL DEFAULT 'Normal',
+            notes TEXT NOT NULL DEFAULT '',
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (user_id, card_id, variant),
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+
         CREATE TABLE IF NOT EXISTS decks (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER,
@@ -1190,6 +1200,7 @@ def init_db(conn):
         CREATE INDEX IF NOT EXISTS idx_card_sale_journal_card ON card_sale_journal(user_id, card_id, variant, card_condition, sold_date);
         CREATE INDEX IF NOT EXISTS idx_inventory_adjustments_card ON inventory_adjustments(user_id, card_id, variant, card_condition, adjustment_date);
         CREATE INDEX IF NOT EXISTS idx_snapshots_date ON price_snapshots(snapshot_date);
+        CREATE INDEX IF NOT EXISTS idx_card_notes_card ON card_notes(card_id, variant);
         """
     )
     migrate_sets_schema(conn)
@@ -2144,7 +2155,7 @@ def clear_user_data(conn, user_id):
             f"DELETE FROM {table} WHERE {id_column} IN (SELECT id FROM {owner_table} WHERE user_id = ?)",
             (user_id,),
         )
-    for table in ("favorite_decks", "card_sale_journal", "card_sales", "inventory_adjustments", "wishlist_cards", "card_meta", "card_purchases", "collection", "wishlists", "containers", "decks"):
+    for table in ("favorite_decks", "card_notes", "card_sale_journal", "card_sales", "inventory_adjustments", "wishlist_cards", "card_meta", "card_purchases", "collection", "wishlists", "containers", "decks"):
         conn.execute(f"DELETE FROM {table} WHERE user_id = ?", (user_id,))
     conn.commit()
     return {"ok": True}
@@ -3149,7 +3160,6 @@ def current_price_sql(alias="c"):
 
 
 def collection_value_history(conn, user_id, months=24):
-    price_expr = current_price_sql("c")
     first_acquired = conn.execute(
         "SELECT MIN(acquired_date) AS first_acquired FROM collection WHERE user_id = ? AND quantity > 0 AND acquired_date IS NOT NULL AND acquired_date != ''",
         (user_id,),
@@ -3163,51 +3173,55 @@ def collection_value_history(conn, user_id, months=24):
     first_month = first_date.replace(day=1)
     start_month = max(first_month, rolling_start)
 
-    acquired_rows = conn.execute(
-        f"""
-        SELECT substr(col.acquired_date, 1, 7) AS acquired_month,
-               ROUND(SUM(col.quantity * ({price_expr})), 2) AS acquired_value
-        FROM collection col
-        JOIN cards c ON c.scryfall_id = col.card_id
-        WHERE col.user_id = ?
-          AND col.quantity > 0
-          AND col.acquired_date IS NOT NULL
-          AND col.acquired_date != ''
-        GROUP BY acquired_month
-        ORDER BY acquired_month
-        """,
-        (user_id,),
-    ).fetchall()
-    acquired_by_month = {
-        row["acquired_month"]: row["acquired_value"] or 0
-        for row in acquired_rows
-    }
-
-    prior_total = conn.execute(
-        f"""
-        SELECT ROUND(COALESCE(SUM(col.quantity * ({price_expr})), 0), 2) AS value
-        FROM collection col
-        JOIN cards c ON c.scryfall_id = col.card_id
-        WHERE col.user_id = ?
-          AND col.quantity > 0
-          AND col.acquired_date IS NOT NULL
-          AND col.acquired_date != ''
-          AND col.acquired_date < ?
-        """,
-        (user_id, start_month.isoformat()),
-    ).fetchone()["value"] or 0
-
     points = []
-    total = prior_total
     cursor = start_month
     while cursor <= current_month:
         key = cursor.strftime("%Y-%m")
-        total += acquired_by_month.get(key, 0)
+        next_month = add_months(cursor, 1)
+        month_end = min(date.today(), next_month - timedelta(days=1))
+        month_start = cursor.isoformat()
+        month_end_text = month_end.isoformat()
+        price_expr = (
+            "CASE "
+            "WHEN lower(coalesce(col.variant, '')) LIKE '%etched%' AND COALESCE(ps.usd_etched, 0) > 0 THEN ps.usd_etched "
+            "WHEN lower(coalesce(col.variant, '')) LIKE '%foil%' AND COALESCE(ps.usd_foil, 0) > 0 THEN ps.usd_foil "
+            "WHEN COALESCE(ps.usd, 0) > 0 THEN ps.usd "
+            "WHEN COALESCE(ps.usd_foil, 0) > 0 THEN ps.usd_foil "
+            "WHEN COALESCE(ps.usd_etched, 0) > 0 THEN ps.usd_etched "
+            "WHEN lower(coalesce(col.variant, '')) LIKE '%etched%' AND c.current_usd_etched > 0 THEN c.current_usd_etched "
+            "WHEN lower(coalesce(col.variant, '')) LIKE '%foil%' AND c.current_usd_foil > 0 THEN c.current_usd_foil "
+            "WHEN c.current_usd > 0 THEN c.current_usd "
+            "WHEN c.current_usd_foil > 0 THEN c.current_usd_foil "
+            "WHEN c.current_usd_etched > 0 THEN c.current_usd_etched "
+            "ELSE 0 END"
+        )
+        row = conn.execute(
+            f"""
+            SELECT
+              ROUND(COALESCE(SUM(CASE WHEN col.acquired_date <= ? THEN col.quantity * ({price_expr}) ELSE 0 END), 0), 2) AS value,
+              ROUND(COALESCE(SUM(CASE WHEN col.acquired_date >= ? AND col.acquired_date <= ? THEN col.quantity * ({price_expr}) ELSE 0 END), 0), 2) AS added_value
+            FROM collection col
+            JOIN cards c ON c.scryfall_id = col.card_id
+            LEFT JOIN price_snapshots ps
+              ON ps.card_id = col.card_id
+             AND ps.snapshot_date = (
+                SELECT MAX(ps2.snapshot_date)
+                FROM price_snapshots ps2
+                WHERE ps2.card_id = col.card_id
+                  AND ps2.snapshot_date <= ?
+             )
+            WHERE col.user_id = ?
+              AND col.quantity > 0
+              AND col.acquired_date IS NOT NULL
+              AND col.acquired_date != ''
+            """,
+            (month_end_text, month_start, month_end_text, month_end_text, user_id),
+        ).fetchone()
         points.append({
             "date": key,
             "label": month_label(cursor),
-            "added_value": round(acquired_by_month.get(key, 0), 2),
-            "value": round(total, 2),
+            "added_value": round(row["added_value"] or 0, 2),
+            "value": round(row["value"] or 0, 2),
         })
         cursor = add_months(cursor, 1)
     return points
@@ -5114,6 +5128,103 @@ def card_container_memberships(conn, user_id, card_id, variant):
     return rows_to_dicts(rows)
 
 
+def snapshot_price_for_variant(row, variant):
+    variant_text = (variant or "Normal").lower()
+    values = {
+        "normal": row["usd"] if "usd" in row.keys() else row.get("usd"),
+        "foil": row["usd_foil"] if "usd_foil" in row.keys() else row.get("usd_foil"),
+        "etched": row["usd_etched"] if "usd_etched" in row.keys() else row.get("usd_etched"),
+    }
+    if "etched" in variant_text and values["etched"]:
+        return float(values["etched"] or 0)
+    if "foil" in variant_text and values["foil"]:
+        return float(values["foil"] or 0)
+    for key in ("normal", "foil", "etched"):
+        if values[key]:
+            return float(values[key] or 0)
+    return 0.0
+
+
+def card_price_history(conn, card_id, variant="Normal", days=92):
+    cutoff = (date.today() - timedelta(days=days)).isoformat()
+    rows = conn.execute(
+        """
+        SELECT snapshot_date, COALESCE(usd, 0) AS usd, COALESCE(usd_foil, 0) AS usd_foil,
+               COALESCE(usd_etched, 0) AS usd_etched
+        FROM price_snapshots
+        WHERE card_id = ? AND snapshot_date >= ?
+        ORDER BY snapshot_date ASC
+        """,
+        (card_id, cutoff),
+    ).fetchall()
+    points = []
+    for row in rows:
+        value = snapshot_price_for_variant(row, variant)
+        if value > 0:
+            points.append({"date": row["snapshot_date"], "value": round(value, 2)})
+    return points
+
+
+def card_aggregate_stats(conn, card_id):
+    row = conn.execute(
+        """
+        SELECT COUNT(DISTINCT user_id) AS user_count,
+               COALESCE(SUM(quantity), 0) AS total_quantity
+        FROM collection
+        WHERE card_id = ? AND quantity > 0
+        """,
+        (card_id,),
+    ).fetchone()
+    deck_count = conn.execute(
+        """
+        SELECT COUNT(DISTINCT dc.deck_id) AS deck_count
+        FROM deck_cards dc
+        JOIN decks d ON d.id = dc.deck_id
+        WHERE dc.card_id = ?
+        """,
+        (card_id,),
+    ).fetchone()["deck_count"] or 0
+    return {
+        "user_count": int(row["user_count"] or 0),
+        "total_quantity": int(row["total_quantity"] or 0),
+        "deck_count": int(deck_count),
+    }
+
+
+def card_private_notes(conn, user_id, card_id, variant="Normal"):
+    variant = variant or "Normal"
+    row = conn.execute(
+        "SELECT notes FROM card_notes WHERE user_id = ? AND card_id = ? AND variant = ?",
+        (user_id, card_id, variant),
+    ).fetchone()
+    if row:
+        return row["notes"] or ""
+    legacy = conn.execute(
+        "SELECT notes FROM collection WHERE user_id = ? AND card_id = ? AND variant = ?",
+        (user_id, card_id, variant),
+    ).fetchone()
+    return legacy["notes"] if legacy and legacy["notes"] else ""
+
+
+def update_card_private_notes(conn, user_id, card_id, payload):
+    variant = payload.get("variant") or "Normal"
+    notes = (payload.get("notes") or "").strip()
+    if len(notes) > 5000:
+        raise ValueError("Notes must be 5000 characters or fewer.")
+    conn.execute(
+        """
+        INSERT INTO card_notes (user_id, card_id, variant, notes, updated_at)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(user_id, card_id, variant) DO UPDATE SET
+            notes = excluded.notes,
+            updated_at = excluded.updated_at
+        """,
+        (user_id, card_id, variant, notes, now_iso()),
+    )
+    conn.commit()
+    return {"ok": True, "notes": notes}
+
+
 def card_detail(conn, user_id, card_id, variant="Normal"):
     variant = variant or "Normal"
     price_expr = current_price_sql("c")
@@ -5141,13 +5252,20 @@ def card_detail(conn, user_id, card_id, variant="Normal"):
     ).fetchone()
     if not row:
         scryfall_card = request_json(SCRYFALL_ID_URL.format(card_id=urllib.parse.quote(card_id)))
-        return scryfall_card_detail_payload(scryfall_card, variant, user_id=user_id, conn=conn)
+        card = scryfall_card_detail_payload(scryfall_card, variant, user_id=user_id, conn=conn)
+        card["price_history"] = card_price_history(conn, card_id, variant)
+        card["aggregate_stats"] = card_aggregate_stats(conn, card_id)
+        card["private_notes"] = card_private_notes(conn, user_id, card_id, variant)
+        return card
     card = dict(row)
     card["purchases"] = purchase_history(conn, user_id, card_id, variant)
     card["movements"] = movement_history(conn, user_id, card_id, variant)
     card["condition_inventory"] = condition_inventory_for_card(conn, user_id, card_id)
     card["deck_memberships"] = card_deck_memberships(conn, user_id, card_id, variant)
     card["container_memberships"] = card_container_memberships(conn, user_id, card_id, variant)
+    card["price_history"] = card_price_history(conn, card_id, variant)
+    card["aggregate_stats"] = card_aggregate_stats(conn, card_id)
+    card["private_notes"] = card_private_notes(conn, user_id, card_id, variant)
     return card
 
 
@@ -6109,6 +6227,64 @@ def refresh_card_metadata(conn, card_id):
     return {"ok": True, "card": dict(refreshed), "refreshed_at": synced_at}
 
 
+def refresh_owned_price_snapshots(conn, user_id=None, limit=250):
+    limit = max(1, min(int(limit or 250), 1000))
+    if user_id is None:
+        rows = conn.execute(
+            """
+            SELECT DISTINCT c.scryfall_id, c.name, c.last_synced_at
+            FROM cards c
+            JOIN collection col ON col.card_id = c.scryfall_id
+            WHERE col.quantity > 0
+            ORDER BY c.last_synced_at ASC, c.name COLLATE NOCASE
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            """
+            SELECT DISTINCT c.scryfall_id, c.name, c.last_synced_at
+            FROM cards c
+            JOIN collection col ON col.card_id = c.scryfall_id
+            WHERE col.user_id = ? AND col.quantity > 0
+            ORDER BY c.last_synced_at ASC, c.name COLLATE NOCASE
+            LIMIT ?
+            """,
+            (user_id, limit),
+        ).fetchall()
+    refreshed = []
+    failed = []
+    synced_at = now_iso()
+    for index, row in enumerate(rows):
+        if index:
+            time.sleep(0.075)
+        try:
+            scryfall_card = request_json(SCRYFALL_ID_URL.format(card_id=urllib.parse.quote(row["scryfall_id"])))
+            upsert_card(conn, scryfall_card, synced_at)
+            refreshed.append({
+                "scryfall_id": row["scryfall_id"],
+                "name": row["name"],
+            })
+        except Exception as exc:
+            LOGGER.warning("Failed to refresh price snapshot for %s: %s", row["scryfall_id"], exc)
+            failed.append({
+                "scryfall_id": row["scryfall_id"],
+                "name": row["name"],
+                "error": str(exc),
+            })
+    conn.commit()
+    return {
+        "ok": True,
+        "snapshot_date": today_iso(),
+        "refreshed": len(refreshed),
+        "failed": len(failed),
+        "limit": limit,
+        "cards": refreshed,
+        "errors": failed,
+    }
+
+
 def refresh_missing_color_metadata(conn, user_id=None, limit=100):
     limit = max(1, min(int(limit or 100), 500))
     rows = conn.execute(
@@ -6477,6 +6653,10 @@ class Handler(SimpleHTTPRequestHandler):
                     user = self.require_user(conn)
                     payload = self.read_json()
                     return self.send_json(refresh_missing_color_metadata(conn, user["id"], payload.get("limit", 100)))
+                if parsed.path == "/api/prices/snapshots/refresh":
+                    user = self.require_user(conn)
+                    payload = self.read_json()
+                    return self.send_json(refresh_owned_price_snapshots(conn, user["id"], payload.get("limit", 250)))
                 if parsed.path == "/api/cards/missing-list":
                     user = self.require_user(conn)
                     return self.send_json(update_cards_missing_list(conn, user["id"], self.read_json()))
@@ -6589,6 +6769,10 @@ class Handler(SimpleHTTPRequestHandler):
                 if match:
                     user = self.require_user(conn)
                     return self.send_json(update_deck(conn, user["id"], int(match.group(1)), self.read_json()))
+                match = re.match(r"^/api/cards/([^/]+)/notes$", parsed.path)
+                if match:
+                    user = self.require_user(conn)
+                    return self.send_json(update_card_private_notes(conn, user["id"], urllib.parse.unquote(match.group(1)), self.read_json()))
         except KeyError as exc:
             return self.send_json({"error": str(exc)}, HTTPStatus.NOT_FOUND)
         except ValueError as exc:
@@ -6690,6 +6874,10 @@ def main(argv):
             limit = int(argv[2]) if len(argv) > 2 else 100
             print(json.dumps(refresh_missing_color_metadata(conn, limit), indent=2))
             return 0
+        if command == "refresh-price-snapshots":
+            limit = int(argv[2]) if len(argv) > 2 else 250
+            print(json.dumps(refresh_owned_price_snapshots(conn, limit=limit), indent=2))
+            return 0
         if command == "email-status":
             print(json.dumps(email_status(), indent=2))
             return 0
@@ -6720,7 +6908,7 @@ def main(argv):
         host = os.environ.get("HOST", "127.0.0.1")
         serve(host, port)
         return 0
-    print("Usage: python3 app.py [serve [port] | sync | import [csv_path] | seed [csv_path] | cache-owned-sets | refresh-missing-colors [limit] | email-status | email-diagnose | email-trace | email-mailgun-trace | email-test recipient@example.com [subject] | log-status | logs [lines]]")
+    print("Usage: python3 app.py [serve [port] | sync | import [csv_path] | seed [csv_path] | cache-owned-sets | refresh-missing-colors [limit] | refresh-price-snapshots [limit] | email-status | email-diagnose | email-trace | email-mailgun-trace | email-test recipient@example.com [subject] | log-status | logs [lines]]")
     return 2
 
 

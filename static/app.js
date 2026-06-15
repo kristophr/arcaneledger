@@ -89,6 +89,7 @@ const els = {
   uncontainedCards: document.querySelector("#uncontainedCards"),
   historyCount: document.querySelector("#historyCount"),
   historyChart: document.querySelector("#historyChart"),
+  refreshPriceSnapshotsButton: document.querySelector("#refreshPriceSnapshotsButton"),
   topCount: document.querySelector("#topCount"),
   topCards: document.querySelector("#topCards"),
   setCompletionCount: document.querySelector("#setCompletionCount"),
@@ -3824,6 +3825,86 @@ function renderMovementHistory(movements) {
   `;
 }
 
+function renderCardPriceChart(points = []) {
+  const cleanPoints = points
+    .map((point) => ({ date: point.date, value: Number(point.value || 0) }))
+    .filter((point) => point.date && point.value > 0);
+  if (!cleanPoints.length) {
+    return `
+      <div class="card-price-empty">
+        <span>No price snapshots yet.</span>
+      </div>
+    `;
+  }
+  const width = 340;
+  const height = 170;
+  const pad = 18;
+  const values = cleanPoints.map((point) => point.value);
+  const minValue = Math.min(...values);
+  const maxValue = Math.max(...values);
+  const range = Math.max(0.01, maxValue - minValue);
+  const xFor = (index) => {
+    if (cleanPoints.length === 1) return width / 2;
+    return pad + (index / (cleanPoints.length - 1)) * (width - pad * 2);
+  };
+  const yFor = (value) => height - pad - ((value - minValue) / range) * (height - pad * 2);
+  const path = cleanPoints
+    .map((point, index) => `${index === 0 ? "M" : "L"} ${xFor(index).toFixed(1)} ${yFor(point.value).toFixed(1)}`)
+    .join(" ");
+  const area = `${path} L ${xFor(cleanPoints.length - 1).toFixed(1)} ${height - pad} L ${xFor(0).toFixed(1)} ${height - pad} Z`;
+  const latest = cleanPoints[cleanPoints.length - 1];
+  const first = cleanPoints[0];
+  const delta = latest.value - first.value;
+  return `
+    <div class="card-price-chart-wrap">
+      <svg class="card-price-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Market value for the past 3 months">
+        <defs>
+          <linearGradient id="cardPriceArea" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" stop-color="currentColor" stop-opacity="0.22"></stop>
+            <stop offset="100%" stop-color="currentColor" stop-opacity="0.03"></stop>
+          </linearGradient>
+        </defs>
+        <line x1="${pad}" y1="${height - pad}" x2="${width - pad}" y2="${height - pad}" class="card-price-axis"></line>
+        <line x1="${pad}" y1="${pad}" x2="${width - pad}" y2="${pad}" class="card-price-grid"></line>
+        <line x1="${pad}" y1="${height / 2}" x2="${width - pad}" y2="${height / 2}" class="card-price-grid"></line>
+        <path d="${area}" class="card-price-area"></path>
+        <path d="${path}" class="card-price-line"></path>
+        ${cleanPoints.map((point, index) => `
+          <circle cx="${xFor(index).toFixed(1)}" cy="${yFor(point.value).toFixed(1)}" r="${index === cleanPoints.length - 1 ? "4" : "2.5"}">
+            <title>${escapeHtml(formatDate(point.date))}: ${dollars.format(point.value)}</title>
+          </circle>
+        `).join("")}
+      </svg>
+      <div class="card-price-chart-meta">
+        <strong>${dollars.format(latest.value)}</strong>
+        <span class="${valueClass(delta)}">${delta >= 0 ? "+" : ""}${dollars.format(delta)}</span>
+      </div>
+    </div>
+  `;
+}
+
+function renderCardAggregateStats(stats = {}) {
+  const userCount = Number(stats.user_count || 0);
+  const totalQuantity = Number(stats.total_quantity || 0);
+  const deckCount = Number(stats.deck_count || 0);
+  return `
+    <div class="card-meta-grid">
+      <div>
+        <strong>${integer.format(userCount)}</strong>
+        <span>${userCount === 1 ? "user owns this card" : "users own this card"}</span>
+      </div>
+      <div>
+        <strong>${integer.format(totalQuantity)}</strong>
+        <span>${totalQuantity === 1 ? "total copy owned" : "total copies owned"}</span>
+      </div>
+      <div>
+        <strong>${integer.format(deckCount)}</strong>
+        <span>${deckCount === 1 ? "deck includes it" : "decks include it"}</span>
+      </div>
+    </div>
+  `;
+}
+
 function renderCardDetail(card) {
   state.activeCardDetail = card;
   const specialClass = isSpecialVariant(card.variant) ? " is-special" : "";
@@ -3867,50 +3948,78 @@ function renderCardDetail(card) {
           </div>
   `;
   els.cardDetailShell.innerHTML = `
-    <article class="shared-card editable-card-detail${specialClass}">
-      <div class="card-detail-media">
-        <a class="shared-card-art" href="${escapeHtml(card.scryfall_uri || "#")}" target="_blank" rel="noreferrer" title="Open on Scryfall">
-          <img src="${escapeHtml(card.image_normal || card.image_small || "")}" alt="${escapeHtml(cardTitle(card))}">
-        </a>
-        ${owned ? `<div class="detail-storage-actions">
-          <button class="detail-storage-button detail-decks-button" type="button" aria-label="View decks" title="${hasDecks ? "View decks" : "Not in any decks"}" ${hasDecks ? "" : "disabled"}>
-            <span class="deck-icon" aria-hidden="true"></span>
-          </button>
-          <button class="detail-storage-button detail-containers-button" type="button" aria-label="View containers" title="${hasContainers ? "View containers" : "Not stored in a container"}" ${hasContainers ? "" : "disabled"}>
-            ${containerIconHtml((containerMemberships(card)[0] || {}).storage_type)}
-          </button>
-        </div>` : ""}
-      </div>
-      <div class="shared-card-copy">
-        <p class="eyebrow">${owned ? "Collection card" : "Catalog card"}</p>
-        <h2>${escapeHtml(cardTitle(card))}</h2>
-        <div class="card-divider"></div>
-        <p>${escapeHtml(card.set_name)} #${escapeHtml(card.collector_number)} - ${escapeHtml(card.rarity || "unknown")}</p>
-        ${cardRulesName(card) ? `<p>Rules: ${escapeHtml(cardRulesName(card))}</p>` : ""}
-        <p>${escapeHtml(card.type_line || "")}</p>
-        <div class="detail-pill-row">
-          <span>${escapeHtml(card.variant || "Normal")}</span>
-          ${owned ? `<span>${escapeHtml(conditionText(card))}</span>` : ""}
-          <span>${escapeHtml(cardTypeLabel(card))}</span>
-          <span>${escapeHtml(cardColorLabel(card))}</span>
+    <div class="card-detail-layout">
+      <article class="shared-card editable-card-detail${specialClass}">
+        <div class="card-detail-media">
+          <a class="shared-card-art" href="${escapeHtml(card.scryfall_uri || "#")}" target="_blank" rel="noreferrer" title="Open on Scryfall">
+            <img src="${escapeHtml(card.image_normal || card.image_small || "")}" alt="${escapeHtml(cardTitle(card))}">
+          </a>
+          ${owned ? `<div class="detail-storage-actions">
+            <button class="detail-storage-button detail-decks-button" type="button" aria-label="View decks" title="${hasDecks ? "View decks" : "Not in any decks"}" ${hasDecks ? "" : "disabled"}>
+              <span class="deck-icon" aria-hidden="true"></span>
+            </button>
+            <button class="detail-storage-button detail-containers-button" type="button" aria-label="View containers" title="${hasContainers ? "View containers" : "Not stored in a container"}" ${hasContainers ? "" : "disabled"}>
+              ${containerIconHtml((containerMemberships(card)[0] || {}).storage_type)}
+            </button>
+          </div>` : ""}
         </div>
-        <dl class="shared-card-details">
-          ${detailsHtml}
-        </dl>
-        <div class="detail-actions">
-          ${canManageCollection ? '<button id="addPurchaseButton" class="primary-button" type="button">Add Purchase</button>' : ""}
-          ${canManageCollection && owned ? '<button id="adjustInventoryButton" class="secondary-button" type="button">Adjust Inventory</button><button id="addDirectSaleButton" class="secondary-button" type="button">Add Sale</button>' : ""}
-          ${!owned ? '<button class="wishlist-button detail-wishlist-button" type="button" aria-label="Add to Wishlist" title="Add to Wishlist"></button>' : ""}
+        <div class="shared-card-copy">
+          <p class="eyebrow">${owned ? "Collection card" : "Catalog card"}</p>
+          <h2>${escapeHtml(cardTitle(card))}</h2>
+          <div class="card-divider"></div>
+          <p>${escapeHtml(card.set_name)} #${escapeHtml(card.collector_number)} - ${escapeHtml(card.rarity || "unknown")}</p>
+          ${cardRulesName(card) ? `<p>Rules: ${escapeHtml(cardRulesName(card))}</p>` : ""}
+          <p>${escapeHtml(card.type_line || "")}</p>
+          <div class="detail-pill-row">
+            <span>${escapeHtml(card.variant || "Normal")}</span>
+            ${owned ? `<span>${escapeHtml(conditionText(card))}</span>` : ""}
+            <span>${escapeHtml(cardTypeLabel(card))}</span>
+            <span>${escapeHtml(cardColorLabel(card))}</span>
+          </div>
+          <dl class="shared-card-details">
+            ${detailsHtml}
+          </dl>
+          <div class="detail-actions">
+            ${canManageCollection ? '<button id="addPurchaseButton" class="primary-button" type="button">Add Purchase</button>' : ""}
+            ${canManageCollection && owned ? '<button id="adjustInventoryButton" class="secondary-button" type="button">Adjust Inventory</button><button id="addDirectSaleButton" class="secondary-button" type="button">Add Sale</button>' : ""}
+            ${!owned ? '<button class="wishlist-button detail-wishlist-button" type="button" aria-label="Add to Wishlist" title="Add to Wishlist"></button>' : ""}
+          </div>
         </div>
-      </div>
-      <aside class="card-detail-toolbar" aria-label="Card actions">
-        ${owned ? '<button class="detail-action-button detail-refresh-button" type="button" aria-label="Refresh from Scryfall" title="Refresh from Scryfall">&#8635;</button>' : ""}
-        <a class="detail-action-button detail-scryfall-button" href="${escapeHtml(card.scryfall_uri || "#")}" target="_blank" rel="noreferrer" aria-label="View on Scryfall" title="View on Scryfall">S</a>
-        <button class="detail-action-button detail-share-button" type="button" aria-label="Share card" title="Share card">&#8599;</button>
-        <button class="detail-action-button detail-email-button" type="button" aria-label="Email card" title="Email card"><span class="send-icon" aria-hidden="true"></span></button>
-        ${owned ? '<button class="detail-action-button detail-delete-button" type="button" aria-label="Delete card" title="Delete card"><span class="trash-icon" aria-hidden="true"></span></button>' : ""}
-      </aside>
-    </article>
+        <aside class="card-detail-toolbar" aria-label="Card actions">
+          ${owned ? '<button class="detail-action-button detail-refresh-button" type="button" aria-label="Refresh from Scryfall" title="Refresh from Scryfall">&#8635;</button>' : ""}
+          <a class="detail-action-button detail-scryfall-button" href="${escapeHtml(card.scryfall_uri || "#")}" target="_blank" rel="noreferrer" aria-label="View on Scryfall" title="View on Scryfall">S</a>
+          <button class="detail-action-button detail-share-button" type="button" aria-label="Share card" title="Share card">&#8599;</button>
+          <button class="detail-action-button detail-email-button" type="button" aria-label="Email card" title="Email card"><span class="send-icon" aria-hidden="true"></span></button>
+          ${owned ? '<button class="detail-action-button detail-delete-button" type="button" aria-label="Delete card" title="Delete card"><span class="trash-icon" aria-hidden="true"></span></button>' : ""}
+        </aside>
+      </article>
+      ${canManageCollection ? `<aside class="card-detail-insights">
+        <section class="card-insight-panel">
+          <div class="panel-head compact-panel-head">
+            <h2>Market</h2>
+            <span>Past 3 months</span>
+          </div>
+          ${renderCardPriceChart(card.price_history || [])}
+        </section>
+        <section class="card-insight-panel card-meta-panel">
+          <div class="panel-head compact-panel-head">
+            <h2>FoilFolio Meta</h2>
+            <span>All users</span>
+          </div>
+          ${renderCardAggregateStats(card.aggregate_stats || {})}
+        </section>
+        <section class="card-insight-panel card-notes-panel">
+          <div class="panel-head compact-panel-head">
+            <h2>Private Notes</h2>
+            <span>Only you</span>
+          </div>
+          <form class="card-notes-form">
+            <textarea name="notes" maxlength="5000" placeholder="Add personal notes for this card...">${escapeHtml(card.private_notes || "")}</textarea>
+            <button class="secondary-button" type="submit">Save Notes</button>
+          </form>
+        </section>
+      </aside>` : ""}
+    </div>
     ${owned ? `<section class="purchase-history-panel">
       <div class="panel-head">
         <h2>Card History</h2>
@@ -3922,6 +4031,10 @@ function renderCardDetail(card) {
   els.cardDetailShell.querySelector("#addPurchaseButton")?.addEventListener("click", () => openAddPurchaseModal(card));
   els.cardDetailShell.querySelector("#adjustInventoryButton")?.addEventListener("click", () => openInventoryAdjustModal(card));
   els.cardDetailShell.querySelector("#addDirectSaleButton")?.addEventListener("click", () => openDirectSaleModal(card));
+  els.cardDetailShell.querySelector(".card-notes-form")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    saveCardPrivateNotes(card, event.currentTarget).catch((error) => setStatus(error.message, "error"));
+  });
   els.cardDetailShell.querySelector(".detail-wishlist-button") && wireWishlistButton(els.cardDetailShell.querySelector(".detail-wishlist-button"), card, {
     statusTarget: els.status,
     afterWishlistChange: async () => {
@@ -3944,6 +4057,33 @@ function renderCardDetail(card) {
       deleteCardMovement(button).catch((error) => setStatus(error.message, "error"));
     });
   });
+}
+
+async function saveCardPrivateNotes(card, form) {
+  const button = form.querySelector("button[type='submit']");
+  const textarea = form.elements.notes;
+  const originalText = button ? button.textContent : "";
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Saving...";
+  }
+  try {
+    const result = await api(`/api/cards/${encodeURIComponent(card.scryfall_id)}/notes`, {
+      method: "PUT",
+      body: JSON.stringify({
+        variant: card.variant || "Normal",
+        notes: textarea.value,
+      }),
+      promptLogin: true,
+    });
+    card.private_notes = result.notes || "";
+    setStatus("Private notes saved.");
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = originalText || "Save Notes";
+    }
+  }
 }
 
 async function loadCardDetail(cardId, variant = "Normal") {
@@ -4533,6 +4673,28 @@ async function refresh() {
   renderDashboard(dashboard);
 }
 
+async function refreshPriceSnapshots() {
+  const button = els.refreshPriceSnapshotsButton;
+  if (!button) return;
+  const original = button.textContent;
+  button.disabled = true;
+  button.textContent = "Snapshotting...";
+  try {
+    const result = await api("/api/prices/snapshots/refresh", {
+      method: "POST",
+      body: JSON.stringify({ limit: 250 }),
+      promptLogin: true,
+    });
+    await refresh();
+    setStatus(`Saved ${integer.format(result.refreshed || 0)} price snapshot${Number(result.refreshed || 0) === 1 ? "" : "s"} for ${result.snapshot_date}.`, "success");
+  } catch (error) {
+    setStatus(error.message, "error");
+  } finally {
+    button.disabled = false;
+    button.textContent = original;
+  }
+}
+
 function wireEvents() {
   for (const command of els.navCommands) {
     command.addEventListener("click", () => {
@@ -4660,6 +4822,9 @@ function wireEvents() {
   els.addDeckButton.addEventListener("click", openAddDeckModal);
   els.addWishlistButton.addEventListener("click", openAddWishlistModal);
   els.addContainerButton.addEventListener("click", openAddContainerModal);
+  els.refreshPriceSnapshotsButton?.addEventListener("click", () => {
+    refreshPriceSnapshots().catch((error) => setStatus(error.message, "error"));
+  });
   els.closeAddPurchaseButton.addEventListener("click", closeAddPurchaseModal);
   els.cancelAddPurchaseButton.addEventListener("click", closeAddPurchaseModal);
   els.addPurchaseOverlay.addEventListener("click", (event) => {

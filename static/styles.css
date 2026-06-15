@@ -903,6 +903,21 @@ main {
   font-size: 0.86rem;
 }
 
+.panel-head-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+}
+
+.compact-button {
+  min-height: 34px;
+  padding: 0 10px;
+  border-radius: 8px;
+  font-size: 0.78rem;
+}
+
 #historyChart {
   width: 100%;
   height: clamp(340px, 48vw, 390px);
@@ -2351,6 +2366,10 @@ main {
   max-width: 1400px;
 }
 
+.card-detail-shell {
+  max-width: 1380px;
+}
+
 .set-hero {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -2493,6 +2512,13 @@ main {
   grid-template-columns: minmax(220px, 330px) minmax(0, 1fr) 58px;
 }
 
+.card-detail-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 370px);
+  gap: 18px;
+  align-items: start;
+}
+
 .card-detail-media {
   display: grid;
   gap: 12px;
@@ -2559,6 +2585,147 @@ main {
 .detail-delete-button:hover {
   border-color: #9f3f34;
   background: rgba(159, 63, 52, 0.14);
+}
+
+.card-detail-insights {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.card-insight-panel {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.compact-panel-head {
+  margin-bottom: 10px;
+}
+
+.compact-panel-head h2 {
+  font-size: 1.05rem;
+}
+
+.card-price-chart-wrap {
+  color: var(--accent);
+}
+
+.card-price-chart {
+  display: block;
+  width: 100%;
+  min-height: 170px;
+  overflow: visible;
+}
+
+.card-price-chart .card-price-grid,
+.card-price-chart .card-price-axis {
+  stroke: var(--line);
+  stroke-width: 1;
+}
+
+.card-price-chart .card-price-area {
+  color: var(--accent);
+  fill: url("#cardPriceArea");
+}
+
+.card-price-chart .card-price-line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 4;
+}
+
+.card-price-chart circle {
+  fill: var(--accent-2);
+  stroke: var(--panel);
+  stroke-width: 2;
+}
+
+.card-price-chart-meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.card-price-chart-meta strong {
+  color: var(--ink);
+  font-size: 1.35rem;
+}
+
+.card-price-chart-meta span {
+  font-weight: 900;
+}
+
+.card-price-empty {
+  display: grid;
+  min-height: 170px;
+  place-items: center;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  background: var(--detail-bg);
+  font-size: 0.92rem;
+  font-weight: 800;
+  text-align: center;
+}
+
+.card-meta-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.card-meta-grid div {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: var(--detail-bg);
+}
+
+.card-meta-grid strong {
+  min-width: 48px;
+  color: var(--accent);
+  font-size: 1.35rem;
+  line-height: 1;
+}
+
+.card-meta-grid span {
+  color: var(--muted);
+  font-size: 0.84rem;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.card-notes-form {
+  display: grid;
+  gap: 10px;
+}
+
+.card-notes-form textarea {
+  width: 100%;
+  min-height: 210px;
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  color: var(--ink);
+  background: var(--input-bg);
+  font: inherit;
+  line-height: 1.45;
+}
+
+.card-notes-form textarea:focus {
+  border-color: var(--accent);
+  outline: 2px solid color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
 .trash-icon {
@@ -4307,6 +4474,10 @@ main {
   }
 
   .shared-card {
+    grid-template-columns: 1fr;
+  }
+
+  .card-detail-layout {
     grid-template-columns: 1fr;
   }
 
