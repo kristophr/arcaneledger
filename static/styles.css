@@ -1289,6 +1289,123 @@ main {
   gap: 10px;
 }
 
+.catalog-welcome {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 260px);
+  gap: 22px;
+  align-items: center;
+  margin-bottom: 18px;
+  border: 1px solid #111816;
+  border-radius: 8px;
+  padding: clamp(18px, 4vw, 30px);
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--panel) 92%, var(--accent)), var(--panel-soft));
+  box-shadow: var(--shadow);
+}
+
+.catalog-welcome-copy {
+  display: grid;
+  gap: 10px;
+  max-width: 760px;
+}
+
+.catalog-welcome-copy h2 {
+  margin: 0;
+  color: var(--ink);
+  font-size: clamp(2rem, 5vw, 4rem);
+  line-height: 1;
+  max-width: 820px;
+}
+
+.catalog-welcome-copy p {
+  margin: 0;
+  max-width: 660px;
+  color: var(--muted);
+  font-size: 1rem;
+  font-weight: 650;
+  line-height: 1.55;
+}
+
+.catalog-welcome-copy span {
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 850;
+}
+
+.catalog-welcome-copy a {
+  color: var(--accent);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
+}
+
+.catalog-welcome-stack {
+  position: relative;
+  justify-self: end;
+  width: min(100%, 210px);
+  aspect-ratio: 5 / 7;
+}
+
+.welcome-card {
+  position: absolute;
+  inset: 0;
+  border: 1px solid #111816;
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.welcome-card-back {
+  transform: translate(-20px, 12px) rotate(-8deg);
+  background:
+    linear-gradient(160deg, color-mix(in srgb, var(--accent-2) 26%, var(--panel)), var(--panel));
+}
+
+.welcome-card-mid {
+  transform: translate(-7px, 4px) rotate(4deg);
+  background:
+    linear-gradient(160deg, color-mix(in srgb, var(--accent-3) 22%, var(--panel)), var(--panel-soft));
+}
+
+.welcome-card-front {
+  display: grid;
+  align-content: end;
+  gap: 8px;
+  padding: 16px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--wash) 82%, transparent), transparent 55%),
+    var(--panel);
+}
+
+.welcome-card-front span {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  right: 16px;
+  height: 42%;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 22%, var(--panel)), color-mix(in srgb, var(--accent-2) 18%, var(--panel-soft)));
+}
+
+.welcome-card-front strong {
+  position: relative;
+  color: var(--ink);
+  font-size: 1.35rem;
+  line-height: 1;
+}
+
+.welcome-card-front small {
+  position: relative;
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 850;
+}
+
+.catalog-search-heading {
+  margin-bottom: 10px;
+}
+
 .catalog-search-panel {
   display: grid;
   gap: 14px;
@@ -2523,6 +2640,10 @@ main {
   color: #9f3f34;
 }
 
+.purchase-history-row.is-adjustment b {
+  color: var(--accent);
+}
+
 .delete-movement-button {
   width: 34px;
   height: 34px;
@@ -2655,6 +2776,7 @@ main {
 }
 
 .full-field,
+.edit-form-wide,
 .modal-actions {
   grid-column: 1 / -1;
 }
@@ -4292,6 +4414,16 @@ main {
 }
 
 @media (max-width: 520px) {
+  .catalog-welcome {
+    grid-template-columns: 1fr;
+  }
+
+  .catalog-welcome-stack {
+    justify-self: start;
+    width: min(58vw, 170px);
+    margin-left: 20px;
+  }
+
   .sale-card-row {
     grid-template-columns: 52px minmax(0, 1fr) 34px;
     gap: 10px;

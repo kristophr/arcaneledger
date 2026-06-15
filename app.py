@@ -1105,6 +1105,21 @@ def init_db(conn):
             FOREIGN KEY (card_id) REFERENCES cards(scryfall_id) ON DELETE CASCADE
         );
 
+        CREATE TABLE IF NOT EXISTS inventory_adjustments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            card_id TEXT NOT NULL,
+            variant TEXT NOT NULL DEFAULT 'Normal',
+            card_condition TEXT NOT NULL DEFAULT 'Near Mint',
+            adjustment_type TEXT NOT NULL,
+            quantity INTEGER NOT NULL DEFAULT 1,
+            adjustment_date TEXT NOT NULL,
+            note TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY (card_id) REFERENCES cards(scryfall_id) ON DELETE CASCADE
+        );
+
         CREATE TABLE IF NOT EXISTS price_snapshots (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             card_id TEXT NOT NULL,
@@ -1173,6 +1188,7 @@ def init_db(conn):
         CREATE INDEX IF NOT EXISTS idx_container_cards_card ON container_cards(card_id, variant);
         CREATE INDEX IF NOT EXISTS idx_card_sales_card ON card_sales(user_id, card_id, variant, card_condition);
         CREATE INDEX IF NOT EXISTS idx_card_sale_journal_card ON card_sale_journal(user_id, card_id, variant, card_condition, sold_date);
+        CREATE INDEX IF NOT EXISTS idx_inventory_adjustments_card ON inventory_adjustments(user_id, card_id, variant, card_condition, adjustment_date);
         CREATE INDEX IF NOT EXISTS idx_snapshots_date ON price_snapshots(snapshot_date);
         """
     )
@@ -1895,7 +1911,7 @@ def current_user_from_token(conn, token):
 
 
 def adopt_legacy_data(conn, user_id):
-    for table in ("collection", "card_purchases", "card_meta", "wishlist_cards", "card_sales", "card_sale_journal", "decks", "containers"):
+    for table in ("collection", "card_purchases", "card_meta", "wishlist_cards", "card_sales", "card_sale_journal", "inventory_adjustments", "decks", "containers"):
         if "user_id" in table_columns(conn, table):
             conn.execute(f"UPDATE {table} SET user_id = ? WHERE user_id IS NULL", (user_id,))
     migrate_legacy_wishlist_for_user(conn, user_id)
@@ -2128,7 +2144,7 @@ def clear_user_data(conn, user_id):
             f"DELETE FROM {table} WHERE {id_column} IN (SELECT id FROM {owner_table} WHERE user_id = ?)",
             (user_id,),
         )
-    for table in ("favorite_decks", "card_sale_journal", "card_sales", "wishlist_cards", "card_meta", "card_purchases", "collection", "wishlists", "containers", "decks"):
+    for table in ("favorite_decks", "card_sale_journal", "card_sales", "inventory_adjustments", "wishlist_cards", "card_meta", "card_purchases", "collection", "wishlists", "containers", "decks"):
         conn.execute(f"DELETE FROM {table} WHERE user_id = ?", (user_id,))
     conn.commit()
     return {"ok": True}
@@ -4976,6 +4992,23 @@ def movement_history(conn, user_id, card_id, variant):
         """,
         (user_id, card_id, variant),
     ).fetchall())
+    adjustments = rows_to_dicts(conn.execute(
+        """
+        SELECT 'adjust' AS movement_type,
+               id AS movement_id,
+               adjustment_type,
+               adjustment_date AS movement_date,
+               card_condition,
+               quantity,
+               0 AS total_amount,
+               0 AS price_each,
+               created_at,
+               note
+        FROM inventory_adjustments
+        WHERE user_id = ? AND card_id = ? AND variant = ?
+        """,
+        (user_id, card_id, variant),
+    ).fetchall())
     sales = rows_to_dicts(conn.execute(
         """
         SELECT 'sell' AS movement_type,
@@ -4992,7 +5025,7 @@ def movement_history(conn, user_id, card_id, variant):
         """,
         (user_id, card_id, variant),
     ).fetchall())
-    movements = purchases + sales
+    movements = purchases + sales + adjustments
     return sorted(
         movements,
         key=lambda item: (
@@ -5002,6 +5035,54 @@ def movement_history(conn, user_id, card_id, variant):
         ),
         reverse=True,
     )
+
+
+def condition_inventory_for_card(conn, user_id, card_id):
+    rows = conn.execute(
+        """
+        SELECT COALESCE(NULLIF(variant, ''), 'Normal') AS variant,
+               COALESCE(NULLIF(card_condition, ''), ?) AS card_condition,
+               COALESCE(SUM(quantity), 0) AS quantity
+        FROM card_purchases
+        WHERE user_id = ? AND card_id = ?
+        GROUP BY COALESCE(NULLIF(variant, ''), 'Normal'), COALESCE(NULLIF(card_condition, ''), ?)
+        HAVING COALESCE(SUM(quantity), 0) > 0
+        ORDER BY variant, card_condition
+        """,
+        (DEFAULT_CARD_CONDITION, user_id, card_id, DEFAULT_CARD_CONDITION),
+    ).fetchall()
+    total_by_variant = {}
+    for row in rows:
+        total_by_variant[row["variant"]] = total_by_variant.get(row["variant"], 0) + int(row["quantity"] or 0)
+    deck_by_variant = {
+        row["variant"]: int(row["quantity"] or 0)
+        for row in conn.execute(
+            """
+            SELECT COALESCE(NULLIF(dc.variant, ''), 'Normal') AS variant,
+                   COALESCE(SUM(dc.quantity), 0) AS quantity
+            FROM deck_cards dc
+            JOIN decks d ON d.id = dc.deck_id
+            WHERE d.user_id = ? AND dc.card_id = ?
+            GROUP BY COALESCE(NULLIF(dc.variant, ''), 'Normal')
+            """,
+            (user_id, card_id),
+        ).fetchall()
+    }
+    inventory = []
+    saleable_remaining = {variant: max(0, total - deck_by_variant.get(variant, 0)) for variant, total in total_by_variant.items()}
+    for row in rows:
+        variant = row["variant"]
+        quantity = int(row["quantity"] or 0)
+        available = min(quantity, saleable_remaining.get(variant, quantity))
+        saleable_remaining[variant] = max(0, saleable_remaining.get(variant, 0) - quantity)
+        inventory.append({
+            "variant": variant,
+            "card_condition": card_condition(row["card_condition"]),
+            "quantity": quantity,
+            "available_quantity": available,
+            "deck_reserved_quantity": max(0, deck_by_variant.get(variant, 0)),
+        })
+    return inventory
 
 
 def card_deck_memberships(conn, user_id, card_id, variant):
@@ -5064,6 +5145,7 @@ def card_detail(conn, user_id, card_id, variant="Normal"):
     card = dict(row)
     card["purchases"] = purchase_history(conn, user_id, card_id, variant)
     card["movements"] = movement_history(conn, user_id, card_id, variant)
+    card["condition_inventory"] = condition_inventory_for_card(conn, user_id, card_id)
     card["deck_memberships"] = card_deck_memberships(conn, user_id, card_id, variant)
     card["container_memberships"] = card_container_memberships(conn, user_id, card_id, variant)
     return card
@@ -5108,6 +5190,112 @@ def add_card_purchase(conn, user_id, card_id, payload):
         total_price = 0.01
     purchase_date = payload.get("purchase_date") or today_iso()
     record_card_purchase(conn, user_id, card_id, variant, quantity, payload.get("card_condition"), purchase_date, total_price)
+    rollup_collection_from_purchases(conn, user_id, card_id, variant)
+    conn.commit()
+    return {"ok": True, "card": card_detail(conn, user_id, card_id, variant)}
+
+
+def available_condition_quantity(conn, user_id, card_id, variant, condition):
+    wanted_variant = variant or "Normal"
+    wanted_condition = card_condition(condition)
+    for bucket in condition_inventory_for_card(conn, user_id, card_id):
+        if bucket["variant"] == wanted_variant and bucket["card_condition"] == wanted_condition:
+            listed = conn.execute(
+                """
+                SELECT COALESCE(SUM(quantity), 0) AS quantity
+                FROM card_sales
+                WHERE user_id = ? AND card_id = ? AND variant = ? AND card_condition = ?
+                """,
+                (user_id, card_id, wanted_variant, wanted_condition),
+            ).fetchone()
+            return max(0, int(bucket["available_quantity"] or 0) - int((listed and listed["quantity"]) or 0))
+    return 0
+
+
+def adjust_card_inventory(conn, user_id, card_id, payload):
+    card = conn.execute("SELECT 1 FROM cards WHERE scryfall_id = ?", (card_id,)).fetchone()
+    if not card:
+        raise KeyError("Card not found")
+    variant = payload.get("variant") or "Normal"
+    condition = card_condition(payload.get("card_condition"))
+    action = (payload.get("adjustment_type") or "increase").strip().lower()
+    if action not in {"increase", "decrease"}:
+        raise ValueError("Choose whether to increase or decrease inventory.")
+    quantity = int(money(payload.get("quantity"), fallback=1))
+    if quantity < 1:
+        raise ValueError("Quantity must be at least 1.")
+    adjustment_date = payload.get("adjustment_date") or today_iso()
+    if action == "increase":
+        record_card_purchase(conn, user_id, card_id, variant, quantity, condition, adjustment_date, max(quantity * 0.01, 0.01))
+    else:
+        available = available_condition_quantity(conn, user_id, card_id, variant, condition)
+        if quantity > available:
+            raise ValueError(f"Only {available} copy/copies are available to remove for {variant} / {condition}. Remove deck assignments or sale listings first.")
+        decrement_purchase_quantity(conn, user_id, card_id, variant, condition, quantity)
+    conn.execute(
+        """
+        INSERT INTO inventory_adjustments (
+            user_id, card_id, variant, card_condition, adjustment_type, quantity, adjustment_date, note, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (user_id, card_id, variant, condition, action, quantity, adjustment_date, payload.get("note") or "", now_iso()),
+    )
+    rollup_collection_from_purchases(conn, user_id, card_id, variant)
+    conn.commit()
+    return {"ok": True, "card": card_detail(conn, user_id, card_id, variant)}
+
+
+def add_card_direct_sale(conn, user_id, card_id, payload):
+    card = conn.execute("SELECT 1 FROM cards WHERE scryfall_id = ?", (card_id,)).fetchone()
+    if not card:
+        raise KeyError("Card not found")
+    variant = payload.get("variant") or "Normal"
+    condition = card_condition(payload.get("card_condition"))
+    quantity = int(money(payload.get("quantity"), fallback=1))
+    if quantity < 1:
+        raise ValueError("Sold quantity must be at least 1.")
+    available = available_condition_quantity(conn, user_id, card_id, variant, condition)
+    if quantity > available:
+        raise ValueError(f"Only {available} copy/copies are available to sell for {variant} / {condition}.")
+    sold_date = payload.get("sold_date") or today_iso()
+    sold_price_each = money(payload.get("sold_price_each"), fallback=0.01)
+    if sold_price_each <= 0:
+        raise ValueError("Sold price must be greater than $0.00.")
+    conn.execute(
+        """
+        INSERT INTO card_sale_journal (
+            user_id, card_id, variant, card_condition, quantity, sold_date, sold_price_each, asking_price_each, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (user_id, card_id, variant, condition, quantity, sold_date, sold_price_each, sold_price_each, now_iso()),
+    )
+    decrement_purchase_quantity(conn, user_id, card_id, variant, condition, quantity)
+    sale_row = conn.execute(
+        """
+        SELECT quantity
+        FROM card_sales
+        WHERE user_id = ? AND card_id = ? AND variant = ? AND card_condition = ?
+        """,
+        (user_id, card_id, variant, condition),
+    ).fetchone()
+    if sale_row:
+        remaining_sale_quantity = max(0, int(sale_row["quantity"] or 0) - quantity)
+        if remaining_sale_quantity:
+            conn.execute(
+                """
+                UPDATE card_sales
+                SET quantity = ?, updated_at = ?
+                WHERE user_id = ? AND card_id = ? AND variant = ? AND card_condition = ?
+                """,
+                (remaining_sale_quantity, now_iso(), user_id, card_id, variant, condition),
+            )
+        else:
+            conn.execute(
+                "DELETE FROM card_sales WHERE user_id = ? AND card_id = ? AND variant = ? AND card_condition = ?",
+                (user_id, card_id, variant, condition),
+            )
     rollup_collection_from_purchases(conn, user_id, card_id, variant)
     conn.commit()
     return {"ok": True, "card": card_detail(conn, user_id, card_id, variant)}
@@ -5745,7 +5933,7 @@ def delete_card_movement(conn, user_id, card_id, payload):
     movement_type = payload.get("movement_type")
     movement_id = int(money(payload.get("movement_id"), fallback=0))
     variant = payload.get("variant") or "Normal"
-    if movement_type not in {"buy", "sell"} or movement_id <= 0:
+    if movement_type not in {"buy", "sell", "adjust"} or movement_id <= 0:
         raise ValueError("Choose a valid card history entry.")
     if movement_type == "sell":
         sale = conn.execute(
@@ -5826,6 +6014,31 @@ def delete_card_movement(conn, user_id, card_id, payload):
             ),
         )
         conn.execute("DELETE FROM card_sale_journal WHERE id = ? AND user_id = ?", (movement_id, user_id))
+        rollup_collection_from_purchases(conn, user_id, card_id, variant)
+        conn.commit()
+        return {"ok": True, "deleted": {"movement_type": movement_type, "movement_id": movement_id}, "card": card_detail(conn, user_id, card_id, variant)}
+
+    if movement_type == "adjust":
+        adjustment = conn.execute(
+            """
+            SELECT *
+            FROM inventory_adjustments
+            WHERE id = ? AND user_id = ? AND card_id = ? AND variant = ?
+            """,
+            (movement_id, user_id, card_id, variant),
+        ).fetchone()
+        if not adjustment:
+            raise KeyError("Inventory adjustment not found")
+        condition = card_condition(adjustment["card_condition"])
+        quantity = int(adjustment["quantity"] or 0)
+        if adjustment["adjustment_type"] == "increase":
+            available = available_condition_quantity(conn, user_id, card_id, variant, condition)
+            if quantity > available:
+                raise ValueError("Remove related deck assignments or sale listings before deleting this inventory adjustment.")
+            decrement_purchase_quantity(conn, user_id, card_id, variant, condition, quantity)
+        else:
+            record_card_purchase(conn, user_id, card_id, variant, quantity, condition, adjustment["adjustment_date"] or today_iso(), max(quantity * 0.01, 0.01))
+        conn.execute("DELETE FROM inventory_adjustments WHERE id = ? AND user_id = ?", (movement_id, user_id))
         rollup_collection_from_purchases(conn, user_id, card_id, variant)
         conn.commit()
         return {"ok": True, "deleted": {"movement_type": movement_type, "movement_id": movement_id}, "card": card_detail(conn, user_id, card_id, variant)}
@@ -6281,6 +6494,14 @@ class Handler(SimpleHTTPRequestHandler):
                 if match:
                     user = self.require_user(conn)
                     return self.send_json(add_card_purchase(conn, user["id"], urllib.parse.unquote(match.group(1)), self.read_json()), HTTPStatus.CREATED)
+                match = re.match(r"^/api/cards/([^/]+)/inventory$", parsed.path)
+                if match:
+                    user = self.require_user(conn)
+                    return self.send_json(adjust_card_inventory(conn, user["id"], urllib.parse.unquote(match.group(1)), self.read_json()))
+                match = re.match(r"^/api/cards/([^/]+)/direct-sale$", parsed.path)
+                if match:
+                    user = self.require_user(conn)
+                    return self.send_json(add_card_direct_sale(conn, user["id"], urllib.parse.unquote(match.group(1)), self.read_json()), HTTPStatus.CREATED)
                 if parsed.path == "/api/decks":
                     user = self.require_user(conn)
                     return self.send_json(create_deck(conn, user["id"], self.read_json()), HTTPStatus.CREATED)

@@ -61,6 +61,7 @@ const integer = new Intl.NumberFormat("en-US");
 const cardConditions = ["Near Mint", "Lightly Played", "Moderately Played", "Heavily Played", "Damaged"];
 const pageRoutes = {
   dashboard: "/",
+  search: "/search",
   favorites: "/favorites",
   collection: "/collection",
   decks: "/decks",
@@ -68,7 +69,6 @@ const pageRoutes = {
   "missing-list": "/missing-list",
   "for-sale": "/for-sale",
   wishlist: "/wishlist",
-  search: "/search",
   settings: "/settings",
   import: "/import",
 };
@@ -308,6 +308,16 @@ const els = {
   addPurchaseTitle: document.querySelector("#addPurchaseTitle"),
   closeAddPurchaseButton: document.querySelector("#closeAddPurchaseButton"),
   cancelAddPurchaseButton: document.querySelector("#cancelAddPurchaseButton"),
+  inventoryAdjustOverlay: document.querySelector("#inventoryAdjustOverlay"),
+  inventoryAdjustForm: document.querySelector("#inventoryAdjustForm"),
+  inventoryAdjustTitle: document.querySelector("#inventoryAdjustTitle"),
+  closeInventoryAdjustButton: document.querySelector("#closeInventoryAdjustButton"),
+  cancelInventoryAdjustButton: document.querySelector("#cancelInventoryAdjustButton"),
+  directSaleOverlay: document.querySelector("#directSaleOverlay"),
+  directSaleForm: document.querySelector("#directSaleForm"),
+  directSaleTitle: document.querySelector("#directSaleTitle"),
+  closeDirectSaleButton: document.querySelector("#closeDirectSaleButton"),
+  cancelDirectSaleButton: document.querySelector("#cancelDirectSaleButton"),
   setPageShell: document.querySelector("#setPageShell"),
   navCommands: document.querySelectorAll(".nav-command"),
   pages: document.querySelectorAll(".app-page"),
@@ -379,6 +389,11 @@ async function api(path, options = {}) {
 function updateAuthUi() {
   const loggedIn = Boolean(state.user);
   document.body.classList.toggle("is-authenticated", loggedIn);
+  for (const command of els.navCommands || []) {
+    const target = command.dataset.pageTarget;
+    if (!target) continue;
+    command.hidden = !loggedIn && protectedPage(target);
+  }
   if (els.accountButton) {
     els.accountButton.textContent = loggedIn ? state.user.email : "Log In";
     els.accountButton.title = loggedIn ? "Account settings" : "Log in";
@@ -898,9 +913,12 @@ async function deleteCardMovement(button) {
   const movementType = button.dataset.movementType;
   const movementId = button.dataset.movementId;
   const isSale = movementType === "sell";
+  const isAdjust = movementType === "adjust";
   const confirmed = window.confirm(
     isSale
       ? "Delete this sold entry? This will undo the sale, restore inventory, and put the card back on For Sale."
+      : isAdjust
+        ? "Delete this adjustment entry? This will reverse the inventory adjustment."
       : "Delete this purchase entry? This will reduce inventory. This is blocked if sold entries still depend on it."
   );
   if (!confirmed) return;
@@ -3779,18 +3797,20 @@ function renderMovementHistory(movements) {
     <div class="purchase-history-list">
       ${movements.map((movement) => {
         const isSale = movement.movement_type === "sell";
-        const verb = isSale ? "sold" : "bought";
+        const isAdjust = movement.movement_type === "adjust";
+        const adjustedIn = isAdjust && movement.adjustment_type === "increase";
+        const verb = isAdjust ? (adjustedIn ? "adjusted in" : "adjusted out") : isSale ? "sold" : "bought";
         const amountLabel = isSale ? "received" : "total";
-        const deleteLabel = isSale ? "Delete sold entry" : "Delete purchase entry";
+        const deleteLabel = isAdjust ? "Delete adjustment entry" : isSale ? "Delete sold entry" : "Delete purchase entry";
         return `
-        <article class="purchase-history-row ${isSale ? "is-sale" : "is-purchase"}">
+        <article class="purchase-history-row ${isAdjust ? "is-adjustment" : isSale ? "is-sale" : "is-purchase"}">
           <div>
             <strong>${escapeHtml(formatDate(movement.movement_date || movement.purchase_date))}</strong>
             <span>${escapeHtml(movement.card_condition || "Near Mint")}</span>
           </div>
           <div>
             <b>${integer.format(movement.quantity || 0)} ${verb}</b>
-            <span>${dollars.format(movement.total_amount ?? movement.total_price ?? 0)} ${amountLabel} - ${dollars.format(movement.price_each || 0)} each</span>
+            <span>${isAdjust ? escapeHtml(movement.note || "Manual inventory adjustment") : `${dollars.format(movement.total_amount ?? movement.total_price ?? 0)} ${amountLabel} - ${dollars.format(movement.price_each || 0)} each`}</span>
           </div>
           ${movement.movement_id ? `
             <button class="delete-movement-button" type="button" aria-label="${deleteLabel}" title="${deleteLabel}" data-movement-type="${escapeHtml(movement.movement_type)}" data-movement-id="${escapeHtml(movement.movement_id)}">
@@ -3808,6 +3828,7 @@ function renderCardDetail(card) {
   state.activeCardDetail = card;
   const specialClass = isSpecialVariant(card.variant) ? " is-special" : "";
   const owned = Number(card.quantity || 0) > 0;
+  const canManageCollection = Boolean(state.user && !card.readonly);
   const hasDecks = deckMemberships(card).length > 0;
   const hasContainers = containerMemberships(card).length > 0;
   const detailsHtml = owned ? `
@@ -3877,13 +3898,12 @@ function renderCardDetail(card) {
           ${detailsHtml}
         </dl>
         <div class="detail-actions">
-          ${owned
-            ? '<button id="addPurchaseButton" class="primary-button" type="button">Add Purchase</button>'
-            : '<button class="wishlist-button detail-wishlist-button" type="button" aria-label="Add to Wishlist" title="Add to Wishlist"></button>'}
+          ${canManageCollection ? '<button id="addPurchaseButton" class="primary-button" type="button">Add Purchase</button>' : ""}
+          ${canManageCollection && owned ? '<button id="adjustInventoryButton" class="secondary-button" type="button">Adjust Inventory</button><button id="addDirectSaleButton" class="secondary-button" type="button">Add Sale</button>' : ""}
+          ${!owned ? '<button class="wishlist-button detail-wishlist-button" type="button" aria-label="Add to Wishlist" title="Add to Wishlist"></button>' : ""}
         </div>
       </div>
       <aside class="card-detail-toolbar" aria-label="Card actions">
-        <button class="detail-action-button detail-add-button" type="button" aria-label="Add to collection" title="Add to collection">+</button>
         ${owned ? '<button class="detail-action-button detail-refresh-button" type="button" aria-label="Refresh from Scryfall" title="Refresh from Scryfall">&#8635;</button>' : ""}
         <a class="detail-action-button detail-scryfall-button" href="${escapeHtml(card.scryfall_uri || "#")}" target="_blank" rel="noreferrer" aria-label="View on Scryfall" title="View on Scryfall">S</a>
         <button class="detail-action-button detail-share-button" type="button" aria-label="Share card" title="Share card">&#8599;</button>
@@ -3900,7 +3920,8 @@ function renderCardDetail(card) {
     </section>` : ""}
   `;
   els.cardDetailShell.querySelector("#addPurchaseButton")?.addEventListener("click", () => openAddPurchaseModal(card));
-  els.cardDetailShell.querySelector(".detail-add-button").addEventListener("click", () => openAddCardModal(card));
+  els.cardDetailShell.querySelector("#adjustInventoryButton")?.addEventListener("click", () => openInventoryAdjustModal(card));
+  els.cardDetailShell.querySelector("#addDirectSaleButton")?.addEventListener("click", () => openDirectSaleModal(card));
   els.cardDetailShell.querySelector(".detail-wishlist-button") && wireWishlistButton(els.cardDetailShell.querySelector(".detail-wishlist-button"), card, {
     statusTarget: els.status,
     afterWishlistChange: async () => {
@@ -3947,11 +3968,64 @@ async function loadPublicCardDetail(cardId, variant = "Normal") {
   }
 }
 
+function uniqueVariantsForCard(card) {
+  const variants = new Set(variantsForCard(card));
+  if (card.variant) variants.add(card.variant);
+  for (const bucket of card.condition_inventory || []) {
+    if (bucket.variant) variants.add(bucket.variant);
+  }
+  return Array.from(variants);
+}
+
+function fillVariantSelect(select, card, selected = "Normal", onlyOwned = false) {
+  const variants = onlyOwned
+    ? Array.from(new Set((card.condition_inventory || []).filter((bucket) => Number(bucket.available_quantity ?? bucket.quantity ?? 0) > 0).map((bucket) => bucket.variant || "Normal")))
+    : uniqueVariantsForCard(card);
+  select.innerHTML = "";
+  for (const variant of variants.length ? variants : ["Normal"]) {
+    const option = document.createElement("option");
+    option.value = variant;
+    option.textContent = variant;
+    option.selected = variant === selected;
+    select.appendChild(option);
+  }
+}
+
+function fillConditionSelect(select, card, variant, selected = "Near Mint", mode = "all") {
+  const buckets = (card.condition_inventory || []).filter((bucket) => (bucket.variant || "Normal") === (variant || "Normal"));
+  let conditions = cardConditions;
+  if (mode === "owned") {
+    conditions = buckets
+      .filter((bucket) => Number(bucket.quantity || 0) > 0)
+      .map((bucket) => bucket.card_condition || "Near Mint");
+  } else if (mode === "available") {
+    conditions = buckets
+      .filter((bucket) => Number(bucket.available_quantity ?? bucket.quantity ?? 0) > 0)
+      .map((bucket) => bucket.card_condition || "Near Mint");
+  }
+  const uniqueConditions = Array.from(new Set(conditions.length ? conditions : cardConditions));
+  select.innerHTML = "";
+  for (const condition of uniqueConditions) {
+    const option = document.createElement("option");
+    option.value = condition;
+    option.textContent = condition;
+    option.selected = condition === selected;
+    select.appendChild(option);
+  }
+}
+
+function inventoryBucket(card, variant, condition) {
+  return (card.condition_inventory || []).find((bucket) =>
+    (bucket.variant || "Normal") === (variant || "Normal") &&
+    (bucket.card_condition || "Near Mint") === (condition || "Near Mint")
+  );
+}
+
 function openAddPurchaseModal(card) {
   state.activeCardDetail = card;
   els.addPurchaseTitle.textContent = cardTitle(card);
   els.addPurchaseForm.card_id.value = card.scryfall_id;
-  els.addPurchaseForm.variant.value = card.variant || "Normal";
+  fillVariantSelect(els.addPurchaseForm.variant, card, card.variant || "Normal");
   els.addPurchaseForm.quantity.value = 1;
   els.addPurchaseForm.card_condition.value = conditionText(card);
   els.addPurchaseForm.purchase_date.value = todayValue();
@@ -3965,6 +4039,82 @@ function closeAddPurchaseModal() {
   els.addPurchaseOverlay.hidden = true;
   document.body.classList.remove("modal-open");
   els.addPurchaseForm.reset();
+}
+
+function updateInventoryAdjustLimits() {
+  const card = state.activeCardDetail;
+  if (!card) return;
+  const form = els.inventoryAdjustForm;
+  const isDecrease = form.adjustment_type.value === "decrease";
+  fillConditionSelect(form.card_condition, card, form.variant.value, form.card_condition.value, isDecrease ? "available" : "all");
+  const bucket = inventoryBucket(card, form.variant.value, form.card_condition.value);
+  const maxQuantity = isDecrease ? Number(bucket?.available_quantity || 0) : 9999;
+  form.quantity.max = isDecrease ? String(maxQuantity) : "";
+  if (isDecrease && Number(form.quantity.value || 1) > maxQuantity) {
+    form.quantity.value = Math.max(1, maxQuantity);
+  }
+}
+
+function openInventoryAdjustModal(card) {
+  state.activeCardDetail = card;
+  els.inventoryAdjustTitle.textContent = cardTitle(card);
+  els.inventoryAdjustForm.card_id.value = card.scryfall_id;
+  els.inventoryAdjustForm.adjustment_type.value = "increase";
+  fillVariantSelect(els.inventoryAdjustForm.variant, card, card.variant || "Normal");
+  fillConditionSelect(els.inventoryAdjustForm.card_condition, card, els.inventoryAdjustForm.variant.value, conditionText(card), "all");
+  els.inventoryAdjustForm.quantity.value = 1;
+  els.inventoryAdjustForm.adjustment_date.value = todayValue();
+  els.inventoryAdjustForm.note.value = "";
+  updateInventoryAdjustLimits();
+  els.inventoryAdjustOverlay.hidden = false;
+  document.body.classList.add("modal-open");
+  els.inventoryAdjustForm.quantity.focus();
+}
+
+function closeInventoryAdjustModal() {
+  els.inventoryAdjustOverlay.hidden = true;
+  document.body.classList.remove("modal-open");
+  els.inventoryAdjustForm.reset();
+}
+
+function updateDirectSaleLimits() {
+  const card = state.activeCardDetail;
+  if (!card) return;
+  const form = els.directSaleForm;
+  fillConditionSelect(form.card_condition, card, form.variant.value, form.card_condition.value, "available");
+  const bucket = inventoryBucket(card, form.variant.value, form.card_condition.value);
+  const maxQuantity = Number(bucket?.available_quantity || 0);
+  form.quantity.max = String(maxQuantity);
+  if (Number(form.quantity.value || 1) > maxQuantity) {
+    form.quantity.value = Math.max(1, maxQuantity);
+  }
+}
+
+function openDirectSaleModal(card) {
+  const availableBuckets = (card.condition_inventory || []).filter((bucket) => Number(bucket.available_quantity || 0) > 0);
+  if (!availableBuckets.length) {
+    setStatus("No sellable copies are available for this card. Remove deck assignments or sale listings first.", "error");
+    return;
+  }
+  state.activeCardDetail = card;
+  const first = availableBuckets.find((bucket) => (bucket.variant || "Normal") === (card.variant || "Normal")) || availableBuckets[0];
+  els.directSaleTitle.textContent = cardTitle(card);
+  els.directSaleForm.card_id.value = card.scryfall_id;
+  fillVariantSelect(els.directSaleForm.variant, card, first.variant || card.variant || "Normal", true);
+  fillConditionSelect(els.directSaleForm.card_condition, card, els.directSaleForm.variant.value, first.card_condition || "Near Mint", "available");
+  els.directSaleForm.quantity.value = 1;
+  els.directSaleForm.sold_date.value = todayValue();
+  els.directSaleForm.sold_price_each.value = Number(card.display_price || card.market_price || 0.01).toFixed(2);
+  updateDirectSaleLimits();
+  els.directSaleOverlay.hidden = false;
+  document.body.classList.add("modal-open");
+  els.directSaleForm.quantity.focus();
+}
+
+function closeDirectSaleModal() {
+  els.directSaleOverlay.hidden = true;
+  document.body.classList.remove("modal-open");
+  els.directSaleForm.reset();
 }
 
 async function loadSharedCard(shareId) {
@@ -4517,6 +4667,25 @@ function wireEvents() {
       closeAddPurchaseModal();
     }
   });
+  els.closeInventoryAdjustButton.addEventListener("click", closeInventoryAdjustModal);
+  els.cancelInventoryAdjustButton.addEventListener("click", closeInventoryAdjustModal);
+  els.inventoryAdjustOverlay.addEventListener("click", (event) => {
+    if (event.target === els.inventoryAdjustOverlay) {
+      closeInventoryAdjustModal();
+    }
+  });
+  els.inventoryAdjustForm.adjustment_type.addEventListener("change", updateInventoryAdjustLimits);
+  els.inventoryAdjustForm.variant.addEventListener("change", updateInventoryAdjustLimits);
+  els.inventoryAdjustForm.card_condition.addEventListener("change", updateInventoryAdjustLimits);
+  els.closeDirectSaleButton.addEventListener("click", closeDirectSaleModal);
+  els.cancelDirectSaleButton.addEventListener("click", closeDirectSaleModal);
+  els.directSaleOverlay.addEventListener("click", (event) => {
+    if (event.target === els.directSaleOverlay) {
+      closeDirectSaleModal();
+    }
+  });
+  els.directSaleForm.variant.addEventListener("change", updateDirectSaleLimits);
+  els.directSaleForm.card_condition.addEventListener("change", updateDirectSaleLimits);
   els.tileViewButton.addEventListener("click", () => setCollectionView("tiles"));
   els.listViewButton.addEventListener("click", () => setCollectionView("list"));
   els.favoriteTileViewButton.addEventListener("click", () => setFavoritesView("tiles"));
@@ -4815,6 +4984,12 @@ function wireEvents() {
     }
     if (event.key === "Escape" && !els.addPurchaseOverlay.hidden) {
       closeAddPurchaseModal();
+    }
+    if (event.key === "Escape" && !els.inventoryAdjustOverlay.hidden) {
+      closeInventoryAdjustModal();
+    }
+    if (event.key === "Escape" && !els.directSaleOverlay.hidden) {
+      closeDirectSaleModal();
     }
     if (event.key === "Escape" && !els.settingsOverlay.hidden) {
       closeSettingsModal();
@@ -5261,6 +5436,61 @@ function wireEvents() {
       renderCardDetail(result.card);
       await refresh();
       setStatus(`Added purchase for ${cardTitle(result.card)}.`);
+    } catch (error) {
+      setStatus(error.message, "error");
+    }
+  });
+  els.inventoryAdjustForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const payload = Object.fromEntries(new FormData(els.inventoryAdjustForm).entries());
+    const cardId = payload.card_id;
+    const maxQuantity = Number(els.inventoryAdjustForm.quantity.max || 0);
+    payload.quantity = Number(payload.quantity || 0);
+    if (payload.quantity < 1) {
+      setStatus("Adjustment quantity must be at least 1.", "error");
+      return;
+    }
+    if (payload.adjustment_type === "decrease" && maxQuantity && payload.quantity > maxQuantity) {
+      setStatus(`Only ${integer.format(maxQuantity)} copy/copies are available to remove.`, "error");
+      return;
+    }
+    try {
+      const result = await api(`/api/cards/${encodeURIComponent(cardId)}/inventory`, {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      closeInventoryAdjustModal();
+      renderCardDetail(result.card);
+      await refresh();
+      setStatus(`Inventory adjusted for ${cardTitle(result.card)}.`);
+    } catch (error) {
+      setStatus(error.message, "error");
+    }
+  });
+  els.directSaleForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const payload = Object.fromEntries(new FormData(els.directSaleForm).entries());
+    const cardId = payload.card_id;
+    const maxQuantity = Number(els.directSaleForm.quantity.max || 0);
+    payload.quantity = Number(payload.quantity || 0);
+    payload.sold_price_each = Number(payload.sold_price_each || 0);
+    if (payload.quantity < 1 || (maxQuantity && payload.quantity > maxQuantity)) {
+      setStatus(`Sold quantity must be between 1 and ${integer.format(maxQuantity || 1)}.`, "error");
+      return;
+    }
+    if (payload.sold_price_each <= 0) {
+      setStatus("Sold price must be greater than $0.00.", "error");
+      return;
+    }
+    try {
+      const result = await api(`/api/cards/${encodeURIComponent(cardId)}/direct-sale`, {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      closeDirectSaleModal();
+      renderCardDetail(result.card);
+      await refresh();
+      setStatus(`Added sale for ${cardTitle(result.card)}.`);
     } catch (error) {
       setStatus(error.message, "error");
     }
