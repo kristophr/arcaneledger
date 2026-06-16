@@ -1134,6 +1134,20 @@ def init_db(conn):
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
         );
 
+        CREATE TABLE IF NOT EXISTS favorite_store_listings (
+            user_id INTEGER NOT NULL,
+            seller_user_id INTEGER NOT NULL,
+            card_id TEXT NOT NULL,
+            variant TEXT NOT NULL DEFAULT 'Normal',
+            card_condition TEXT NOT NULL DEFAULT 'Near Mint',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (user_id, seller_user_id, card_id, variant, card_condition),
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY (seller_user_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY (card_id) REFERENCES cards(scryfall_id) ON DELETE CASCADE
+        );
+
         CREATE TABLE IF NOT EXISTS card_sales (
             user_id INTEGER,
             card_id TEXT NOT NULL,
@@ -1221,6 +1235,7 @@ def init_db(conn):
             description TEXT NOT NULL DEFAULT '',
             internal_notes TEXT NOT NULL DEFAULT '',
             external_notes TEXT NOT NULL DEFAULT '',
+            is_private INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -1439,6 +1454,8 @@ def migrate_decks_schema(conn):
         conn.execute("ALTER TABLE decks ADD COLUMN internal_notes TEXT NOT NULL DEFAULT ''")
     if "external_notes" not in deck_columns:
         conn.execute("ALTER TABLE decks ADD COLUMN external_notes TEXT NOT NULL DEFAULT ''")
+    if "is_private" not in deck_columns:
+        conn.execute("ALTER TABLE decks ADD COLUMN is_private INTEGER NOT NULL DEFAULT 0")
     deck_card_columns = {col["name"] for col in conn.execute("PRAGMA table_info(deck_cards)").fetchall()}
     if "quantity" not in deck_card_columns:
         conn.execute("ALTER TABLE deck_cards ADD COLUMN quantity INTEGER NOT NULL DEFAULT 1")
@@ -1723,6 +1740,33 @@ def migrate_favorite_decks_schema(conn):
     )
 
 
+def migrate_favorite_store_listings_schema(conn):
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS favorite_store_listings (
+            user_id INTEGER NOT NULL,
+            seller_user_id INTEGER NOT NULL,
+            card_id TEXT NOT NULL,
+            variant TEXT NOT NULL DEFAULT 'Normal',
+            card_condition TEXT NOT NULL DEFAULT 'Near Mint',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (user_id, seller_user_id, card_id, variant, card_condition),
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY (seller_user_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY (card_id) REFERENCES cards(scryfall_id) ON DELETE CASCADE
+        );
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_favorite_store_user ON favorite_store_listings(user_id, updated_at)")
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_favorite_store_listing
+        ON favorite_store_listings(seller_user_id, card_id, variant, card_condition)
+        """
+    )
+
+
 def cross_entity_name_exists(conn, user_id, name, exclude_table=None, exclude_id=None):
     normalized_name = re.sub(r"\s+", " ", (name or "").strip())
     if not normalized_name:
@@ -1914,6 +1958,7 @@ def migrate_user_schema(conn):
     migrate_card_sales_user_schema(conn)
     migrate_wishlists_schema(conn)
     migrate_favorite_decks_schema(conn)
+    migrate_favorite_store_listings_schema(conn)
     user_columns = table_columns(conn, "users")
     if "name" not in user_columns:
         conn.execute("ALTER TABLE users ADD COLUMN name TEXT NOT NULL DEFAULT ''")
@@ -1966,6 +2011,7 @@ def migrate_user_schema(conn):
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_containers_share_id ON containers(share_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_wishlist_items_user_card ON wishlist_items(user_id, card_id, variant)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_favorite_decks_user ON favorite_decks(user_id, updated_at)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_favorite_store_user ON favorite_store_listings(user_id, updated_at)")
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_collection_share_id ON collection(share_id)")
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_decks_share_id ON decks(share_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_collection_user_quantity ON collection(user_id, quantity)")
@@ -2052,7 +2098,7 @@ def current_user_from_token(conn, token):
 
 
 def adopt_legacy_data(conn, user_id):
-    for table in ("collection", "card_purchases", "card_meta", "wishlist_cards", "card_sales", "card_sale_journal", "inventory_adjustments", "decks", "containers"):
+    for table in ("collection", "card_purchases", "card_meta", "wishlist_cards", "card_sales", "card_sale_journal", "inventory_adjustments", "decks", "containers", "favorite_store_listings"):
         if "user_id" in table_columns(conn, table):
             conn.execute(f"UPDATE {table} SET user_id = ? WHERE user_id IS NULL", (user_id,))
     migrate_legacy_wishlist_for_user(conn, user_id)
@@ -2310,6 +2356,7 @@ def clear_user_data(conn, user_id):
             f"DELETE FROM {table} WHERE {id_column} IN (SELECT id FROM {owner_table} WHERE user_id = ?)",
             (user_id,),
         )
+    conn.execute("DELETE FROM favorite_store_listings WHERE user_id = ? OR seller_user_id = ?", (user_id, user_id))
     for table in ("notifications", "favorite_decks", "card_notes", "card_sale_journal", "card_sales", "inventory_adjustments", "wishlist_cards", "card_meta", "card_purchases", "collection", "wishlists", "containers", "decks"):
         conn.execute(f"DELETE FROM {table} WHERE user_id = ?", (user_id,))
     conn.commit()
@@ -3585,6 +3632,20 @@ def dashboard(conn, user_id):
         "SELECT COUNT(*) AS count FROM favorite_decks WHERE user_id = ?",
         (user_id,),
     ).fetchone()["count"]
+    favorite_store_count = conn.execute(
+        """
+        SELECT COUNT(*) AS count
+        FROM favorite_store_listings fav
+        JOIN card_sales sale
+          ON sale.user_id = fav.seller_user_id
+         AND sale.card_id = fav.card_id
+         AND sale.variant = fav.variant
+         AND sale.card_condition = fav.card_condition
+         AND COALESCE(sale.quantity, 0) > 0
+        WHERE fav.user_id = ?
+        """,
+        (user_id,),
+    ).fetchone()["count"]
     wishlist_count = conn.execute(
         """
         SELECT COUNT(*) AS count
@@ -3641,7 +3702,7 @@ def dashboard(conn, user_id):
     result["cards_in_decks"] = cards_in_decks
     result["container_count"] = container_count
     result["uncontained_cards"] = uncontained_cards
-    result["favorite_count"] = favorite_count + favorite_deck_count
+    result["favorite_count"] = favorite_count + favorite_deck_count + favorite_store_count
     result["wishlist_count"] = wishlist_count
     result["sale_count"] = sale_summary["count"] or 0
     result["sale_asking_total"] = sale_summary["asking_total"] or 0
@@ -3653,6 +3714,47 @@ def dashboard(conn, user_id):
     result["set_breakdown"] = set_breakdown
     result["set_completion"] = set_completion(conn, user_id)
     return result
+
+
+def home_stats(conn):
+    price_expr = current_price_sql("c")
+    totals = conn.execute(
+        f"""
+        SELECT
+            COUNT(DISTINCT u.id) AS user_count,
+            COALESCE(SUM(CASE WHEN COALESCE(col.quantity, 0) > 0 THEN col.quantity ELSE 0 END), 0) AS cataloged_cards,
+            COUNT(DISTINCT CASE WHEN COALESCE(col.quantity, 0) > 0 THEN col.card_id END) AS unique_cards,
+            COALESCE(SUM(CASE WHEN COALESCE(col.quantity, 0) > 0 THEN col.quantity * ({price_expr}) ELSE 0 END), 0) AS total_value
+        FROM users u
+        LEFT JOIN collection col ON col.user_id = u.id
+        LEFT JOIN cards c ON c.scryfall_id = col.card_id
+        """
+    ).fetchone()
+    deck_count = conn.execute("SELECT COUNT(*) AS count FROM decks").fetchone()["count"] or 0
+    container_count = conn.execute("SELECT COUNT(*) AS count FROM containers").fetchone()["count"] or 0
+    wishlist_count = conn.execute("SELECT COUNT(*) AS count FROM wishlists").fetchone()["count"] or 0
+    sale_summary = conn.execute(
+        """
+        SELECT
+            COUNT(*) AS listing_count,
+            COALESCE(SUM(quantity), 0) AS sale_quantity,
+            COALESCE(SUM(quantity * asking_price), 0) AS asking_total
+        FROM card_sales
+        WHERE COALESCE(quantity, 0) > 0
+        """
+    ).fetchone()
+    return {
+        "user_count": int(totals["user_count"] or 0),
+        "cataloged_cards": int(totals["cataloged_cards"] or 0),
+        "unique_cards": int(totals["unique_cards"] or 0),
+        "deck_count": int(deck_count),
+        "container_count": int(container_count),
+        "wishlist_count": int(wishlist_count),
+        "total_value": float(totals["total_value"] or 0),
+        "sale_listing_count": int(sale_summary["listing_count"] or 0),
+        "sale_quantity": int(sale_summary["sale_quantity"] or 0),
+        "sale_asking_total": float(sale_summary["asking_total"] or 0),
+    }
 
 
 def rows_to_dicts(rows):
@@ -3683,6 +3785,7 @@ def list_decks(conn, user_id):
         SELECT d.id, d.share_id, d.name,
                COALESCE(d.description, '') AS description,
                COALESCE(d.external_notes, '') AS external_notes,
+               COALESCE(d.is_private, 0) AS is_private,
                d.created_at, d.updated_at,
                COALESCE(SUM(dc.quantity), 0) AS card_count,
                COUNT(dc.card_id) AS unique_card_count,
@@ -3719,14 +3822,15 @@ def create_deck(conn, user_id, payload):
     description = clean_deck_text(payload.get("description"), 500, "Description")
     internal_notes = clean_deck_text(payload.get("internal_notes"), 2000, "Internal notes")
     external_notes = clean_deck_text(payload.get("external_notes"), 2000, "External notes")
+    is_private = bool_int(payload.get("is_private"))
     timestamp = now_iso()
     share_id = new_deck_share_id(conn)
     cursor = conn.execute(
         """
-        INSERT INTO decks (user_id, share_id, name, description, internal_notes, external_notes, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO decks (user_id, share_id, name, description, internal_notes, external_notes, is_private, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (user_id, share_id, name, description, internal_notes, external_notes, timestamp, timestamp),
+        (user_id, share_id, name, description, internal_notes, external_notes, is_private, timestamp, timestamp),
     )
     conn.commit()
     return {
@@ -3738,6 +3842,7 @@ def create_deck(conn, user_id, payload):
             "description": description,
             "internal_notes": internal_notes,
             "external_notes": external_notes,
+            "is_private": is_private,
             "created_at": timestamp,
             "updated_at": timestamp,
             "card_count": 0,
@@ -3763,6 +3868,7 @@ def update_deck(conn, user_id, deck_id, payload):
     description = clean_deck_text(payload.get("description"), 500, "Description")
     internal_notes = clean_deck_text(payload.get("internal_notes"), 2000, "Internal notes")
     external_notes = clean_deck_text(payload.get("external_notes"), 2000, "External notes")
+    is_private = bool_int(payload.get("is_private"))
     timestamp = now_iso()
     conn.execute(
         """
@@ -3771,10 +3877,11 @@ def update_deck(conn, user_id, deck_id, payload):
             description = ?,
             internal_notes = ?,
             external_notes = ?,
+            is_private = ?,
             updated_at = ?
         WHERE id = ? AND user_id = ?
         """,
-        (name, description, internal_notes, external_notes, timestamp, deck_id, user_id),
+        (name, description, internal_notes, external_notes, is_private, timestamp, deck_id, user_id),
     )
     conn.commit()
     return {"ok": True, "deck": deck_detail(conn, user_id, deck_id)}
@@ -3817,6 +3924,7 @@ def deck_detail(conn, user_id, deck_id):
                COALESCE(d.description, '') AS description,
                COALESCE(d.internal_notes, '') AS internal_notes,
                COALESCE(d.external_notes, '') AS external_notes,
+               COALESCE(d.is_private, 0) AS is_private,
                d.created_at, d.updated_at,
                COALESCE(SUM(dc.quantity), 0) AS card_count,
                COUNT(dc.card_id) AS unique_card_count
@@ -3863,6 +3971,7 @@ def deck_export_payload(conn, user_id):
             "description": detail.get("description") or "",
             "internal_notes": detail.get("internal_notes") or "",
             "external_notes": detail.get("external_notes") or "",
+            "is_private": bool_int(detail.get("is_private")),
             "cards": [deck_export_card(card) for card in detail.get("cards") or []],
         })
     return {
@@ -3877,7 +3986,7 @@ def deck_export_payload(conn, user_id):
 def export_decks_csv(conn, user_id):
     output = io.StringIO()
     fieldnames = [
-        "deck_name", "description", "internal_notes", "external_notes",
+        "deck_name", "description", "internal_notes", "external_notes", "is_private",
         "scryfall_id", "card_name", "set_code", "set_name", "collector_number",
         "rarity", "variant", "quantity", "type_line", "type_category",
         "colors", "color_identity", "image_small", "image_normal", "scryfall_uri",
@@ -3892,6 +4001,7 @@ def export_decks_csv(conn, user_id):
                 "description": deck.get("description") or "",
                 "internal_notes": deck.get("internal_notes") or "",
                 "external_notes": deck.get("external_notes") or "",
+                "is_private": bool_int(deck.get("is_private")),
             })
             continue
         for card in cards:
@@ -3900,6 +4010,7 @@ def export_decks_csv(conn, user_id):
                 "description": deck.get("description") or "",
                 "internal_notes": deck.get("internal_notes") or "",
                 "external_notes": deck.get("external_notes") or "",
+                "is_private": bool_int(deck.get("is_private")),
                 "scryfall_id": card.get("scryfall_id") or "",
                 "card_name": card.get("name") or "",
                 "set_code": card.get("set_code") or "",
@@ -3938,6 +4049,7 @@ def parse_decks_csv(text):
                 "description": row.get("description") or "",
                 "internal_notes": row.get("internal_notes") or "",
                 "external_notes": row.get("external_notes") or "",
+                "is_private": bool_int(row.get("is_private")),
                 "cards": [],
             })
             card_id = row.get("scryfall_id") or row.get("card_id") or row.get("id") or ""
@@ -4004,6 +4116,7 @@ def normalize_import_deck_source(payload):
             "description": str(deck_source.get("description") or "")[:500],
             "internal_notes": str(deck_source.get("internal_notes") or "")[:2000],
             "external_notes": str(deck_source.get("external_notes") or "")[:2000],
+            "is_private": bool_int(deck_source.get("is_private")),
             "cards": cards,
         })
     if not decks:
@@ -4156,8 +4269,8 @@ def commit_deck_import(conn, user_id, payload):
             ensure_import_card_cached(conn, card_payloads[key])
         cursor = conn.execute(
             """
-            INSERT INTO decks (user_id, share_id, name, description, internal_notes, external_notes, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO decks (user_id, share_id, name, description, internal_notes, external_notes, is_private, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 user_id,
@@ -4166,6 +4279,7 @@ def commit_deck_import(conn, user_id, payload):
                 clean_deck_text(deck.get("description"), 500, "Description"),
                 clean_deck_text(deck.get("internal_notes"), 2000, "Internal notes"),
                 clean_deck_text(deck.get("external_notes"), 2000, "External notes"),
+                bool_int(deck.get("is_private")),
                 timestamp,
                 timestamp,
             ),
@@ -4203,6 +4317,7 @@ def import_deck_json(conn, user_id, payload):
     description = clean_deck_text(deck_source.get("description"), 500, "Description")
     internal_notes = clean_deck_text(deck_source.get("internal_notes"), 2000, "Internal notes")
     external_notes = clean_deck_text(deck_source.get("external_notes"), 2000, "External notes")
+    is_private = bool_int(deck_source.get("is_private"))
     requested = {}
     labels = {}
     for card in cards:
@@ -4225,10 +4340,10 @@ def import_deck_json(conn, user_id, payload):
     share_id = new_deck_share_id(conn)
     cursor = conn.execute(
         """
-        INSERT INTO decks (user_id, share_id, name, description, internal_notes, external_notes, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO decks (user_id, share_id, name, description, internal_notes, external_notes, is_private, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (user_id, share_id, name, description, internal_notes, external_notes, timestamp, timestamp),
+        (user_id, share_id, name, description, internal_notes, external_notes, is_private, timestamp, timestamp),
     )
     deck_id = cursor.lastrowid
     for (card_id, variant), quantity in requested.items():
@@ -4243,10 +4358,11 @@ def import_deck_json(conn, user_id, payload):
     return {"ok": True, "deck": deck_detail(conn, user_id, deck_id), "imported": len(requested)}
 
 
-def shared_deck(conn, share_id):
+def shared_deck(conn, share_id, viewer_user_id=None):
     deck = conn.execute(
         """
         SELECT d.id, d.user_id, d.name, d.share_id,
+               COALESCE(d.is_private, 0) AS is_private,
                COALESCE(u.name, u.email, 'FoilFolio user') AS owner_name
         FROM decks d
         LEFT JOIN users u ON u.id = d.user_id
@@ -4265,7 +4381,7 @@ def shared_deck(conn, share_id):
 
 
 def shared_deck_for_viewer(conn, share_id, viewer_user_id=None):
-    payload = shared_deck(conn, share_id)
+    payload = shared_deck(conn, share_id, viewer_user_id)
     is_owner = bool(viewer_user_id and int(viewer_user_id) == int(payload.get("owner_user_id") or 0))
     payload["viewer_is_owner"] = is_owner
     payload["can_favorite"] = bool(viewer_user_id and not is_owner)
@@ -4326,6 +4442,208 @@ def list_favorite_decks(conn, user_id):
     return rows_to_dicts(rows)
 
 
+def sale_listing_key(seller_user_id, card_id, variant, condition):
+    return f"{seller_user_id}:{card_id}:{variant or 'Normal'}:{card_condition(condition)}"
+
+
+def purge_store_listing_favorites(conn, seller_user_id, card_id, variant=None, condition=None):
+    params = [seller_user_id, card_id]
+    where = "seller_user_id = ? AND card_id = ?"
+    if variant is not None:
+        where += " AND variant = ?"
+        params.append(variant or "Normal")
+    if condition is not None:
+        where += " AND card_condition = ?"
+        params.append(card_condition(condition))
+    conn.execute(f"DELETE FROM favorite_store_listings WHERE {where}", params)
+
+
+def list_favorite_store_listings(conn, user_id):
+    price_expr = (
+        "CASE "
+        "WHEN lower(coalesce(fav.variant, '')) LIKE '%etched%' AND c.current_usd_etched > 0 THEN c.current_usd_etched "
+        "WHEN lower(coalesce(fav.variant, '')) LIKE '%foil%' AND c.current_usd_foil > 0 THEN c.current_usd_foil "
+        "WHEN c.current_usd > 0 THEN c.current_usd "
+        "WHEN c.current_usd_foil > 0 THEN c.current_usd_foil "
+        "WHEN c.current_usd_etched > 0 THEN c.current_usd_etched "
+        "ELSE 0 END"
+    )
+    rows = conn.execute(
+        f"""
+        SELECT fav.seller_user_id, fav.card_id, fav.variant, fav.card_condition,
+               fav.created_at, fav.updated_at,
+               c.*,
+               sale.quantity AS sale_quantity,
+               sale.asking_price,
+               sale.quantity AS quantity,
+               sale.quantity * sale.asking_price AS sale_asking_total,
+               sale.quantity * sale.asking_price AS owned_value,
+               ({price_expr}) AS display_price,
+               sale.quantity * ({price_expr}) AS market_total,
+               COALESCE(u.name, '') AS seller_name,
+               COALESCE(u.email, '') AS seller_email,
+               COALESCE(u.store_share_id, '') AS store_share_id
+        FROM favorite_store_listings fav
+        JOIN card_sales sale
+          ON sale.user_id = fav.seller_user_id
+         AND sale.card_id = fav.card_id
+         AND sale.variant = fav.variant
+         AND sale.card_condition = fav.card_condition
+         AND COALESCE(sale.quantity, 0) > 0
+        JOIN cards c ON c.scryfall_id = fav.card_id
+        JOIN users u ON u.id = fav.seller_user_id
+        WHERE fav.user_id = ?
+        ORDER BY fav.updated_at DESC, c.name COLLATE NOCASE
+        """,
+        (user_id,),
+    ).fetchall()
+    listings = []
+    for row in rows:
+        listing = with_value_aliases(dict(row))
+        if not listing.get("store_share_id"):
+            listing["store_share_id"] = new_store_share_id(conn)
+            conn.execute("UPDATE users SET store_share_id = ? WHERE id = ?", (listing["store_share_id"], listing["seller_user_id"]))
+        listing["seller_name"] = public_display_name(
+            {
+                "name": listing.get("seller_name") or listing.get("seller_email") or "",
+                "email": listing.get("seller_email") or "",
+                "store_share_id": listing.get("store_share_id") or "",
+            },
+            "Seller",
+        )
+        listing["store_url"] = store_share_url(listing["store_share_id"])
+        listing["favorite_store"] = True
+        listing["listing_key"] = sale_listing_key(
+            listing["seller_user_id"],
+            listing["card_id"],
+            listing["variant"],
+            listing["card_condition"],
+        )
+        listings.append(listing)
+    conn.commit()
+    return listings
+
+
+def update_favorite_store_listing(conn, user_id, payload):
+    seller_user_id = int(money(payload.get("seller_user_id"), fallback=0))
+    card_id = payload.get("card_id") or payload.get("scryfall_id")
+    variant = payload.get("variant") or "Normal"
+    condition = card_condition(payload.get("card_condition"))
+    if not seller_user_id or not card_id:
+        raise ValueError("Choose a store listing.")
+    if seller_user_id == user_id:
+        raise ValueError("This is already your store listing.")
+    sale = conn.execute(
+        """
+        SELECT quantity
+        FROM card_sales
+        WHERE user_id = ? AND card_id = ? AND variant = ? AND card_condition = ? AND COALESCE(quantity, 0) > 0
+        """,
+        (seller_user_id, card_id, variant, condition),
+    ).fetchone()
+    if not sale:
+        purge_store_listing_favorites(conn, seller_user_id, card_id, variant, condition)
+        conn.commit()
+        raise KeyError("Store listing is no longer available.")
+    favorite = bool(payload.get("favorite"))
+    if favorite:
+        timestamp = now_iso()
+        conn.execute(
+            """
+            INSERT INTO favorite_store_listings (
+                user_id, seller_user_id, card_id, variant, card_condition, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(user_id, seller_user_id, card_id, variant, card_condition) DO UPDATE SET
+                updated_at = excluded.updated_at
+            """,
+            (user_id, seller_user_id, card_id, variant, condition, timestamp, timestamp),
+        )
+    else:
+        conn.execute(
+            """
+            DELETE FROM favorite_store_listings
+            WHERE user_id = ? AND seller_user_id = ? AND card_id = ? AND variant = ? AND card_condition = ?
+            """,
+            (user_id, seller_user_id, card_id, variant, condition),
+        )
+    conn.commit()
+    return {"ok": True, "favorite": favorite}
+
+
+def public_deck_preview_cards(conn, deck_id, viewer_user_id=None, limit=10):
+    price_expr = current_price_sql("c")
+    rows = conn.execute(
+        f"""
+        SELECT c.scryfall_id, c.name, c.flavor_name,
+               c.set_name, c.collector_number, c.type_line, c.type_category,
+               c.colors, c.color_identity, c.image_small, c.image_normal,
+               c.scryfall_uri, dc.variant, dc.quantity AS deck_quantity,
+               COALESCE(col.quantity, 0) AS quantity,
+               ({price_expr}) AS display_price
+        FROM deck_cards dc
+        JOIN cards c ON c.scryfall_id = dc.card_id
+        LEFT JOIN collection col
+          ON col.user_id = ?
+         AND col.card_id = dc.card_id
+         AND col.variant = dc.variant
+        WHERE dc.deck_id = ?
+        ORDER BY dc.quantity DESC, c.name COLLATE NOCASE, dc.variant
+        LIMIT ?
+        """,
+        (viewer_user_id or -1, deck_id, int(limit or 10)),
+    ).fetchall()
+    return rows_to_dicts(rows)
+
+
+def list_public_decks(conn, viewer_user_id=None):
+    rows = conn.execute(
+        """
+        SELECT d.id, d.share_id, d.user_id, d.name,
+               COALESCE(d.description, '') AS description,
+               COALESCE(d.external_notes, '') AS external_notes,
+               COALESCE(u.name, u.email, 'FoilFolio user') AS owner_name,
+               d.created_at, d.updated_at,
+               COALESCE(SUM(dc.quantity), 0) AS card_count,
+               COUNT(dc.card_id) AS unique_card_count,
+               (
+                   SELECT GROUP_CONCAT(image, '|||')
+                   FROM (
+                       SELECT DISTINCT COALESCE(NULLIF(c2.image_normal, ''), NULLIF(c2.image_small, '')) AS image
+                       FROM deck_cards dc2
+                       JOIN cards c2 ON c2.scryfall_id = dc2.card_id
+                       WHERE dc2.deck_id = d.id
+                         AND COALESCE(NULLIF(c2.image_normal, ''), NULLIF(c2.image_small, '')) IS NOT NULL
+                       ORDER BY RANDOM()
+                       LIMIT 5
+                   )
+               ) AS preview_images
+        FROM decks d
+        LEFT JOIN users u ON u.id = d.user_id
+        LEFT JOIN deck_cards dc ON dc.deck_id = d.id
+        WHERE COALESCE(d.is_private, 0) = 0
+        GROUP BY d.id
+        ORDER BY d.updated_at DESC, d.name COLLATE NOCASE
+        LIMIT 200
+        """
+    ).fetchall()
+    decks = rows_to_dicts(rows)
+    for deck in decks:
+        deck["preview_images"] = [image for image in (deck.get("preview_images") or "").split("|||") if image][:5]
+        deck["cards"] = public_deck_preview_cards(conn, deck["id"], viewer_user_id, 10)
+        deck["viewer_is_owner"] = bool(viewer_user_id and int(viewer_user_id) == int(deck.get("user_id") or 0))
+        deck["can_favorite"] = bool(viewer_user_id and not deck["viewer_is_owner"])
+        deck["can_import"] = bool(viewer_user_id and not deck["viewer_is_owner"])
+        deck["favorite_deck"] = False
+        if viewer_user_id and not deck["viewer_is_owner"]:
+            deck["favorite_deck"] = bool(conn.execute(
+                "SELECT 1 FROM favorite_decks WHERE user_id = ? AND share_id = ?",
+                (viewer_user_id, deck["share_id"]),
+            ).fetchone())
+        deck["deck_url"] = deck_share_url(deck)
+    return decks
+
+
 def update_favorite_deck(conn, user_id, share_id, payload):
     deck = shared_deck(conn, share_id)
     if int(deck.get("owner_user_id") or 0) == int(user_id):
@@ -4359,6 +4677,22 @@ def update_favorite_deck(conn, user_id, share_id, payload):
         conn.execute("DELETE FROM favorite_decks WHERE user_id = ? AND share_id = ?", (user_id, share_id))
     conn.commit()
     return {"ok": True, "favorite": favorite, "deck": shared_deck_for_viewer(conn, share_id, user_id)}
+
+
+def email_shared_deck(conn, user, share_id, payload):
+    recipient = validate_email(payload.get("email"))
+    deck = shared_deck_for_viewer(conn, share_id, user["id"])
+    share_url = deck_share_url(deck)
+    sender_name = user["name"] or user["email"]
+    subject = f"FoilFolio: {sender_name} sharing deck: {deck['name']}"
+    result = send_email(
+        recipient,
+        subject,
+        text=shared_list_email_text(deck, share_url, sender_name, "deck"),
+        html=shared_list_email_html(deck, share_url, sender_name, "deck"),
+        tags=["foilfolio", "deck-share"],
+    )
+    return {"ok": True, "email": recipient, "provider": result.get("provider"), "status": result.get("status")}
 
 
 def import_shared_deck_to_deck(conn, user_id, share_id, payload=None):
@@ -5716,6 +6050,195 @@ def card_sale_sellers(conn, card_id):
     return {"sellers": sellers}
 
 
+def list_store_front_cards(conn, query, current_user_id=None):
+    params = urllib.parse.parse_qs(query)
+    search = (params.get("search", [""])[0] or "").strip()
+    sort = params.get("sort", ["value"])[0]
+    limit = min(int(params.get("limit", ["5000"])[0] or 5000), 5000)
+    where = ["COALESCE(sale.quantity, 0) > 0"]
+    values = []
+    if search:
+        where.append("(c.name LIKE ? OR c.flavor_name LIKE ? OR c.set_name LIKE ? OR c.collector_number LIKE ? OR c.type_line LIKE ?)")
+        needle = f"%{search}%"
+        values.extend([needle, needle, needle, needle, needle])
+    where_sql = "WHERE " + " AND ".join(where)
+    price_expr = (
+        "CASE "
+        "WHEN lower(coalesce(sale.variant, '')) LIKE '%etched%' AND c.current_usd_etched > 0 THEN c.current_usd_etched "
+        "WHEN lower(coalesce(sale.variant, '')) LIKE '%foil%' AND c.current_usd_foil > 0 THEN c.current_usd_foil "
+        "WHEN c.current_usd > 0 THEN c.current_usd "
+        "WHEN c.current_usd_foil > 0 THEN c.current_usd_foil "
+        "WHEN c.current_usd_etched > 0 THEN c.current_usd_etched "
+        "ELSE 0 END"
+    )
+    sort_map = {
+        "name": "c.name COLLATE NOCASE ASC",
+        "set": "c.set_name COLLATE NOCASE ASC, CAST(c.collector_number AS INTEGER), c.collector_number",
+        "price": f"display_price DESC, c.name",
+        "value": "sale_asking_total DESC, display_price DESC, c.name",
+        "sellers": "seller_count DESC, sale_quantity DESC, c.name",
+        "quantity": "sale_quantity DESC, c.name",
+    }
+    order_sql = sort_map.get(sort, sort_map["value"])
+    rows = rows_to_dicts(conn.execute(
+        f"""
+        SELECT c.*,
+               MIN(COALESCE(NULLIF(sale.variant, ''), 'Normal')) AS variant,
+               COALESCE(SUM(sale.quantity), 0) AS quantity,
+               COALESCE(SUM(sale.quantity), 0) AS sale_quantity,
+               COALESCE(SUM(sale.quantity * sale.asking_price), 0) AS sale_asking_total,
+               MIN(sale.asking_price) AS min_asking_price,
+               MAX(sale.asking_price) AS max_asking_price,
+               COUNT(DISTINCT sale.user_id) AS seller_count,
+               COUNT(DISTINCT COALESCE(NULLIF(sale.variant, ''), 'Normal')) AS variant_count,
+               MAX(CASE WHEN LOWER(COALESCE(NULLIF(sale.variant, ''), 'Normal')) != 'normal' THEN 1 ELSE 0 END) AS has_special_variant,
+               ({price_expr}) AS display_price,
+               COALESCE(SUM(sale.quantity * ({price_expr})), 0) AS market_total,
+               COALESCE(SUM(sale.quantity * sale.asking_price), 0) AS owned_value,
+               COALESCE(SUM(sale.quantity * (sale.asking_price - ({price_expr}))), 0) AS gain_loss
+        FROM card_sales sale
+        JOIN cards c ON c.scryfall_id = sale.card_id
+        {where_sql}
+        GROUP BY c.scryfall_id
+        ORDER BY {order_sql}
+        LIMIT ?
+        """,
+        values + [limit],
+    ).fetchall())
+    for card in rows:
+        card["variant_summaries"] = store_front_variant_summaries(conn, card["scryfall_id"])
+        card["condition_inventory"] = [
+            {
+                "variant": summary["variant"],
+                "card_condition": condition["card_condition"],
+                "quantity": condition["quantity"],
+            }
+            for summary in card["variant_summaries"]
+            for condition in summary.get("conditions", [])
+        ]
+        card["favorite_store_count"] = 0
+        card["favorite_store"] = False
+        if current_user_id:
+            favorite_row = conn.execute(
+                """
+                SELECT COUNT(*) AS count
+                FROM favorite_store_listings fav
+                JOIN card_sales sale
+                  ON sale.user_id = fav.seller_user_id
+                 AND sale.card_id = fav.card_id
+                 AND sale.variant = fav.variant
+                 AND sale.card_condition = fav.card_condition
+                 AND COALESCE(sale.quantity, 0) > 0
+                WHERE fav.user_id = ? AND fav.card_id = ?
+                """,
+                (current_user_id, card["scryfall_id"]),
+            ).fetchone()
+            card["favorite_store_count"] = int((favorite_row and favorite_row["count"]) or 0)
+            card["favorite_store"] = card["favorite_store_count"] > 0
+    return rows
+
+
+def store_front_variant_summaries(conn, card_id):
+    rows = conn.execute(
+        """
+        SELECT COALESCE(NULLIF(variant, ''), 'Normal') AS variant,
+               COALESCE(NULLIF(card_condition, ''), ?) AS card_condition,
+               COALESCE(SUM(quantity), 0) AS quantity
+        FROM card_sales
+        WHERE card_id = ? AND COALESCE(quantity, 0) > 0
+        GROUP BY COALESCE(NULLIF(variant, ''), 'Normal'), COALESCE(NULLIF(card_condition, ''), ?)
+        ORDER BY variant COLLATE NOCASE, card_condition COLLATE NOCASE
+        """,
+        (DEFAULT_CARD_CONDITION, card_id, DEFAULT_CARD_CONDITION),
+    ).fetchall()
+    summaries = {}
+    for row in rows:
+        variant = row["variant"] or "Normal"
+        entry = summaries.setdefault(variant, {"variant": variant, "quantity": 0, "conditions": []})
+        quantity = int(row["quantity"] or 0)
+        entry["quantity"] += quantity
+        entry["conditions"].append({"card_condition": row["card_condition"] or DEFAULT_CARD_CONDITION, "quantity": quantity})
+    return list(summaries.values())
+
+
+def store_front_card_detail(conn, card_id, current_user_id=None):
+    card = conn.execute("SELECT * FROM cards WHERE scryfall_id = ?", (card_id,)).fetchone()
+    if not card:
+        raise KeyError("Card not found")
+    price_expr = (
+        "CASE "
+        "WHEN lower(coalesce(sale.variant, '')) LIKE '%etched%' AND c.current_usd_etched > 0 THEN c.current_usd_etched "
+        "WHEN lower(coalesce(sale.variant, '')) LIKE '%foil%' AND c.current_usd_foil > 0 THEN c.current_usd_foil "
+        "WHEN c.current_usd > 0 THEN c.current_usd "
+        "WHEN c.current_usd_foil > 0 THEN c.current_usd_foil "
+        "WHEN c.current_usd_etched > 0 THEN c.current_usd_etched "
+        "ELSE 0 END"
+    )
+    card_payload = with_value_aliases(dict(conn.execute(
+        f"""
+        SELECT c.*,
+               MIN(COALESCE(NULLIF(sale.variant, ''), 'Normal')) AS variant,
+               COALESCE(SUM(sale.quantity), 0) AS quantity,
+               COALESCE(SUM(sale.quantity), 0) AS sale_quantity,
+               COALESCE(SUM(sale.quantity * sale.asking_price), 0) AS sale_asking_total,
+               MIN(sale.asking_price) AS min_asking_price,
+               MAX(sale.asking_price) AS max_asking_price,
+               COUNT(DISTINCT sale.user_id) AS seller_count,
+               COUNT(DISTINCT COALESCE(NULLIF(sale.variant, ''), 'Normal')) AS variant_count,
+               MAX(CASE WHEN LOWER(COALESCE(NULLIF(sale.variant, ''), 'Normal')) != 'normal' THEN 1 ELSE 0 END) AS has_special_variant,
+               ({price_expr}) AS display_price,
+               COALESCE(SUM(sale.quantity * ({price_expr})), 0) AS market_total,
+               COALESCE(SUM(sale.quantity * sale.asking_price), 0) AS owned_value,
+               COALESCE(SUM(sale.quantity * (sale.asking_price - ({price_expr}))), 0) AS gain_loss
+        FROM cards c
+        LEFT JOIN card_sales sale ON sale.card_id = c.scryfall_id AND COALESCE(sale.quantity, 0) > 0
+        WHERE c.scryfall_id = ?
+        GROUP BY c.scryfall_id
+        """,
+        (card_id,),
+    ).fetchone()))
+    card_payload["variant_summaries"] = store_front_variant_summaries(conn, card_id)
+    seller_rows = conn.execute(
+        """
+        SELECT u.id AS user_id, COALESCE(u.name, '') AS name, COALESCE(u.store_share_id, '') AS store_share_id,
+               COALESCE(NULLIF(sale.variant, ''), 'Normal') AS variant,
+               COALESCE(NULLIF(sale.card_condition, ''), ?) AS card_condition,
+               COALESCE(sale.quantity, 0) AS sale_quantity,
+               sale.asking_price
+        FROM card_sales sale
+        JOIN users u ON u.id = sale.user_id
+        WHERE sale.card_id = ? AND COALESCE(sale.quantity, 0) > 0
+        ORDER BY sale.asking_price ASC, u.name COLLATE NOCASE, sale.variant COLLATE NOCASE, sale.card_condition COLLATE NOCASE
+        """,
+        (DEFAULT_CARD_CONDITION, card_id),
+    ).fetchall()
+    sellers = []
+    for row in seller_rows:
+        seller = dict(row)
+        if not seller.get("store_share_id"):
+            seller["store_share_id"] = new_store_share_id(conn)
+            conn.execute("UPDATE users SET store_share_id = ? WHERE id = ?", (seller["store_share_id"], row["user_id"]))
+        seller["seller_name"] = public_display_name(row, "Seller")
+        seller["store_url"] = store_share_url(seller["store_share_id"])
+        seller["is_current_user"] = bool(current_user_id and int(current_user_id) == int(row["user_id"]))
+        seller["favorite_store"] = False
+        if current_user_id and not seller["is_current_user"]:
+            seller["favorite_store"] = bool(conn.execute(
+                """
+                SELECT 1
+                FROM favorite_store_listings
+                WHERE user_id = ? AND seller_user_id = ? AND card_id = ? AND variant = ? AND card_condition = ?
+                """,
+                (current_user_id, row["user_id"], card_id, seller["variant"], seller["card_condition"]),
+            ).fetchone())
+        seller["listing_key"] = sale_listing_key(row["user_id"], card_id, seller["variant"], seller["card_condition"])
+        sellers.append(seller)
+    card_payload["favorite_store"] = any(seller.get("favorite_store") for seller in sellers)
+    card_payload["favorite_store_count"] = sum(1 for seller in sellers if seller.get("favorite_store"))
+    conn.commit()
+    return {"card": card_payload, "sellers": sellers}
+
+
 def shared_store(conn, share_id):
     user = conn.execute(
         """
@@ -6896,11 +7419,22 @@ def update_cards_for_sale(conn, user_id, payload):
                     "DELETE FROM card_sales WHERE user_id = ? AND card_id = ? AND variant = ? AND card_condition = ?",
                     (user_id, card_id, variant, sale_condition),
                 )
+                purge_store_listing_favorites(conn, user_id, card_id, variant, sale_condition)
             else:
+                rows_to_purge = conn.execute(
+                    """
+                    SELECT variant, card_condition
+                    FROM card_sales
+                    WHERE user_id = ? AND card_id = ? AND variant = ?
+                    """,
+                    (user_id, card_id, variant),
+                ).fetchall()
                 cursor = conn.execute(
                     "DELETE FROM card_sales WHERE user_id = ? AND card_id = ? AND variant = ?",
                     (user_id, card_id, variant),
                 )
+                for row in rows_to_purge:
+                    purge_store_listing_favorites(conn, user_id, card_id, row["variant"], row["card_condition"])
             updated += cursor.rowcount
             continue
         owned = conn.execute(
@@ -7097,6 +7631,7 @@ def mark_card_sold(conn, user_id, payload):
             "DELETE FROM card_sales WHERE user_id = ? AND card_id = ? AND variant = ? AND card_condition = ?",
             (user_id, card_id, variant, sale_condition),
         )
+        purge_store_listing_favorites(conn, user_id, card_id, variant, sale_condition)
     collection_row = rollup_collection_from_purchases(conn, user_id, card_id, variant)
     conn.commit()
     return {
@@ -7540,6 +8075,8 @@ class Handler(SimpleHTTPRequestHandler):
                 if parsed.path == "/api/auth/password-reset":
                     params = urllib.parse.parse_qs(parsed.query)
                     return self.send_json(verify_password_reset_token(conn, params.get("token", [""])[0]))
+                if parsed.path == "/api/home":
+                    return self.send_json(home_stats(conn))
                 if parsed.path == "/api/dashboard":
                     user = self.require_user(conn)
                     return self.send_json(dashboard(conn, user["id"]))
@@ -7552,6 +8089,17 @@ class Handler(SimpleHTTPRequestHandler):
                 if parsed.path == "/api/cards/for-sale":
                     user = self.require_user(conn)
                     return self.send_json({"cards": list_sale_cards(conn, parsed.query, user["id"])})
+                if parsed.path == "/api/store-front":
+                    user = self.current_user(conn)
+                    return self.send_json({"cards": list_store_front_cards(conn, parsed.query, user["id"] if user else None)})
+                match = re.match(r"^/api/store-front/([^/]+)$", parsed.path)
+                if match:
+                    user = self.current_user(conn)
+                    return self.send_json(store_front_card_detail(
+                        conn,
+                        urllib.parse.unquote(match.group(1)),
+                        user["id"] if user else None,
+                    ))
                 if parsed.path == "/api/notifications":
                     user = self.require_user(conn)
                     params = urllib.parse.parse_qs(parsed.query)
@@ -7565,6 +8113,9 @@ class Handler(SimpleHTTPRequestHandler):
                 if parsed.path == "/api/favorite-decks":
                     user = self.require_user(conn)
                     return self.send_json({"decks": list_favorite_decks(conn, user["id"])})
+                if parsed.path == "/api/favorite-store-listings":
+                    user = self.require_user(conn)
+                    return self.send_json({"listings": list_favorite_store_listings(conn, user["id"])})
                 match = re.match(r"^/api/wishlists/([0-9]+)$", parsed.path)
                 if match:
                     user = self.require_user(conn)
@@ -7604,6 +8155,9 @@ class Handler(SimpleHTTPRequestHandler):
                 if parsed.path == "/api/decks":
                     user = self.require_user(conn)
                     return self.send_json({"decks": list_decks(conn, user["id"])})
+                if parsed.path == "/api/browse-decks":
+                    user = self.current_user(conn)
+                    return self.send_json({"decks": list_public_decks(conn, user["id"] if user else None)})
                 if parsed.path == "/api/decks/export.json":
                     user = self.require_user(conn)
                     data = json.dumps(deck_export_payload(conn, user["id"]), indent=2).encode("utf-8")
@@ -7675,6 +8229,7 @@ class Handler(SimpleHTTPRequestHandler):
                     return self.send_json({
                         "cards": list_cards(conn, "owned=owned&favorite=1&sort=value&limit=5000", user["id"]),
                         "decks": list_favorite_decks(conn, user["id"]),
+                        "store": list_favorite_store_listings(conn, user["id"]),
                         "readonly": True,
                     })
                 if parsed.path == "/api/scryfall/search":
@@ -7724,7 +8279,7 @@ class Handler(SimpleHTTPRequestHandler):
             or re.match(r"^/favorites/shared/?$", parsed.path)
             or re.match(r"^/verify-email/[^/]+/?$", parsed.path)
             or re.match(r"^/reset-password/[^/]+/?$", parsed.path)
-            or re.match(r"^/(favorites|collection|sets|decks|containers|missing-list|for-sale|wishlist|notifications|search|import)/?$", parsed.path)
+            or re.match(r"^/(dashboard|favorites|collection|sets|decks|browse-decks|containers|missing-list|for-sale|store-front|wishlist|notifications|search|import)/?$", parsed.path)
         ):
             self.path = "/index.html"
         return super().do_GET()
@@ -7842,6 +8397,13 @@ class Handler(SimpleHTTPRequestHandler):
                 if match:
                     user = self.require_user(conn)
                     return self.send_json(update_favorite_deck(conn, user["id"], urllib.parse.unquote(match.group(1)), self.read_json()))
+                if parsed.path == "/api/store-front/favorite":
+                    user = self.require_user(conn)
+                    return self.send_json(update_favorite_store_listing(conn, user["id"], self.read_json()))
+                match = re.match(r"^/api/shared-decks/([^/]+)/email$", parsed.path)
+                if match:
+                    user = self.require_user(conn)
+                    return self.send_json(email_shared_deck(conn, user, urllib.parse.unquote(match.group(1)), self.read_json()))
                 match = re.match(r"^/api/shared-decks/([^/]+)/import$", parsed.path)
                 if match:
                     user = self.require_user(conn)

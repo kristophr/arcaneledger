@@ -2,8 +2,11 @@ const state = {
   cards: [],
   favoriteCards: [],
   favoriteDecks: [],
+  favoriteStores: [],
   missingCards: [],
   saleCards: [],
+  storeFrontCards: [],
+  browseDecks: [],
   wishlistCards: [],
   wishlists: [],
   notifications: [],
@@ -17,6 +20,7 @@ const state = {
   favoriteSearchTimer: null,
   missingSearchTimer: null,
   saleSearchTimer: null,
+  storeFrontSearchTimer: null,
   wishlistSearchTimer: null,
   catalogSearchTimer: null,
   editingCard: null,
@@ -29,6 +33,8 @@ const state = {
   activeOwnedSet: null,
   decks: [],
   activeDeck: null,
+  deckEditorDirty: false,
+  deckEditorSnapshot: "",
   activeWishlist: null,
   pendingWishlistCard: null,
   pendingWishlistOptions: null,
@@ -46,6 +52,7 @@ const state = {
   user: null,
   collectionView: localStorage.getItem("foilfolio.collectionView") || "tiles",
   favoritesView: localStorage.getItem("foilfolio.favoritesView") || "tiles",
+  favoritesFilter: localStorage.getItem("foilfolio.favoritesFilter") || "all",
   settings: null,
 };
 
@@ -71,15 +78,18 @@ const disallowedNameWords = new Set([
   "chink", "gook", "tranny", "nazi", "hitler",
 ]);
 const pageRoutes = {
-  dashboard: "/",
+  home: "/",
+  dashboard: "/dashboard",
   search: "/search",
   favorites: "/favorites",
   collection: "/collection",
   sets: "/sets",
   decks: "/decks",
+  "browse-decks": "/browse-decks",
   containers: "/containers",
   "missing-list": "/missing-list",
   "for-sale": "/for-sale",
+  "store-front": "/store-front",
   wishlist: "/wishlist",
   notifications: "/notifications",
   settings: "/settings",
@@ -100,6 +110,15 @@ const els = {
   cardsInDecks: document.querySelector("#cardsInDecks"),
   containerCount: document.querySelector("#containerCount"),
   uncontainedCards: document.querySelector("#uncontainedCards"),
+  homeTotalValue: document.querySelector("#homeTotalValue"),
+  homeUserCount: document.querySelector("#homeUserCount"),
+  homeCatalogedCards: document.querySelector("#homeCatalogedCards"),
+  homeUniqueCards: document.querySelector("#homeUniqueCards"),
+  homeDeckCount: document.querySelector("#homeDeckCount"),
+  homeContainerCount: document.querySelector("#homeContainerCount"),
+  homeWishlistCount: document.querySelector("#homeWishlistCount"),
+  homeSaleQuantity: document.querySelector("#homeSaleQuantity"),
+  homeSaleAskingTotal: document.querySelector("#homeSaleAskingTotal"),
   historyCount: document.querySelector("#historyCount"),
   historyChart: document.querySelector("#historyChart"),
   refreshPriceSnapshotsButton: document.querySelector("#refreshPriceSnapshotsButton"),
@@ -111,6 +130,8 @@ const els = {
   favoritesGrid: document.querySelector("#favoritesGrid"),
   missingGrid: document.querySelector("#missingGrid"),
   saleGrid: document.querySelector("#saleGrid"),
+  storeFrontGrid: document.querySelector("#storeFrontGrid"),
+  browseDecksGrid: document.querySelector("#browseDecksGrid"),
   wishlistGrid: document.querySelector("#wishlistGrid"),
   wishlistsGrid: document.querySelector("#wishlistsGrid"),
   catalogSearchGrid: document.querySelector("#catalogSearchGrid"),
@@ -118,6 +139,8 @@ const els = {
   favoritesStatus: document.querySelector("#favoritesStatus"),
   missingStatus: document.querySelector("#missingStatus"),
   saleStatus: document.querySelector("#saleStatus"),
+  storeFrontStatus: document.querySelector("#storeFrontStatus"),
+  browseDecksStatus: document.querySelector("#browseDecksStatus"),
   saleModalStatus: document.querySelector("#saleModalStatus"),
   wishlistStatus: document.querySelector("#wishlistStatus"),
   notificationsStatus: document.querySelector("#notificationsStatus"),
@@ -128,6 +151,7 @@ const els = {
   favoriteSearchInput: document.querySelector("#favoriteSearchInput"),
   missingSearchInput: document.querySelector("#missingSearchInput"),
   saleSearchInput: document.querySelector("#saleSearchInput"),
+  storeFrontSearchInput: document.querySelector("#storeFrontSearchInput"),
   wishlistSearchInput: document.querySelector("#wishlistSearchInput"),
   catalogSearchForm: document.querySelector("#catalogSearchForm"),
   catalogSearchInput: document.querySelector("#catalogSearchInput"),
@@ -144,12 +168,14 @@ const els = {
   favoriteSortSelect: document.querySelector("#favoriteSortSelect"),
   missingSortSelect: document.querySelector("#missingSortSelect"),
   saleSortSelect: document.querySelector("#saleSortSelect"),
+  storeFrontSortSelect: document.querySelector("#storeFrontSortSelect"),
   wishlistSortSelect: document.querySelector("#wishlistSortSelect"),
   catalogSortSelect: document.querySelector("#catalogSortSelect"),
   tileViewButton: document.querySelector("#tileViewButton"),
   listViewButton: document.querySelector("#listViewButton"),
   favoriteTileViewButton: document.querySelector("#favoriteTileViewButton"),
   favoriteListViewButton: document.querySelector("#favoriteListViewButton"),
+  favoriteFilterButtons: document.querySelectorAll("[data-favorites-filter]"),
   shareFavoritesButton: document.querySelector("#shareFavoritesButton"),
   collectionBulkBar: document.querySelector("#collectionBulkBar"),
   favoritesBulkBar: document.querySelector("#favoritesBulkBar"),
@@ -162,6 +188,8 @@ const els = {
   favoriteAddToContainerButton: document.querySelector("#favoriteAddToContainerButton"),
   addCardButton: document.querySelector("#addCardButton"),
   accountButton: document.querySelector("#accountButton"),
+  topThemeControl: document.querySelector("#topThemeControl"),
+  topThemeSelect: document.querySelector("#topThemeSelect"),
   logoutButton: document.querySelector("#logoutButton"),
   importStatus: document.querySelector("#importStatus"),
   jsonImportFile: document.querySelector("#jsonImportFile"),
@@ -321,6 +349,10 @@ const els = {
   soldSubtitle: document.querySelector("#soldSubtitle"),
   closeSoldButton: document.querySelector("#closeSoldButton"),
   cancelSoldButton: document.querySelector("#cancelSoldButton"),
+  storeFrontDetailOverlay: document.querySelector("#storeFrontDetailOverlay"),
+  storeFrontDetailTitle: document.querySelector("#storeFrontDetailTitle"),
+  storeFrontDetailBody: document.querySelector("#storeFrontDetailBody"),
+  closeStoreFrontDetailButton: document.querySelector("#closeStoreFrontDetailButton"),
   containerDetailOverlay: document.querySelector("#containerDetailOverlay"),
   containerDetailTitle: document.querySelector("#containerDetailTitle"),
   containerDetailMeta: document.querySelector("#containerDetailMeta"),
@@ -419,9 +451,11 @@ function applySettings() {
   const settings = state.settings || defaultSettings();
   document.documentElement.lang = settings.language || "en";
   document.documentElement.dataset.theme = settings.theme || "light";
+  if (els.topThemeSelect) {
+    els.topThemeSelect.value = settings.theme || "light";
+  }
   if (els.settingsPageForm) {
     els.settingsPageForm.language.value = settings.language || "en";
-    els.settingsPageForm.theme.value = settings.theme || "light";
   }
 }
 
@@ -468,8 +502,14 @@ function updateAuthUi() {
     command.hidden = !loggedIn && protectedPage(target);
   }
   if (els.accountButton) {
-    els.accountButton.textContent = loggedIn ? state.user.email : "Log In";
-    els.accountButton.title = loggedIn ? "Account settings" : "Log in";
+    els.accountButton.textContent = loggedIn ? (state.user.name || state.user.email) : "Log In";
+    els.accountButton.title = loggedIn ? `Account settings - ${state.user.email}` : "Log in";
+  }
+  if (els.addCardButton) {
+    els.addCardButton.hidden = !loggedIn;
+  }
+  if (els.topThemeControl) {
+    els.topThemeControl.hidden = !loggedIn;
   }
   if (els.logoutButton) {
     const icon = els.logoutButton.querySelector("[aria-hidden='true']");
@@ -644,7 +684,7 @@ async function submitAuthForm() {
 }
 
 async function loadEmailVerification(token) {
-  activatePage("search", { replace: true, promptLogin: false });
+  activatePage("home", { replace: true, promptLogin: false });
   try {
     const result = await api(`/api/auth/verification?token=${encodeURIComponent(token)}`);
     els.authForm.reset();
@@ -657,7 +697,7 @@ async function loadEmailVerification(token) {
 }
 
 async function loadPasswordReset(token) {
-  activatePage("search", { replace: true, promptLogin: false });
+  activatePage("home", { replace: true, promptLogin: false });
   try {
     const result = await api(`/api/auth/password-reset?token=${encodeURIComponent(token)}`);
     els.authForm.reset();
@@ -674,6 +714,8 @@ async function logout() {
   state.user = null;
   state.cards = [];
   state.favoriteCards = [];
+  state.favoriteDecks = [];
+  state.favoriteStores = [];
   state.missingCards = [];
   state.saleCards = [];
   state.wishlistCards = [];
@@ -686,11 +728,11 @@ async function logout() {
   state.activeOwnedSet = null;
   updateAuthUi();
   updateNotificationsDot();
-  activatePage("search", { push: true });
+  activatePage("home", { push: true });
 }
 
 function protectedPage(page) {
-  return !["search", "deck-share", "card-share", "favorites-share", "wishlist-share", "container-share", "store-share"].includes(page);
+  return !["home", "search", "store-front", "browse-decks", "deck-share", "card-share", "favorites-share", "wishlist-share", "container-share", "store-share"].includes(page);
 }
 
 function valueClass(value) {
@@ -1262,6 +1304,29 @@ function setFavoritesView(view) {
   renderFavorites();
 }
 
+function setFavoritesFilter(filter) {
+  state.favoritesFilter = ["all", "cards", "decks", "store"].includes(filter) ? filter : "all";
+  localStorage.setItem("foilfolio.favoritesFilter", state.favoritesFilter);
+  renderFavorites();
+}
+
+function renderHome(data = {}) {
+  if (els.homeTotalValue) els.homeTotalValue.textContent = dollars.format(data.total_value || 0);
+  if (els.homeUserCount) els.homeUserCount.textContent = integer.format(data.user_count || 0);
+  if (els.homeCatalogedCards) els.homeCatalogedCards.textContent = integer.format(data.cataloged_cards || 0);
+  if (els.homeUniqueCards) els.homeUniqueCards.textContent = integer.format(data.unique_cards || 0);
+  if (els.homeDeckCount) els.homeDeckCount.textContent = integer.format(data.deck_count || 0);
+  if (els.homeContainerCount) els.homeContainerCount.textContent = integer.format(data.container_count || 0);
+  if (els.homeWishlistCount) els.homeWishlistCount.textContent = integer.format(data.wishlist_count || 0);
+  if (els.homeSaleQuantity) els.homeSaleQuantity.textContent = integer.format(data.sale_quantity || 0);
+  if (els.homeSaleAskingTotal) els.homeSaleAskingTotal.textContent = dollars.format(data.sale_asking_total || 0);
+}
+
+async function loadHome() {
+  const data = await api("/api/home");
+  renderHome(data);
+}
+
 function renderDashboard(data) {
   state.dashboard = data;
   els.currentValue.textContent = dollars.format(data.current_total || 0);
@@ -1364,14 +1429,24 @@ function replacePageRoute(pageName) {
 }
 
 function activatePage(pageName, options = {}) {
-  const page = pageRoutes[pageName] ? pageName : "dashboard";
+  const page = pageRoutes[pageName] ? pageName : "home";
+  if (deckEditorIsVisible() && state.deckEditorDirty) {
+    if (!confirmDiscardDeckEditorChanges()) {
+      if (options.fromPop && state.activeDeck?.id) {
+        window.history.pushState({}, "", `/decks/${encodeURIComponent(state.activeDeck.id)}`);
+      }
+      return;
+    }
+    discardDeckEditorChanges();
+  }
   if (protectedPage(page) && !state.user) {
     if (options.replace) {
-      replacePageRoute("search");
+      replacePageRoute("home");
     } else if (options.push) {
-      pushPageRoute("search");
+      pushPageRoute("home");
     }
-    showPage("search");
+    showPage("home");
+    loadHome().catch((error) => setStatus(error.message, "error"));
     if (options.promptLogin !== false) {
       openAuthModal("login", "Log in or create an account to use that feature.");
     }
@@ -1383,6 +1458,9 @@ function activatePage(pageName, options = {}) {
     pushPageRoute(page);
   }
   showPage(page);
+  if (page === "home") {
+    loadHome().catch((error) => setStatus(error.message, "error"));
+  }
   if (page === "settings") {
     renderSettingsPage();
   }
@@ -1422,6 +1500,17 @@ function activatePage(pageName, options = {}) {
       setStatus(error.message, "error", els.saleStatus);
     });
   }
+  if (page === "store-front") {
+    clearSelectedCards();
+    loadStoreFront().catch((error) => {
+      setStatus(error.message, "error", els.storeFrontStatus);
+    });
+  }
+  if (page === "browse-decks") {
+    loadBrowseDecks().catch((error) => {
+      setStatus(error.message, "error", els.browseDecksStatus);
+    });
+  }
   if (page === "wishlist") {
     clearSelectedCards();
     loadWishlists().catch((error) => {
@@ -1455,6 +1544,7 @@ function activeStatusTarget() {
   if (visiblePage === "sets") return els.setsStatus;
   if (visiblePage === "missing-list") return els.missingStatus;
   if (visiblePage === "for-sale") return els.saleStatus;
+  if (visiblePage === "store-front") return els.storeFrontStatus;
   if (visiblePage === "wishlist") return els.wishlistStatus;
   if (visiblePage === "notifications") return els.notificationsStatus;
   if (visiblePage === "search") return els.catalogSearchStatus;
@@ -1466,6 +1556,7 @@ async function reloadVisibleCardPages() {
   const favoritesVisible = Array.from(els.pages).some((page) => page.dataset.page === "favorites" && !page.hidden);
   const missingVisible = Array.from(els.pages).some((page) => page.dataset.page === "missing-list" && !page.hidden);
   const saleVisible = Array.from(els.pages).some((page) => page.dataset.page === "for-sale" && !page.hidden);
+  const storeFrontVisible = Array.from(els.pages).some((page) => page.dataset.page === "store-front" && !page.hidden);
   const wishlistVisible = Array.from(els.pages).some((page) => page.dataset.page === "wishlist" && !page.hidden);
   const notificationsVisible = Array.from(els.pages).some((page) => page.dataset.page === "notifications" && !page.hidden);
   if (favoritesVisible) {
@@ -1476,6 +1567,9 @@ async function reloadVisibleCardPages() {
   }
   if (saleVisible) {
     tasks.push(loadSaleCards());
+  }
+  if (storeFrontVisible) {
+    tasks.push(loadStoreFront());
   }
   if (wishlistVisible) {
     tasks.push(loadWishlists());
@@ -1813,6 +1907,15 @@ function saleQuery() {
   return params.toString();
 }
 
+function storeFrontQuery() {
+  const params = new URLSearchParams({
+    search: els.storeFrontSearchInput.value.trim(),
+    sort: els.storeFrontSortSelect.value,
+    limit: "5000",
+  });
+  return params.toString();
+}
+
 async function loadCards() {
   const data = await api(`/api/cards?${cardQuery()}`);
   state.cards = data.cards || [];
@@ -1834,12 +1937,14 @@ async function loadOwnedSets() {
 }
 
 async function loadFavorites() {
-  const [cardData, deckData] = await Promise.all([
+  const [cardData, deckData, storeData] = await Promise.all([
     api(`/api/cards?${favoriteQuery()}`),
     api("/api/favorite-decks"),
+    api("/api/favorite-store-listings"),
   ]);
   state.favoriteCards = cardData.cards || [];
   state.favoriteDecks = deckData.decks || [];
+  state.favoriteStores = storeData.listings || [];
   renderFavorites();
 }
 
@@ -1969,6 +2074,12 @@ async function loadSaleCards() {
   const data = await api(`/api/cards/for-sale?${saleQuery()}`);
   state.saleCards = data.cards || [];
   renderSaleList();
+}
+
+async function loadStoreFront() {
+  const data = await api(`/api/store-front?${storeFrontQuery()}`, { promptLogin: false });
+  state.storeFrontCards = data.cards || [];
+  renderStoreFront();
 }
 
 function renderCollection() {
@@ -2166,6 +2277,9 @@ function renderFavorites() {
   els.favoritesGrid.className = state.favoritesView === "list" ? "cards-list" : "cards-grid";
   els.favoriteTileViewButton.classList.toggle("is-active", state.favoritesView === "tiles");
   els.favoriteListViewButton.classList.toggle("is-active", state.favoritesView === "list");
+  for (const button of els.favoriteFilterButtons || []) {
+    button.classList.toggle("is-active", button.dataset.favoritesFilter === state.favoritesFilter);
+  }
   const options = {
     selectable: true,
     hideWishlist: true,
@@ -2178,6 +2292,9 @@ function renderFavorites() {
   };
   const container = document.createElement("div");
   container.className = "favorites-mixed-shell";
+  const showCards = state.favoritesFilter === "all" || state.favoritesFilter === "cards";
+  const showDecks = state.favoritesFilter === "all" || state.favoritesFilter === "decks";
+  const showStore = state.favoritesFilter === "all" || state.favoritesFilter === "store";
   const cardsShell = document.createElement("div");
   cardsShell.className = state.favoritesView === "list" ? "cards-list favorites-card-list" : "cards-grid favorites-card-grid";
   if (state.favoritesView === "list") {
@@ -2186,10 +2303,16 @@ function renderFavorites() {
     renderCards(state.favoriteCards, cardsShell, options);
   }
   const decksShell = renderFavoriteDecks();
+  const storeShell = renderFavoriteStoreListings();
   els.favoritesGrid.innerHTML = "";
-  if (state.favoriteDecks.length) container.appendChild(decksShell);
-  if (state.favoriteCards.length) container.appendChild(cardsShell);
-  if (!state.favoriteDecks.length && !state.favoriteCards.length) {
+  if (showDecks && state.favoriteDecks.length) container.appendChild(decksShell);
+  if (showStore && state.favoriteStores.length) container.appendChild(storeShell);
+  if (showCards && state.favoriteCards.length) container.appendChild(cardsShell);
+  if (
+    (!showDecks || !state.favoriteDecks.length)
+    && (!showStore || !state.favoriteStores.length)
+    && (!showCards || !state.favoriteCards.length)
+  ) {
     container.innerHTML = '<div class="empty-state">No favorites yet.</div>';
   }
   els.favoritesGrid.appendChild(container);
@@ -2240,6 +2363,52 @@ function renderFavoriteDecks() {
       }
     });
     grid.appendChild(item);
+  }
+  return section;
+}
+
+function renderFavoriteStoreListings() {
+  const section = document.createElement("section");
+  section.className = "favorite-decks-section favorite-store-section";
+  section.innerHTML = `
+    <div class="favorite-section-head">
+      <span class="storefront-icon" aria-hidden="true"></span>
+      <strong>Store</strong>
+    </div>
+    <div class="favorite-store-list"></div>
+  `;
+  const list = section.querySelector(".favorite-store-list");
+  for (const listing of state.favoriteStores) {
+    const row = document.createElement("article");
+    row.className = "deck-card-row favorite-store-row";
+    row.innerHTML = `
+      <img src="${escapeHtml(listing.image_small || listing.image_normal || "")}" alt="">
+      <div>
+        <strong>${escapeHtml(cardTitle(listing))}</strong>
+        <span>${escapeHtml(listing.seller_name || "Seller")} - ${escapeHtml(listing.variant || "Normal")} - ${escapeHtml(listing.card_condition || "Near Mint")}</span>
+        <div class="deck-card-tags">
+          <span>${integer.format(listing.sale_quantity || listing.quantity || 0)} for sale</span>
+          <span>${dollars.format(listing.asking_price || 0)} ask</span>
+          <span>${dollars.format(listing.display_price || 0)} market</span>
+        </div>
+      </div>
+      <div class="wishlist-card-actions">
+        <button class="share-button favorite-store-remove" type="button" aria-label="Remove store favorite" title="Remove favorite">☆</button>
+        <a class="share-button" href="${escapeHtml(listing.store_url || "#")}" target="_blank" rel="noreferrer" aria-label="Open seller store" title="Open seller store">&#8599;</a>
+      </div>
+    `;
+    row.addEventListener("click", (event) => {
+      if (event.target.closest("button, a")) return;
+      if (listing.store_url) window.open(listing.store_url, "_blank", "noopener,noreferrer");
+    });
+    row.querySelector(".favorite-store-remove").addEventListener("click", async () => {
+      const confirmed = window.confirm(`Remove ${cardTitle(listing)} from Store favorites?`);
+      if (!confirmed) return;
+      await toggleStoreFavoriteListing(listing, false, { statusTarget: els.favoritesStatus });
+      await loadFavorites();
+      await refresh();
+    });
+    list.appendChild(row);
   }
   return section;
 }
@@ -2421,7 +2590,7 @@ function closeAssignWishlistModal() {
 
 function shareUrlForEntity(type, entity) {
   if (type === "card") return shareUrlForCard(entity);
-  if (type === "deck") return shareUrlForDeck(entity);
+  if (type === "deck" || type === "shared-deck") return shareUrlForDeck(entity);
   if (type === "container") return shareUrlForContainer(entity);
   if (type === "set") return shareUrlForSet(entity);
   return shareUrlForWishlist(entity);
@@ -2429,7 +2598,7 @@ function shareUrlForEntity(type, entity) {
 
 function emailEntityLabel(type) {
   if (type === "card") return "Card";
-  if (type === "deck") return "Deck";
+  if (type === "deck" || type === "shared-deck") return "Deck";
   if (type === "container") return "Container";
   if (type === "set") return "Set";
   return "Wishlist";
@@ -2440,7 +2609,9 @@ function openEmailShareModal(type, entity) {
   state.emailingWishlist = type === "wishlist" ? entity : null;
   els.emailWishlistForm.reset();
   els.emailWishlistForm.entity_type.value = type;
-  els.emailWishlistForm.entity_id.value = entity.id || entity.set_code || entity.scryfall_id || entity.card_id || "";
+  els.emailWishlistForm.entity_id.value = type === "shared-deck"
+    ? (entity.share_id || "")
+    : (entity.id || entity.set_code || entity.scryfall_id || entity.card_id || "");
   const label = emailEntityLabel(type);
   els.emailWishlistTitle.textContent = `Email ${entity.name || label}`;
   els.emailWishlistStatus.textContent = shareUrlForEntity(type, entity);
@@ -2714,6 +2885,190 @@ function renderSaleList() {
   }
 }
 
+function saleAskingLabel(card) {
+  const min = Number(card.min_asking_price || card.sale_price || 0);
+  const max = Number(card.max_asking_price || card.sale_price || 0);
+  if (min > 0 && max > 0 && Math.abs(min - max) > 0.004) return `${dollars.format(min)} - ${dollars.format(max)}`;
+  return dollars.format(min || max || 0);
+}
+
+async function toggleStoreFavoriteListing(listing, favorite, options = {}) {
+  if (!state.user) {
+    openAuthModal("login", "Log in to favorite store listings.");
+    return null;
+  }
+  if (Number(listing.seller_user_id || listing.user_id || 0) === Number(state.user.id || 0)) {
+    setStatus("This is already your store listing.", "", options.statusTarget || els.storeFrontStatus);
+    return null;
+  }
+  const result = await api("/api/store-front/favorite", {
+    method: "POST",
+    body: JSON.stringify({
+      seller_user_id: listing.seller_user_id || listing.user_id,
+      card_id: listing.card_id || listing.scryfall_id,
+      variant: listing.variant || "Normal",
+      card_condition: listing.card_condition || "Near Mint",
+      favorite,
+    }),
+    promptLogin: true,
+  });
+  setStatus(
+    favorite ? `Favorited ${cardTitle(listing)} store listing.` : `Removed ${cardTitle(listing)} store favorite.`,
+    favorite ? "success" : "",
+    options.statusTarget || els.storeFrontStatus,
+  );
+  return result;
+}
+
+function renderStoreFront() {
+  if (!els.storeFrontGrid) return;
+  if (els.storeFrontStatus) {
+    const count = state.storeFrontCards.length;
+    const quantity = state.storeFrontCards.reduce((total, card) => total + Number(card.sale_quantity || card.quantity || 0), 0);
+    els.storeFrontStatus.textContent = `${integer.format(count)} card${count === 1 ? "" : "s"} listed - ${integer.format(quantity)} total for sale`;
+  }
+  const cards = (state.storeFrontCards || []).map((card) => ({
+    ...card,
+    readonly: true,
+    quantity: Number(card.sale_quantity || card.quantity || 0),
+    owned_value: Number(card.sale_asking_total || card.owned_value || 0),
+    total_value: Number(card.sale_asking_total || card.owned_value || 0),
+    gain_loss: Number(card.gain_loss || 0),
+  }));
+  renderCards(cards, els.storeFrontGrid, {
+    readonly: true,
+    hideFavorite: true,
+    hideWishlist: true,
+    onOpenCard: (card) => {
+      openStoreFrontCardDetail(card.scryfall_id || card.card_id).catch((error) => setStatus(error.message, "error", els.storeFrontStatus));
+    },
+  });
+  for (const tile of els.storeFrontGrid.querySelectorAll(".card-row")) {
+    tile.classList.add("store-front-card-tile");
+  }
+  const renderedCards = groupedCardsForDisplay(cards);
+  els.storeFrontGrid.querySelectorAll(".store-front-card-tile").forEach((tile, index) => {
+    const card = renderedCards[index];
+    if (!card) return;
+    const stats = tile.querySelector(".card-stats");
+    if (stats) {
+      stats.insertAdjacentHTML("beforeend", `
+        <span class="store-front-pill">${integer.format(card.seller_count || 0)} seller${Number(card.seller_count || 0) === 1 ? "" : "s"}</span>
+        <span class="store-front-pill">${escapeHtml(saleAskingLabel(card))} asking</span>
+      `);
+    }
+  });
+}
+
+async function openStoreFrontCardDetail(cardId) {
+  if (!cardId) return;
+  const data = await api(`/api/store-front/${encodeURIComponent(cardId)}`, { promptLogin: false });
+  renderStoreFrontCardDetail(data.card || {}, data.sellers || []);
+  els.storeFrontDetailOverlay.hidden = false;
+  document.body.classList.add("modal-open");
+}
+
+function closeStoreFrontCardDetail() {
+  if (els.storeFrontDetailOverlay) els.storeFrontDetailOverlay.hidden = true;
+  if (els.storeFrontDetailBody) els.storeFrontDetailBody.innerHTML = "";
+  document.body.classList.remove("modal-open");
+}
+
+function renderStoreFrontCardDetail(card, sellers) {
+  els.storeFrontDetailTitle.textContent = cardTitle(card) || "Card for sale";
+  const specialClass = cardHasSpecialVariant(card) ? " is-special" : "";
+  const sellerRows = sellers.length ? sellers.map((seller) => `
+    <article class="store-front-seller-row ${seller.is_current_user ? "is-current-user" : ""}" data-store-url="${escapeAttribute(seller.store_url || "")}" data-own-store="${seller.is_current_user ? "1" : "0"}" data-card-title="${escapeAttribute(cardTitle(card))}">
+      <span>
+        <strong>${escapeHtml(seller.seller_name || "Seller")}</strong>
+        <small>${escapeHtml(seller.variant || "Normal")} - ${escapeHtml(seller.card_condition || "Near Mint")}</small>
+      </span>
+      <b>${integer.format(seller.sale_quantity || 0)}</b>
+      <b>${dollars.format(seller.asking_price || 0)}</b>
+      <button class="share-button store-front-favorite-button ${seller.favorite_store ? "is-favorite" : ""}" type="button" aria-label="${seller.favorite_store ? "Remove store favorite" : "Favorite store listing"}" title="${seller.is_current_user ? "This is your listing" : seller.favorite_store ? "Remove favorite" : "Favorite listing"}" ${seller.is_current_user ? "disabled" : ""}>☆</button>
+    </article>
+  `).join("") : '<div class="empty-state">No sellers currently have this card listed.</div>';
+  els.storeFrontDetailBody.innerHTML = `
+    <article class="store-front-card-detail${specialClass}" style="--card-detail-bg-image: url('${escapeAttribute(card.image_normal || card.image_small || "")}')">
+      <a class="shared-card-art" href="${escapeHtml(card.scryfall_uri || "#")}" target="_blank" rel="noreferrer" title="Open on Scryfall">
+        <img src="${escapeHtml(card.image_normal || card.image_small || "")}" alt="${escapeHtml(cardTitle(card))}">
+      </a>
+      <div class="shared-card-copy">
+        <p class="eyebrow">${escapeHtml(card.set_name || "")} #${escapeHtml(card.collector_number || "")}</p>
+        <h2>${escapeHtml(cardTitle(card))}</h2>
+        <div class="card-divider"></div>
+        <p>${escapeHtml(card.type_line || "")}</p>
+        ${cardRulesName(card) ? `<p>Rules: ${escapeHtml(cardRulesName(card))}</p>` : ""}
+        <div class="detail-pill-row">
+          <span>${escapeHtml(cardTypeLabel(card))}</span>
+          <span>${escapeHtml(cardColorLabel(card))}</span>
+          <span>${integer.format(card.sale_quantity || card.quantity || 0)} for sale</span>
+          <span>${integer.format(card.seller_count || sellers.length || 0)} seller${Number(card.seller_count || sellers.length || 0) === 1 ? "" : "s"}</span>
+        </div>
+        ${variantSummaryHtml(card)}
+        <dl class="shared-card-details store-front-market-details">
+          <div>
+            <dt>Market Price</dt>
+            <dd>${dollars.format(card.display_price || 0)}</dd>
+          </div>
+          <div>
+            <dt>Market Total</dt>
+            <dd>${dollars.format(card.market_total || 0)}</dd>
+          </div>
+          <div>
+            <dt>Asking Range</dt>
+            <dd>${escapeHtml(saleAskingLabel(card))}</dd>
+          </div>
+          <div>
+            <dt>Asking Total</dt>
+            <dd>${dollars.format(card.sale_asking_total || card.owned_value || 0)}</dd>
+          </div>
+        </dl>
+        <a class="scryfall-button store-front-detail-scryfall" href="${escapeHtml(card.scryfall_uri || "#")}" target="_blank" rel="noreferrer" aria-label="Open on Scryfall" title="Open on Scryfall">S</a>
+      </div>
+    </article>
+    <section class="store-front-sellers">
+      <div class="store-front-sellers-head">
+        <span>Seller</span>
+        <span>Qty</span>
+        <span>Ask each</span>
+        <span>Save</span>
+      </div>
+      ${sellerRows}
+    </section>
+  `;
+  els.storeFrontDetailBody.querySelectorAll(".store-front-seller-row").forEach((row) => {
+    row.querySelector(".store-front-favorite-button")?.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      const index = Array.from(els.storeFrontDetailBody.querySelectorAll(".store-front-seller-row")).indexOf(row);
+      const selectedSeller = sellers[index];
+      if (!selectedSeller) return;
+      try {
+        await toggleStoreFavoriteListing(
+          { ...selectedSeller, card_id: card.scryfall_id || card.card_id, scryfall_id: card.scryfall_id || card.card_id, name: card.name, flavor_name: card.flavor_name },
+          !selectedSeller.favorite_store,
+          { statusTarget: els.storeFrontStatus },
+        );
+        selectedSeller.favorite_store = !selectedSeller.favorite_store;
+        row.querySelector(".store-front-favorite-button")?.classList.toggle("is-favorite", selectedSeller.favorite_store);
+        await loadStoreFront();
+      } catch (error) {
+        setStatus(error.message, "error", els.storeFrontStatus);
+      }
+    });
+    row.addEventListener("click", () => {
+      if (row.dataset.ownStore === "1") {
+        closeStoreFrontCardDetail();
+        if (els.saleSearchInput) els.saleSearchInput.value = row.dataset.cardTitle || "";
+        activatePage("for-sale", { push: true });
+        return;
+      }
+      const url = row.dataset.storeUrl;
+      if (url) window.location.href = url;
+    });
+  });
+}
+
 function renderNotifications() {
   if (!els.notificationsList) return;
   els.notificationsList.innerHTML = "";
@@ -2872,6 +3227,19 @@ function renderCards(cards, target = els.cardsGrid, options = {}) {
     link.href = catalogOnly ? (card.scryfall_uri || "#") : cardDetailUrl(card);
     link.target = catalogOnly ? "_blank" : "_self";
     link.rel = catalogOnly ? "noreferrer" : "";
+    if (options.onOpenCard) {
+      link.target = "_self";
+      link.rel = "";
+      link.addEventListener("click", (event) => {
+        event.preventDefault();
+        options.onOpenCard(card);
+      });
+      node.addEventListener("click", (event) => {
+        if (event.target.closest("button, input, select, textarea, .scryfall-button")) return;
+        event.preventDefault();
+        options.onOpenCard(card);
+      });
+    }
     img.src = card.image_normal || card.image_small || "";
     img.alt = cardTitle(card);
     title.textContent = cardTitle(card);
@@ -2896,33 +3264,37 @@ function renderCards(cards, target = els.cardsGrid, options = {}) {
       wireCardSelection(selectWrap, selectCheckbox, card, options);
     }
 
-    favoriteButton.classList.toggle("is-favorite", Boolean(card.favorite));
-    favoriteButton.setAttribute("aria-pressed", card.favorite ? "true" : "false");
-    favoriteButton.title = card.favorite ? "Remove favorite" : "Favorite";
-    favoriteButton.addEventListener("click", async () => {
-      const nextFavorite = !Boolean(card.favorite);
-      if (!nextFavorite && options.confirmUnfavorite) {
-        const confirmed = window.confirm(`Remove ${cardTitle(card)} from Favorites? It will disappear from this page.`);
-        if (!confirmed) return;
-      }
-      try {
-        await api(`/api/cards/${encodeURIComponent(card.scryfall_id)}/favorite`, {
-          method: "POST",
-          body: JSON.stringify({
-            variant: card.variant || "Normal",
-            favorite: nextFavorite,
-          }),
-        });
-        setStatus(nextFavorite ? `Favorited ${cardTitle(card)}.` : `Removed favorite from ${cardTitle(card)}.`, "", options.statusTarget || els.status);
-        if (options.afterFavoriteChange) {
-          await options.afterFavoriteChange();
-        } else {
-          await refresh();
+    if (options.hideFavorite || options.readonly) {
+      favoriteButton.hidden = true;
+    } else {
+      favoriteButton.classList.toggle("is-favorite", Boolean(card.favorite));
+      favoriteButton.setAttribute("aria-pressed", card.favorite ? "true" : "false");
+      favoriteButton.title = card.favorite ? "Remove favorite" : "Favorite";
+      favoriteButton.addEventListener("click", async () => {
+        const nextFavorite = !Boolean(card.favorite);
+        if (!nextFavorite && options.confirmUnfavorite) {
+          const confirmed = window.confirm(`Remove ${cardTitle(card)} from Favorites? It will disappear from this page.`);
+          if (!confirmed) return;
         }
-      } catch (error) {
-        setStatus(error.message, "error", options.statusTarget || els.status);
-      }
-    });
+        try {
+          await api(`/api/cards/${encodeURIComponent(card.scryfall_id)}/favorite`, {
+            method: "POST",
+            body: JSON.stringify({
+              variant: card.variant || "Normal",
+              favorite: nextFavorite,
+            }),
+          });
+          setStatus(nextFavorite ? `Favorited ${cardTitle(card)}.` : `Removed favorite from ${cardTitle(card)}.`, "", options.statusTarget || els.status);
+          if (options.afterFavoriteChange) {
+            await options.afterFavoriteChange();
+          } else {
+            await refresh();
+          }
+        } catch (error) {
+          setStatus(error.message, "error", options.statusTarget || els.status);
+        }
+      });
+    }
     if (options.hideWishlist || options.readonly) {
       wishlistButton.hidden = true;
     } else {
@@ -3346,6 +3718,7 @@ function deckJsonPayload(deck, includeNotes = false) {
     version: 1,
     exported_at: new Date().toISOString(),
     name: deck.name || "Deck",
+    is_private: Boolean(Number(deck.is_private || 0)),
     cards: (deck.cards || []).map(deckJsonCard),
   };
   if (includeNotes) {
@@ -3766,10 +4139,9 @@ function renderSelectedAddCard() {
 
 function openSettingsModal() {
   els.settingsForm.language.value = (state.settings && state.settings.language) || "en";
-  els.settingsForm.theme.value = (state.settings && state.settings.theme) || "light";
   els.settingsOverlay.hidden = false;
   document.body.classList.add("modal-open");
-  els.settingsForm.theme.focus();
+  els.settingsForm.language.focus();
 }
 
 function closeSettingsModal() {
@@ -3790,10 +4162,26 @@ function renderSettingsPage() {
   els.settingsPageForm.contact_discord.value = user.contact_discord || "";
   els.settingsPageForm.contact_website.value = user.contact_website || "";
   els.settingsPageForm.language.value = settings.language || "en";
-  els.settingsPageForm.theme.value = settings.theme || "light";
   if (els.settingsAccountEmail) {
     els.settingsAccountEmail.textContent = state.user ? state.user.email : "Not logged in";
   }
+}
+
+function userSettingsPayload(overrides = {}) {
+  const settings = state.settings || defaultSettings();
+  const user = state.user || {};
+  return {
+    name: user.name || "",
+    public_email: user.public_email || "",
+    contact_whatsapp: user.contact_whatsapp || "",
+    contact_signal: user.contact_signal || "",
+    contact_telegram: user.contact_telegram || "",
+    contact_discord: user.contact_discord || "",
+    contact_website: user.contact_website || "",
+    language: settings.language || "en",
+    theme: settings.theme || "light",
+    ...overrides,
+  };
 }
 
 async function saveUserSettings(payload) {
@@ -3826,7 +4214,7 @@ function renderDecks(decks) {
     item.innerHTML = `
       ${deckPreviewImagesHtml(previewImages)}
       <div>
-        <p class="eyebrow">Deck</p>
+        <p class="eyebrow">Deck${Number(deck.is_private || 0) ? " - Private" : ""}</p>
         <h3>${escapeHtml(deck.name)}</h3>
       </div>
       <strong>${integer.format(deck.card_count || 0)}</strong>
@@ -3839,6 +4227,143 @@ function renderDecks(decks) {
     });
     els.decksGrid.appendChild(item);
   }
+}
+
+function browseDeckCardTableHtml(deck) {
+  const cards = deck.cards || [];
+  if (!cards.length) {
+    return '<div class="browse-deck-empty">No cards listed yet.</div>';
+  }
+  const visible = cards.slice(0, 8);
+  const hiddenCount = Math.max(0, Number(deck.unique_card_count || cards.length) - visible.length);
+  return `
+    <table class="browse-deck-card-table">
+      <thead>
+        <tr>
+          <th>Card</th>
+          <th>Variant</th>
+          <th>Qty</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${visible.map((card) => `
+          <tr class="deck-card-preview-trigger browse-deck-card-row" role="button" tabindex="0" data-card-id="${escapeHtml(card.scryfall_id || card.card_id || "")}" data-variant="${escapeHtml(card.variant || "Normal")}">
+            <td>${escapeHtml(cardTitle(card))}</td>
+            <td>${escapeHtml(card.variant || "Normal")}</td>
+            <td>${integer.format(deckQuantity(card))}</td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+    ${hiddenCount > 0 ? `<p class="browse-deck-more">+ ${integer.format(hiddenCount)} more unique card${hiddenCount === 1 ? "" : "s"}</p>` : ""}
+  `;
+}
+
+function renderBrowseDecks(decks) {
+  els.browseDecksGrid.innerHTML = "";
+  if (!decks.length) {
+    els.browseDecksGrid.innerHTML = '<div class="empty-state">No public decks are available yet.</div>';
+    return;
+  }
+  for (const deck of decks) {
+    const item = document.createElement("article");
+    const previewImages = uniqueDeckPreviewImages(deck);
+    item.className = `deck-card browse-deck-card${previewImages.length ? " has-deck-preview" : ""}`;
+    item.innerHTML = `
+      ${deckPreviewImagesHtml(previewImages)}
+      <div class="browse-deck-head">
+        <div>
+          <p class="eyebrow">Public deck${deck.owner_name ? ` - ${escapeHtml(deck.owner_name)}` : ""}</p>
+          <h3>${escapeHtml(deck.name || "Deck")}</h3>
+        </div>
+        <div class="browse-deck-actions" aria-label="Deck actions">
+          <button class="share-button browse-deck-favorite ${deck.favorite_deck ? "is-favorite" : ""}" type="button" aria-label="${deck.favorite_deck ? "Remove favorite" : "Favorite deck"}" title="${deck.viewer_is_owner ? "This is your deck" : deck.favorite_deck ? "Remove favorite" : "Favorite deck"}">☆</button>
+          <button class="share-button browse-deck-import" type="button" aria-label="Save to my Decks" title="${deck.viewer_is_owner ? "This is already your deck" : "Save to my Decks"}"><span class="copy-deck-icon" aria-hidden="true"></span></button>
+          <button class="share-button browse-deck-share" type="button" aria-label="Share URL" title="Share URL">&#8599;</button>
+          <button class="share-button browse-deck-email" type="button" aria-label="Email deck" title="Email deck"><span class="send-icon" aria-hidden="true"></span></button>
+        </div>
+      </div>
+      <div class="browse-deck-meta">
+        <strong>${integer.format(deck.card_count || 0)} cards</strong>
+        <span>${integer.format(deck.unique_card_count || 0)} unique</span>
+      </div>
+      ${deck.description ? `<p class="browse-deck-description">${escapeHtml(deck.description)}</p>` : ""}
+      ${browseDeckCardTableHtml(deck)}
+    `;
+    item.querySelector(".browse-deck-favorite").addEventListener("click", () => {
+      if (deck.viewer_is_owner) {
+        setStatus("This is already your deck.", "", els.browseDecksStatus);
+        return;
+      }
+      toggleSharedDeckFavorite(deck, item.querySelector(".browse-deck-favorite")).then(loadBrowseDecks).catch((error) => setStatus(error.message, "error", els.browseDecksStatus));
+    });
+    item.querySelector(".browse-deck-import").addEventListener("click", () => {
+      if (deck.viewer_is_owner) {
+        setStatus("This is already in your deck list.", "", els.browseDecksStatus);
+        return;
+      }
+      importSharedDeck(deck, item.querySelector(".browse-deck-import")).catch((error) => setStatus(error.message, "error", els.browseDecksStatus));
+    });
+    item.querySelector(".browse-deck-share").addEventListener("click", () => openDeckShareModal(deck));
+    item.querySelector(".browse-deck-email").addEventListener("click", () => {
+      if (!state.user) {
+        openAuthModal("login", "Log in to email a deck.");
+        return;
+      }
+      openEmailShareModal("shared-deck", deck);
+    });
+    wireDeckCardPreviewRows(item, deck.cards || []);
+    item.addEventListener("dblclick", () => {
+      window.open(shareUrlForDeck(deck), "_blank", "noopener");
+    });
+    els.browseDecksGrid.appendChild(item);
+  }
+}
+
+function deckEditorFormSnapshot(form) {
+  if (!form) return "";
+  return JSON.stringify({
+    name: form.elements.name?.value || "",
+    description: form.elements.description?.value || "",
+    internal_notes: form.elements.internal_notes?.value || "",
+    external_notes: form.elements.external_notes?.value || "",
+    is_private: Boolean(form.elements.is_private?.checked),
+  });
+}
+
+function setDeckEditorDirty(isDirty, message = true) {
+  state.deckEditorDirty = Boolean(isDirty);
+  const status = els.deckEditorShell?.querySelector("#deckEditorStatus");
+  if (status && message) {
+    status.textContent = state.deckEditorDirty ? "Unsaved changes." : "";
+    status.dataset.tone = state.deckEditorDirty ? "warning" : "";
+  }
+}
+
+function updateDeckEditorDirtyState(form) {
+  setDeckEditorDirty(deckEditorFormSnapshot(form) !== state.deckEditorSnapshot);
+}
+
+function confirmDiscardDeckEditorChanges() {
+  if (!state.deckEditorDirty) return true;
+  return window.confirm("You have unsaved deck changes. Leave without saving?");
+}
+
+function deckIsPrivateNow(deck) {
+  const form = els.deckEditorShell?.querySelector("#deckEditorForm");
+  if (form && state.activeDeck && String(state.activeDeck.id) === String(deck?.id || "")) {
+    return Boolean(form.elements.is_private?.checked);
+  }
+  return Boolean(Number(deck?.is_private || 0));
+}
+
+function discardDeckEditorChanges() {
+  resetDeckEditorDirtyState();
+}
+
+function resetDeckEditorDirtyState() {
+  state.deckEditorDirty = false;
+  state.deckEditorSnapshot = "";
 }
 
 function uniqueDeckPreviewImages(deck) {
@@ -4048,6 +4573,13 @@ function renderDeckEditor(deck) {
             External Notes
             <textarea name="external_notes" maxlength="2000" rows="7" placeholder="Public notes shown on shared deck pages">${escapeHtml(deck.external_notes || "")}</textarea>
           </label>
+          <label class="deck-private-toggle">
+            <input name="is_private" type="checkbox" value="1" ${Number(deck.is_private || 0) ? "checked" : ""}>
+            <span>
+              <strong>Private</strong>
+              <small>Hide this deck from Browse Decks.</small>
+            </span>
+          </label>
           <div class="deck-editor-actions">
             <button class="primary-button" type="submit">Save</button>
             <button class="share-button" type="button" data-deck-action="email" aria-label="Email deck" title="Email deck"><span class="send-icon" aria-hidden="true"></span></button>
@@ -4066,16 +4598,23 @@ function renderDeckEditor(deck) {
   `;
   wireDeckCardPreviewRows(els.deckEditorShell.querySelector(".deck-editor-card-list"), cards);
   const status = els.deckEditorShell.querySelector("#deckEditorStatus");
-  els.deckEditorShell.querySelector("#deckEditorForm").addEventListener("submit", async (event) => {
+  const deckEditorForm = els.deckEditorShell.querySelector("#deckEditorForm");
+  state.deckEditorSnapshot = deckEditorFormSnapshot(deckEditorForm);
+  setDeckEditorDirty(false, false);
+  deckEditorForm.addEventListener("input", () => updateDeckEditorDirtyState(deckEditorForm));
+  deckEditorForm.addEventListener("change", () => updateDeckEditorDirtyState(deckEditorForm));
+  deckEditorForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     status.textContent = "Saving deck...";
     status.dataset.tone = "";
     const payload = Object.fromEntries(new FormData(event.currentTarget).entries());
+    payload.is_private = event.currentTarget.elements.is_private.checked ? "1" : "0";
     try {
       const result = await api(`/api/decks/${encodeURIComponent(deck.id)}`, {
         method: "PUT",
         body: JSON.stringify(payload),
       });
+      resetDeckEditorDirtyState();
       renderDeckEditor(result.deck);
       await loadDecks();
       const nextStatus = els.deckEditorShell.querySelector("#deckEditorStatus");
@@ -4126,6 +4665,10 @@ async function loadDeckEditor(deckId) {
 
 async function openDeckPage(deckId) {
   if (!deckId) return;
+  if (deckEditorIsVisible() && state.deckEditorDirty) {
+    if (!confirmDiscardDeckEditorChanges()) return;
+    discardDeckEditorChanges();
+  }
   window.history.pushState({}, "", `/decks/${encodeURIComponent(deckId)}`);
   await loadDeckEditor(deckId);
 }
@@ -4309,6 +4852,8 @@ async function searchCardsForDeck() {
 
 async function addCardToActiveDeck(card, quantity = 1) {
   if (!state.activeDeck) return;
+  if (state.deckEditorDirty && !confirmDiscardDeckEditorChanges()) return;
+  discardDeckEditorChanges();
   const deckId = state.activeDeck.id;
   const max = 99;
   const selectedQuantity = Math.min(Math.max(1, Number(quantity || 1)), max);
@@ -4333,6 +4878,8 @@ async function removeCardFromActiveDeck(card) {
   if (!state.activeDeck) return;
   const confirmed = window.confirm(`Remove ${cardTitle(card)} from ${state.activeDeck.name}?`);
   if (!confirmed) return;
+  if (state.deckEditorDirty && !confirmDiscardDeckEditorChanges()) return;
+  discardDeckEditorChanges();
   await api(`/api/decks/${encodeURIComponent(state.activeDeck.id)}/cards`, {
     method: "DELETE",
     body: JSON.stringify({
@@ -4351,6 +4898,7 @@ async function deleteActiveDeck() {
   if (!confirmed) return;
   const deckName = state.activeDeck.name;
   await api(`/api/decks/${encodeURIComponent(state.activeDeck.id)}`, { method: "DELETE" });
+  discardDeckEditorChanges();
   if (deckEditorIsVisible()) {
     state.activeDeck = null;
     window.history.pushState({}, "", "/decks");
@@ -4367,6 +4915,13 @@ async function loadDecks() {
   state.decks = data.decks || [];
   renderDecks(state.decks);
   return state.decks;
+}
+
+async function loadBrowseDecks() {
+  const data = await api("/api/browse-decks");
+  state.browseDecks = data.decks || [];
+  renderBrowseDecks(state.browseDecks);
+  return state.browseDecks;
 }
 
 function openAddDeckModal() {
@@ -6173,6 +6728,7 @@ function renderSharedStore(store) {
 function renderSharedFavorites(payload) {
   const cards = payload.cards || [];
   const decks = payload.decks || [];
+  const store = payload.store || [];
   const deckRows = decks.length ? `
     <div class="favorite-decks-share-list">
       ${decks.map((deck) => `
@@ -6187,16 +6743,31 @@ function renderSharedFavorites(payload) {
       `).join("")}
     </div>
   ` : "";
+  const storeRows = store.length ? `
+    <div class="favorite-decks-share-list">
+      ${store.map((listing) => `
+        <article class="deck-card-row favorite-deck-share-row">
+          <img src="${escapeHtml(listing.image_small || listing.image_normal || "")}" alt="">
+          <div>
+            <strong>${escapeHtml(cardTitle(listing))}</strong>
+            <span>${escapeHtml(listing.seller_name || "Seller")} - ${escapeHtml(listing.variant || "Normal")} - ${escapeHtml(listing.card_condition || "Near Mint")}</span>
+          </div>
+          <a class="share-button" href="${escapeHtml(listing.store_url || "#")}" target="_blank" rel="noreferrer" aria-label="Open store" title="Open store">&#8599;</a>
+        </article>
+      `).join("")}
+    </div>
+  ` : "";
   els.favoritesShareShell.innerHTML = `
     <section class="shared-deck-card">
       <div class="shared-deck-head">
         <div>
           <p class="eyebrow">Shared favorites</p>
           <h2>Favorites</h2>
-          <span>${integer.format(cards.length)} favorite cards - ${integer.format(decks.length)} favorite decks</span>
+          <span>${integer.format(cards.length)} favorite cards - ${integer.format(decks.length)} favorite decks - ${integer.format(store.length)} store listings</span>
         </div>
       </div>
       ${deckRows}
+      ${storeRows}
       <div class="deck-detail-list">
         ${deckRowsHtml(cards)}
       </div>
@@ -6329,6 +6900,11 @@ async function refreshPriceSnapshots() {
 }
 
 function wireEvents() {
+  window.addEventListener("beforeunload", (event) => {
+    if (!state.deckEditorDirty) return;
+    event.preventDefault();
+    event.returnValue = "";
+  });
   for (const command of els.navCommands) {
     command.addEventListener("click", () => {
       const page = command.dataset.pageTarget || "dashboard";
@@ -6338,9 +6914,16 @@ function wireEvents() {
   window.addEventListener("popstate", () => {
     const routePage = appPageRoute();
     if (routePage) {
-      activatePage(routePage);
+      activatePage(routePage, { fromPop: true });
       return;
     }
+    if (deckEditorIsVisible() && state.deckEditorDirty && !confirmDiscardDeckEditorChanges()) {
+      if (state.activeDeck?.id) {
+        window.history.pushState({}, "", `/decks/${encodeURIComponent(state.activeDeck.id)}`);
+      }
+      return;
+    }
+    discardDeckEditorChanges();
     const detail = cardDetailRoute();
     if (detail) {
       loadCardDetail(detail.cardId, detail.variant);
@@ -6356,7 +6939,7 @@ function wireEvents() {
       if (isPrivateDeckRoute(deckId) && state.user) {
         loadDeckEditor(deckId);
       } else if (isPrivateDeckRoute(deckId)) {
-        activatePage("search", { replace: true, promptLogin: false });
+        activatePage("home", { replace: true, promptLogin: false });
         openAuthModal("login", "Log in to edit this deck.");
       } else {
         document.body.classList.toggle("share-only", !isPrivateDeckRoute(deckId));
@@ -6410,6 +6993,15 @@ function wireEvents() {
   });
   els.saleSortSelect.addEventListener("change", () => {
     loadSaleCards().catch((error) => setStatus(error.message, "error", els.saleStatus));
+  });
+  els.storeFrontSearchInput.addEventListener("input", () => {
+    window.clearTimeout(state.storeFrontSearchTimer);
+    state.storeFrontSearchTimer = window.setTimeout(() => {
+      loadStoreFront().catch((error) => setStatus(error.message, "error", els.storeFrontStatus));
+    }, 180);
+  });
+  els.storeFrontSortSelect.addEventListener("change", () => {
+    loadStoreFront().catch((error) => setStatus(error.message, "error", els.storeFrontStatus));
   });
   els.wishlistSearchInput.addEventListener("input", () => {
     window.clearTimeout(state.wishlistSearchTimer);
@@ -6496,6 +7088,9 @@ function wireEvents() {
   els.listViewButton.addEventListener("click", () => setCollectionView("list"));
   els.favoriteTileViewButton.addEventListener("click", () => setFavoritesView("tiles"));
   els.favoriteListViewButton.addEventListener("click", () => setFavoritesView("list"));
+  for (const button of els.favoriteFilterButtons || []) {
+    button.addEventListener("click", () => setFavoritesFilter(button.dataset.favoritesFilter));
+  }
   els.shareFavoritesButton.addEventListener("click", openFavoritesShareModal);
   els.addToDeckButton.addEventListener("click", () => {
     openAssignDeckModal().catch((error) => setStatus(error.message, "error"));
@@ -6764,6 +7359,12 @@ function wireEvents() {
       closeSoldModal();
     }
   });
+  els.closeStoreFrontDetailButton.addEventListener("click", closeStoreFrontCardDetail);
+  els.storeFrontDetailOverlay.addEventListener("click", (event) => {
+    if (event.target === els.storeFrontDetailOverlay) {
+      closeStoreFrontCardDetail();
+    }
+  });
   els.soldForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     const payload = Object.fromEntries(new FormData(els.soldForm).entries());
@@ -7021,18 +7622,31 @@ function wireEvents() {
   els.settingsForm.addEventListener("submit", (event) => {
     event.preventDefault();
     const payload = Object.fromEntries(new FormData(els.settingsForm).entries());
-    saveSettings(payload);
+    saveSettings({ ...(state.settings || defaultSettings()), ...payload });
     setStatus("Settings saved.");
     closeSettingsModal();
   });
   els.settingsPageForm.addEventListener("submit", async (event) => {
     event.preventDefault();
-    const payload = Object.fromEntries(new FormData(els.settingsPageForm).entries());
+    const payload = userSettingsPayload(Object.fromEntries(new FormData(els.settingsPageForm).entries()));
     try {
       await saveUserSettings(payload);
       setStatus("Settings saved.", "success", els.settingsPageStatus);
     } catch (error) {
       setStatus(error.message, "error", els.settingsPageStatus);
+    }
+  });
+  els.topThemeSelect.addEventListener("change", async () => {
+    const previousTheme = (state.settings && state.settings.theme) || "light";
+    const nextTheme = els.topThemeSelect.value || "light";
+    saveSettings({ ...(state.settings || defaultSettings()), theme: nextTheme });
+    if (!state.user) return;
+    try {
+      await saveUserSettings(userSettingsPayload({ theme: nextTheme }));
+      setStatus("Theme saved.", "success", activeStatusTarget());
+    } catch (error) {
+      saveSettings({ ...(state.settings || defaultSettings()), theme: previousTheme });
+      setStatus(error.message, "error", activeStatusTarget());
     }
   });
   els.clearDatabaseButton.addEventListener("click", async () => {
@@ -7063,7 +7677,7 @@ function wireEvents() {
       state.user = null;
       updateAuthUi();
       setStatus("Profile deleted.", "success");
-      activatePage("search", { push: true });
+      activatePage("home", { push: true });
     } catch (error) {
       setStatus(error.message, "error", els.settingsPageStatus);
     }
@@ -7150,6 +7764,7 @@ function wireEvents() {
     const endpoints = {
       card: "cards",
       deck: "decks",
+      "shared-deck": "shared-decks",
       container: "containers",
       wishlist: "wishlists",
       set: "sets",
@@ -7176,7 +7791,7 @@ function wireEvents() {
       });
       const recipient = payload.email;
       closeEmailWishlistModal();
-      const statusTarget = type === "deck" ? els.decksStatus : type === "container" ? els.containersStatus : type === "wishlist" ? els.wishlistStatus : type === "set" ? els.setsStatus : els.status;
+      const statusTarget = type === "deck" ? els.decksStatus : type === "shared-deck" ? els.browseDecksStatus : type === "container" ? els.containersStatus : type === "wishlist" ? els.wishlistStatus : type === "set" ? els.setsStatus : els.status;
       setStatus(`${label} emailed to ${recipient}.`, "success", statusTarget);
     } catch (error) {
       els.emailWishlistStatus.textContent = error.message;
@@ -7449,6 +8064,8 @@ async function boot() {
   const initialVerificationToken = verificationRouteToken();
   const initialPasswordResetToken = passwordResetRouteToken();
   const initialAppPage = appPageRoute();
+  const initialPath = window.location.pathname.replace(/\/+$/, "") || "/";
+  const isRootRoute = initialPath === "/";
   const isAlwaysShareOnlyRoute = Boolean(initialSharedSet || initialDeckShareId || initialWishlistShareId || initialContainerShareId || initialStoreShareId || initialFavoritesShare);
   await loadSession().catch(() => {
     state.user = null;
@@ -7472,7 +8089,7 @@ async function boot() {
         renderCollection();
       });
     } else {
-      activatePage("search", { replace: true, promptLogin: false });
+      activatePage("home", { replace: true, promptLogin: false });
       openAuthModal("login", "Log in to edit this deck.");
     }
   } else if (initialWishlistShareId) {
@@ -7494,6 +8111,8 @@ async function boot() {
     loadEmailVerification(initialVerificationToken);
   } else if (initialPasswordResetToken) {
     loadPasswordReset(initialPasswordResetToken);
+  } else if (isRootRoute) {
+    activatePage(state.user ? "dashboard" : "home", { replace: true, promptLogin: false });
   } else if (initialCardDetail) {
     if (state.user) {
       loadCardDetail(initialCardDetail.cardId, initialCardDetail.variant);
@@ -7513,17 +8132,17 @@ async function boot() {
         renderCollection();
       });
     } else {
-      activatePage("search");
+      activatePage("home");
       openAuthModal("login", "Log in to view set progress.");
     }
   } else if (initialAppPage) {
     if (!state.user && protectedPage(initialAppPage)) {
-      activatePage("search", { replace: true, promptLogin: false });
+      activatePage("home", { replace: true, promptLogin: false });
     } else {
       activatePage(initialAppPage);
     }
   } else {
-    activatePage(state.user ? "dashboard" : "search", { replace: !state.user, promptLogin: false });
+    activatePage("home", { replace: true, promptLogin: false });
   }
 }
 
