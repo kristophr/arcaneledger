@@ -522,6 +522,7 @@ body:not(.is-authenticated) .nav-bottom {
 .import-icon,
 .browse-decks-icon,
 .notification-icon,
+.admin-icon,
 .settings-icon,
 .login-icon,
 .logout-icon {
@@ -576,6 +577,29 @@ body:not(.is-authenticated) .nav-bottom {
   border-radius: 99px;
   background: currentColor;
   box-shadow: 0 -11px 0 -1px currentColor;
+}
+
+.admin-icon::before {
+  content: "";
+  position: absolute;
+  left: 3px;
+  right: 3px;
+  bottom: 3px;
+  height: 8px;
+  border: 1.8px solid currentColor;
+  border-radius: 3px 3px 5px 5px;
+}
+
+.admin-icon::after {
+  content: "";
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  top: 3px;
+  height: 7px;
+  border: 1.8px solid currentColor;
+  border-bottom: 0;
+  border-radius: 7px 7px 0 0;
 }
 
 .settings-icon::before {
@@ -1070,6 +1094,7 @@ body:not(.is-authenticated) .nav-bottom {
 .missing-band,
 .sale-band,
 .notifications-band,
+.admin-band,
 .import-band,
 .settings-band,
 .shared-card-band,
@@ -2136,6 +2161,100 @@ body:not(.is-authenticated) .nav-bottom {
 .notification-store-link {
   justify-self: start;
   text-decoration: none;
+}
+
+.admin-grid {
+  display: grid;
+  grid-template-columns: minmax(440px, 1.15fr) minmax(360px, 0.85fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.admin-panel .panel-head h3 {
+  margin: 0;
+}
+
+.admin-users-list {
+  display: grid;
+  gap: 10px;
+}
+
+.admin-user-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) 130px 104px max-content max-content;
+  gap: 10px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--panel);
+}
+
+.admin-user-row.is-banned {
+  border-color: rgba(159, 63, 52, 0.44);
+  background:
+    linear-gradient(90deg, rgba(159, 63, 52, 0.1), transparent 45%),
+    var(--panel);
+}
+
+.admin-user-main {
+  min-width: 0;
+}
+
+.admin-user-main strong,
+.admin-user-main span,
+.admin-user-main small,
+.admin-user-row label span {
+  display: block;
+}
+
+.admin-user-main strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-user-main span,
+.admin-user-main small,
+.admin-user-row label span {
+  color: var(--muted);
+  font-weight: 800;
+  font-size: 0.78rem;
+}
+
+.admin-user-row select {
+  width: 100%;
+  min-height: 36px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 0 9px;
+  color: var(--ink);
+  background: var(--field-bg);
+}
+
+.admin-ban-toggle {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.admin-ban-toggle input {
+  width: 18px;
+  height: 18px;
+}
+
+.admin-log-viewer {
+  min-height: 420px;
+  max-height: 62vh;
+  overflow: auto;
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  color: var(--ink);
+  background: color-mix(in srgb, var(--panel) 72%, #000 8%);
+  font: 0.78rem/1.45 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  white-space: pre-wrap;
 }
 
 .sale-card-row {
@@ -5915,6 +6034,19 @@ body:not(.is-authenticated) .nav-bottom {
     grid-template-columns: 1fr;
   }
 
+  .admin-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-user-row {
+    grid-template-columns: minmax(0, 1fr) 130px 104px;
+  }
+
+  .admin-user-row .admin-save-user-button,
+  .admin-user-row .admin-delete-user-button {
+    justify-self: start;
+  }
+
   .chart-panel {
     grid-column: 1 / -1;
   }
@@ -6017,6 +6149,10 @@ body:not(.is-authenticated) .nav-bottom {
   .deck-editor-head {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .admin-user-row {
+    grid-template-columns: 1fr;
   }
 
   .panel {

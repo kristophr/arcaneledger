@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>FoilFolio</title>
-    <link rel="stylesheet" href="/styles.css?v=123">
+    <link rel="stylesheet" href="/styles.css?v=124">
   </head>
   <body>
     <header class="topbar">
@@ -55,6 +55,7 @@
             Notifications
             <span id="notificationsNavDot" class="nav-unread-dot" aria-hidden="true" hidden></span>
           </button>
+          <button class="nav-command" type="button" data-page-target="admin"><span class="admin-icon" aria-hidden="true"></span>Admin</button>
           <button class="nav-command" type="button" data-page-target="settings"><span class="settings-icon" aria-hidden="true"></span>Settings</button>
           <button id="logoutButton" class="nav-command" type="button"><span class="login-icon" aria-hidden="true"></span><span class="auth-command-label">Log In</span></button>
         </nav>
@@ -616,6 +617,44 @@
         </div>
         <div id="notificationsStatus" class="status" aria-live="polite"></div>
         <div id="notificationsList" class="notifications-list"></div>
+      </section>
+
+      <section class="admin-band app-page" data-page="admin" hidden>
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Site operations</p>
+            <h2>Admin</h2>
+          </div>
+          <div class="filters">
+            <button id="refreshAdminButton" class="secondary-button compact-button" type="button">Refresh</button>
+          </div>
+        </div>
+        <div id="adminStatus" class="status" aria-live="polite"></div>
+        <div class="admin-grid">
+          <section class="panel admin-panel">
+            <div class="panel-head">
+              <h3>User Management</h3>
+              <span id="adminUserCount"></span>
+            </div>
+            <div id="adminUsersList" class="admin-users-list"></div>
+          </section>
+          <section class="panel admin-panel">
+            <div class="panel-head">
+              <h3>Server Logs</h3>
+              <div class="panel-head-actions">
+                <select id="adminLogLineCount" aria-label="Log line count">
+                  <option value="100">100 lines</option>
+                  <option value="200" selected>200 lines</option>
+                  <option value="500">500 lines</option>
+                  <option value="1000">1000 lines</option>
+                </select>
+                <button id="refreshAdminLogsButton" class="secondary-button compact-button" type="button">Reload Logs</button>
+              </div>
+            </div>
+            <p id="adminLogMeta" class="settings-help"></p>
+            <pre id="adminLogs" class="admin-log-viewer" aria-label="Server log output"></pre>
+          </section>
+        </div>
       </section>
 
       <section class="shared-card-band app-page" data-page="shared" hidden>
@@ -1623,6 +1662,6 @@
       </section>
     </div>
 
-    <script src="/app.js?v=135"></script>
+    <script src="/app.js?v=136"></script>
   </body>
 </html>

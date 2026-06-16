@@ -11,6 +11,8 @@ const state = {
   wishlists: [],
   notifications: [],
   unreadNotificationCount: 0,
+  adminUsers: [],
+  adminLogs: null,
   ownedSetCards: [],
   ownedSets: [],
   catalogSearchAllResults: [],
@@ -92,6 +94,7 @@ const pageRoutes = {
   "store-front": "/store-front",
   wishlist: "/wishlist",
   notifications: "/notifications",
+  admin: "/admin",
   settings: "/settings",
   import: "/import",
 };
@@ -144,9 +147,17 @@ const els = {
   saleModalStatus: document.querySelector("#saleModalStatus"),
   wishlistStatus: document.querySelector("#wishlistStatus"),
   notificationsStatus: document.querySelector("#notificationsStatus"),
+  adminStatus: document.querySelector("#adminStatus"),
   catalogSearchStatus: document.querySelector("#catalogSearchStatus"),
   notificationsList: document.querySelector("#notificationsList"),
   notificationsNavDot: document.querySelector("#notificationsNavDot"),
+  adminUsersList: document.querySelector("#adminUsersList"),
+  adminUserCount: document.querySelector("#adminUserCount"),
+  adminLogs: document.querySelector("#adminLogs"),
+  adminLogMeta: document.querySelector("#adminLogMeta"),
+  adminLogLineCount: document.querySelector("#adminLogLineCount"),
+  refreshAdminButton: document.querySelector("#refreshAdminButton"),
+  refreshAdminLogsButton: document.querySelector("#refreshAdminLogsButton"),
   searchInput: document.querySelector("#searchInput"),
   favoriteSearchInput: document.querySelector("#favoriteSearchInput"),
   missingSearchInput: document.querySelector("#missingSearchInput"),
@@ -465,6 +476,10 @@ function setStatus(message, tone = "", target = els.status) {
   target.dataset.tone = tone;
 }
 
+function isAdminUser() {
+  return Boolean(state.user && state.user.is_admin);
+}
+
 async function api(path, options = {}) {
   const { promptLogin = false, ...fetchOptions } = options;
   const response = await fetch(path, {
@@ -499,7 +514,7 @@ function updateAuthUi() {
   for (const command of els.navCommands || []) {
     const target = command.dataset.pageTarget;
     if (!target) continue;
-    command.hidden = !loggedIn && protectedPage(target);
+    command.hidden = (!loggedIn && protectedPage(target)) || (target === "admin" && !isAdminUser());
   }
   if (els.accountButton) {
     els.accountButton.textContent = loggedIn ? (state.user.name || state.user.email) : "Log In";
@@ -722,6 +737,8 @@ async function logout() {
   state.wishlists = [];
   state.notifications = [];
   state.unreadNotificationCount = 0;
+  state.adminUsers = [];
+  state.adminLogs = null;
   state.ownedSetCards = [];
   state.ownedSets = [];
   state.activeWishlist = null;
@@ -1452,6 +1469,19 @@ function activatePage(pageName, options = {}) {
     }
     return;
   }
+  if (page === "admin" && !isAdminUser()) {
+    if (options.replace) {
+      replacePageRoute(state.user ? "dashboard" : "home");
+    } else if (options.push) {
+      pushPageRoute(state.user ? "dashboard" : "home");
+    }
+    showPage(state.user ? "dashboard" : "home");
+    setStatus("Admin access required.", "error", state.user ? els.status : undefined);
+    if (!state.user && options.promptLogin !== false) {
+      openAuthModal("login", "Log in with an admin account to use that feature.");
+    }
+    return;
+  }
   if (options.replace) {
     replacePageRoute(page);
   } else if (options.push) {
@@ -1522,6 +1552,11 @@ function activatePage(pageName, options = {}) {
       setStatus(error.message, "error", els.notificationsStatus);
     });
   }
+  if (page === "admin") {
+    loadAdmin().catch((error) => {
+      setStatus(error.message, "error", els.adminStatus);
+    });
+  }
   if (page === "search") {
     clearSelectedCards();
     renderCatalogSearchResults();
@@ -1547,6 +1582,7 @@ function activeStatusTarget() {
   if (visiblePage === "store-front") return els.storeFrontStatus;
   if (visiblePage === "wishlist") return els.wishlistStatus;
   if (visiblePage === "notifications") return els.notificationsStatus;
+  if (visiblePage === "admin") return els.adminStatus;
   if (visiblePage === "search") return els.catalogSearchStatus;
   return els.status;
 }
@@ -3128,6 +3164,121 @@ function closeNotificationDetailModal() {
   if (els.notificationSubjectInput) els.notificationSubjectInput.value = "";
   if (els.notificationBodyInput) els.notificationBodyInput.value = "";
   if (els.notificationStoreLink) els.notificationStoreLink.href = "#";
+}
+
+async function loadAdmin() {
+  if (!isAdminUser()) {
+    setStatus("Admin access required.", "error", els.adminStatus);
+    return;
+  }
+  const [users, logs] = await Promise.all([
+    api("/api/admin/users"),
+    loadAdminLogs(false),
+  ]);
+  state.adminUsers = users.users || [];
+  renderAdminUsers();
+  renderAdminLogs();
+}
+
+async function loadAdminLogs(render = true) {
+  if (!isAdminUser()) return null;
+  const lines = els.adminLogLineCount?.value || "200";
+  const data = await api(`/api/admin/logs?lines=${encodeURIComponent(lines)}`);
+  state.adminLogs = data;
+  if (render) renderAdminLogs();
+  return data;
+}
+
+function renderAdminUsers() {
+  if (!els.adminUsersList) return;
+  const users = state.adminUsers || [];
+  if (els.adminUserCount) {
+    els.adminUserCount.textContent = `${integer.format(users.length)} user${users.length === 1 ? "" : "s"}`;
+  }
+  els.adminUsersList.innerHTML = "";
+  if (!users.length) {
+    els.adminUsersList.innerHTML = '<div class="empty-state">No users found.</div>';
+    return;
+  }
+  for (const user of users) {
+    const row = document.createElement("article");
+    row.className = `admin-user-row ${user.is_banned ? "is-banned" : ""}`;
+    row.dataset.userId = user.id;
+    const roleOptions = ["admin", "paid", "normal"].map((role) => (
+      `<option value="${role}" ${user.role === role ? "selected" : ""}>${roleLabel(role)}</option>`
+    )).join("");
+    const protectedAdmin = Boolean(user.protected_admin);
+    const selfUser = state.user && Number(state.user.id) === Number(user.id);
+    row.innerHTML = `
+      <div class="admin-user-main">
+        <strong>${escapeHtml(user.name || user.email)}</strong>
+        <span>${escapeHtml(user.email)}</span>
+        <small>${integer.format(user.owned_quantity || 0)} cards · ${integer.format(user.deck_count || 0)} decks · ${integer.format(user.for_sale_quantity || 0)} for sale</small>
+      </div>
+      <label>
+        <span>Role</span>
+        <select class="admin-role-select" ${protectedAdmin || selfUser ? "disabled" : ""}>${roleOptions}</select>
+      </label>
+      <label class="admin-ban-toggle">
+        <input class="admin-ban-input" type="checkbox" ${user.is_banned ? "checked" : ""} ${protectedAdmin || selfUser ? "disabled" : ""}>
+        <span>Banned</span>
+      </label>
+      <button class="secondary-button compact-button admin-save-user-button" type="button" ${protectedAdmin || selfUser ? "disabled" : ""}>Save</button>
+      <button class="danger-action-button compact-button admin-delete-user-button" type="button" ${protectedAdmin || selfUser ? "disabled" : ""}>
+        <span class="trash-icon" aria-hidden="true"></span>Delete
+      </button>
+    `;
+    row.querySelector(".admin-save-user-button")?.addEventListener("click", () => {
+      saveAdminUser(row).catch((error) => setStatus(error.message, "error", els.adminStatus));
+    });
+    row.querySelector(".admin-delete-user-button")?.addEventListener("click", () => {
+      deleteAdminUser(row, user).catch((error) => setStatus(error.message, "error", els.adminStatus));
+    });
+    els.adminUsersList.appendChild(row);
+  }
+}
+
+function roleLabel(role) {
+  if (role === "admin") return "Admin";
+  if (role === "paid") return "Paid";
+  return "Normal";
+}
+
+async function saveAdminUser(row) {
+  const userId = row?.dataset.userId;
+  if (!userId) return;
+  const role = row.querySelector(".admin-role-select")?.value || "normal";
+  const isBanned = Boolean(row.querySelector(".admin-ban-input")?.checked);
+  const result = await api(`/api/admin/users/${encodeURIComponent(userId)}`, {
+    method: "PUT",
+    body: JSON.stringify({ role, is_banned: isBanned }),
+  });
+  state.adminUsers = result.users || state.adminUsers;
+  renderAdminUsers();
+  setStatus("User updated.", "success", els.adminStatus);
+}
+
+async function deleteAdminUser(row, user) {
+  const userId = row?.dataset.userId;
+  if (!userId) return;
+  const confirmed = window.confirm(`Delete ${user?.email || "this user"} and all of their FoilFolio data? This cannot be undone.`);
+  if (!confirmed) return;
+  const result = await api(`/api/admin/users/${encodeURIComponent(userId)}`, {
+    method: "DELETE",
+    body: "{}",
+  });
+  state.adminUsers = result.users || [];
+  renderAdminUsers();
+  setStatus("User deleted.", "success", els.adminStatus);
+}
+
+function renderAdminLogs() {
+  if (!els.adminLogs) return;
+  const payload = state.adminLogs || {};
+  els.adminLogs.textContent = (payload.lines || []).join("\n") || "No log lines yet.";
+  if (els.adminLogMeta) {
+    els.adminLogMeta.textContent = `${payload.path || "Log file"} · ${integer.format(payload.size || 0)} bytes · ${payload.exists ? "available" : "not created yet"}`;
+  }
 }
 
 function salePayloadFromRow(row) {
@@ -7058,6 +7209,15 @@ function wireEvents() {
   els.refreshPriceSnapshotsButton?.addEventListener("click", () => {
     refreshPriceSnapshots().catch((error) => setStatus(error.message, "error"));
   });
+  els.refreshAdminButton?.addEventListener("click", () => {
+    loadAdmin().catch((error) => setStatus(error.message, "error", els.adminStatus));
+  });
+  els.refreshAdminLogsButton?.addEventListener("click", () => {
+    loadAdminLogs().catch((error) => setStatus(error.message, "error", els.adminStatus));
+  });
+  els.adminLogLineCount?.addEventListener("change", () => {
+    loadAdminLogs().catch((error) => setStatus(error.message, "error", els.adminStatus));
+  });
   els.closeAddPurchaseButton.addEventListener("click", closeAddPurchaseModal);
   els.cancelAddPurchaseButton.addEventListener("click", closeAddPurchaseModal);
   els.addPurchaseOverlay.addEventListener("click", (event) => {
@@ -8138,6 +8298,8 @@ async function boot() {
   } else if (initialAppPage) {
     if (!state.user && protectedPage(initialAppPage)) {
       activatePage("home", { replace: true, promptLogin: false });
+    } else if (initialAppPage === "admin" && !isAdminUser()) {
+      activatePage(state.user ? "dashboard" : "home", { replace: true, promptLogin: false });
     } else {
       activatePage(initialAppPage);
     }

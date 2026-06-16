@@ -72,7 +72,7 @@ SESSION_IDLE_MINUTES = int(os.environ.get("SESSION_IDLE_MINUTES", "30") or 30)
 EMAIL_VERIFICATION_MINUTES = int(os.environ.get("EMAIL_VERIFICATION_MINUTES", "30") or 30)
 PASSWORD_RESET_MINUTES = int(os.environ.get("PASSWORD_RESET_MINUTES", str(EMAIL_VERIFICATION_MINUTES)) or EMAIL_VERIFICATION_MINUTES)
 SUPPORTED_SCRYFALL_LANGUAGES = {"en"}
-USER_AGENT = "foilfolio/0.1"
+USER_AGENT = "foilfolio/0.1.1"
 COLOR_ORDER = ("W", "U", "B", "R", "G")
 CARD_CONDITIONS = (
     "Near Mint",
@@ -86,6 +86,8 @@ CONDITION_ORDER = {condition: index for index, condition in enumerate(CARD_CONDI
 CONTAINER_TYPES = ("binder", "box", "other")
 DEFAULT_CONTAINER_TYPE = "other"
 THEMES = {"light", "dark", "retro", "neon", "red", "blue", "black", "green", "pride"}
+USER_ROLES = {"admin", "paid", "normal"}
+ADMIN_EMAILS = {"kristophr@live.com", "beanis323@gmail.com"}
 DISALLOWED_DISPLAY_NAME_WORDS = {
     "fuck", "shit", "bitch", "cunt", "asshole", "whore", "slut",
     "nigger", "nigga", "fag", "faggot", "retard", "kike", "spic",
@@ -121,6 +123,10 @@ def configure_logging():
 
 
 LOGGER = configure_logging()
+
+
+class ForbiddenError(PermissionError):
+    pass
 
 
 def now_iso():
@@ -235,6 +241,15 @@ def validate_user_content_name(value, label, limit):
 def validate_optional_email(value):
     email = (value or "").strip()
     return validate_email(email) if email else ""
+
+
+def role_for_email(email):
+    return "admin" if normalize_email(email) in ADMIN_EMAILS else "normal"
+
+
+def clean_user_role(value):
+    role = (value or "normal").strip().lower()
+    return role if role in USER_ROLES else "normal"
 
 
 def clean_contact_handle(value, field_name, max_length=80):
@@ -987,6 +1002,8 @@ def init_db(conn):
             contact_telegram TEXT NOT NULL DEFAULT '',
             contact_discord TEXT NOT NULL DEFAULT '',
             contact_website TEXT NOT NULL DEFAULT '',
+            role TEXT NOT NULL DEFAULT 'normal',
+            is_banned INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         );
@@ -1970,11 +1987,18 @@ def migrate_user_schema(conn):
         conn.execute("ALTER TABLE users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0")
     if "store_share_id" not in user_columns:
         conn.execute("ALTER TABLE users ADD COLUMN store_share_id TEXT")
+    if "role" not in user_columns:
+        conn.execute("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'normal'")
+    if "is_banned" not in user_columns:
+        conn.execute("ALTER TABLE users ADD COLUMN is_banned INTEGER NOT NULL DEFAULT 0")
     for column in ("public_email", "contact_whatsapp", "contact_signal", "contact_telegram", "contact_discord", "contact_website"):
         if column not in user_columns:
             conn.execute(f"ALTER TABLE users ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
     conn.execute("UPDATE users SET name = email WHERE trim(COALESCE(name, '')) = ''")
     conn.execute("UPDATE users SET email_verified = 1 WHERE email_verified = 0 AND trim(COALESCE(password_hash, '')) != ''")
+    conn.execute("UPDATE users SET role = 'normal' WHERE role NOT IN ('admin', 'paid', 'normal') OR trim(COALESCE(role, '')) = ''")
+    for email in ADMIN_EMAILS:
+        conn.execute("UPDATE users SET role = 'admin', is_banned = 0 WHERE lower(email) = ?", (email,))
     rows = conn.execute("SELECT id FROM users WHERE store_share_id IS NULL OR store_share_id = ''").fetchall()
     for row in rows:
         conn.execute("UPDATE users SET store_share_id = ? WHERE id = ?", (new_store_share_id(conn), row["id"]))
@@ -2000,6 +2024,7 @@ def migrate_user_schema(conn):
         """
     )
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_users_role ON users(role, is_banned)")
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_store_share_id ON users(store_share_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id, expires_at)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_email_verifications_email ON email_verifications(email, expires_at)")
@@ -2028,6 +2053,9 @@ def user_payload(row):
         "language": scryfall_language(row["language"]),
         "theme": clean_theme(row["theme"]),
         "email_verified": bool(row["email_verified"]),
+        "role": clean_user_role(row["role"] if "role" in row.keys() else role_for_email(row["email"])),
+        "is_admin": clean_user_role(row["role"] if "role" in row.keys() else role_for_email(row["email"])) == "admin",
+        "is_banned": bool(row["is_banned"]) if "is_banned" in row.keys() else False,
         "public_email": row["public_email"] if "public_email" in row.keys() else "",
         "contact_whatsapp": row["contact_whatsapp"] if "contact_whatsapp" in row.keys() else "",
         "contact_signal": row["contact_signal"] if "contact_signal" in row.keys() else "",
@@ -2089,6 +2117,10 @@ def current_user_from_token(conn, token):
         (token_hash, now_iso()),
     ).fetchone()
     if row:
+        if int(row["is_banned"] if "is_banned" in row.keys() else 0):
+            conn.execute("DELETE FROM sessions WHERE token_hash = ?", (token_hash,))
+            conn.commit()
+            return None
         conn.execute("UPDATE sessions SET expires_at = ? WHERE token_hash = ?", (session_expires_at(), token_hash))
         conn.commit()
     else:
@@ -2198,12 +2230,13 @@ def complete_registration(conn, payload):
     timestamp = now_iso()
     if conn.execute("SELECT 1 FROM users WHERE email = ?", (email,)).fetchone():
         raise ValueError("An account with that email already exists.")
+    role = role_for_email(email)
     cursor = conn.execute(
         """
-        INSERT INTO users (name, email, password_hash, language, theme, email_verified, store_share_id, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)
+        INSERT INTO users (name, email, password_hash, language, theme, email_verified, store_share_id, role, is_banned, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, 1, ?, ?, 0, ?, ?)
         """,
-        (name, email, hash_password(password), scryfall_language(payload.get("language")), clean_theme(payload.get("theme")), new_store_share_id(conn), timestamp, timestamp),
+        (name, email, hash_password(password), scryfall_language(payload.get("language")), clean_theme(payload.get("theme")), new_store_share_id(conn), role, timestamp, timestamp),
     )
     user_id = cursor.lastrowid
     if not legacy_direct:
@@ -2299,6 +2332,8 @@ def login_user(conn, payload):
     user = conn.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
     if not user or not verify_password(password, user["password_hash"]):
         raise ValueError("Email or password is incorrect.")
+    if int(user["is_banned"] if "is_banned" in user.keys() else 0):
+        raise PermissionError("This account has been banned.")
     token, expires_at = create_session(conn, user["id"])
     conn.execute("DELETE FROM sessions WHERE expires_at <= ?", (now_iso(),))
     conn.commit()
@@ -2368,6 +2403,112 @@ def delete_user_profile(conn, user_id):
     conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
     conn.commit()
     return {"ok": True}
+
+
+def is_admin_user(user):
+    if not user:
+        return False
+    if isinstance(user, sqlite3.Row):
+        role = clean_user_role(user["role"] if "role" in user.keys() else role_for_email(user["email"]))
+        return role == "admin" and not int(user["is_banned"] if "is_banned" in user.keys() else 0)
+    return clean_user_role(user.get("role")) == "admin" and not bool(user.get("is_banned"))
+
+
+def admin_user_payload(row):
+    email = row["email"]
+    role = clean_user_role(row["role"] if "role" in row.keys() else role_for_email(email))
+    keys = set(row.keys())
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "email": email,
+        "role": role,
+        "is_admin": role == "admin",
+        "is_banned": bool(row["is_banned"] if "is_banned" in row.keys() else 0),
+        "email_verified": bool(row["email_verified"]),
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+        "owned_quantity": int(row["owned_quantity"] or 0) if "owned_quantity" in keys else 0,
+        "deck_count": int(row["deck_count"] or 0) if "deck_count" in keys else 0,
+        "container_count": int(row["container_count"] or 0) if "container_count" in keys else 0,
+        "for_sale_quantity": int(row["for_sale_quantity"] or 0) if "for_sale_quantity" in keys else 0,
+        "protected_admin": normalize_email(email) in ADMIN_EMAILS,
+    }
+
+
+def list_admin_users(conn):
+    rows = conn.execute(
+        """
+        SELECT u.*,
+               COALESCE(c.owned_quantity, 0) AS owned_quantity,
+               COALESCE(d.deck_count, 0) AS deck_count,
+               COALESCE(ct.container_count, 0) AS container_count,
+               COALESCE(s.for_sale_quantity, 0) AS for_sale_quantity
+        FROM users u
+        LEFT JOIN (
+            SELECT user_id, SUM(quantity) AS owned_quantity
+            FROM collection
+            GROUP BY user_id
+        ) c ON c.user_id = u.id
+        LEFT JOIN (
+            SELECT user_id, COUNT(*) AS deck_count
+            FROM decks
+            GROUP BY user_id
+        ) d ON d.user_id = u.id
+        LEFT JOIN (
+            SELECT user_id, COUNT(*) AS container_count
+            FROM containers
+            GROUP BY user_id
+        ) ct ON ct.user_id = u.id
+        LEFT JOIN (
+            SELECT user_id, SUM(quantity) AS for_sale_quantity
+            FROM card_sales
+            GROUP BY user_id
+        ) s ON s.user_id = u.id
+        ORDER BY CASE lower(COALESCE(u.role, 'normal')) WHEN 'admin' THEN 0 WHEN 'paid' THEN 1 ELSE 2 END, lower(u.email)
+        """
+    ).fetchall()
+    return {"users": [admin_user_payload(row) for row in rows], "roles": sorted(USER_ROLES)}
+
+
+def update_admin_user(conn, acting_user_id, target_user_id, payload):
+    target = conn.execute("SELECT * FROM users WHERE id = ?", (target_user_id,)).fetchone()
+    if not target:
+        raise KeyError("User not found.")
+    protected_admin = normalize_email(target["email"]) in ADMIN_EMAILS
+    next_role = clean_user_role(payload.get("role", target["role"] if "role" in target.keys() else role_for_email(target["email"])))
+    next_banned = bool_int(payload.get("is_banned", target["is_banned"] if "is_banned" in target.keys() else 0))
+    if protected_admin and next_role != "admin":
+        raise ValueError("Seed admin accounts cannot be demoted.")
+    if protected_admin and next_banned:
+        raise ValueError("Seed admin accounts cannot be banned.")
+    if int(target_user_id) == int(acting_user_id) and (next_role != "admin" or next_banned):
+        raise ValueError("You cannot remove your own admin access.")
+    timestamp = now_iso()
+    conn.execute(
+        "UPDATE users SET role = ?, is_banned = ?, updated_at = ? WHERE id = ?",
+        (next_role, next_banned, timestamp, target_user_id),
+    )
+    if next_banned:
+        conn.execute("DELETE FROM sessions WHERE user_id = ?", (target_user_id,))
+    conn.commit()
+    updated = conn.execute("SELECT * FROM users WHERE id = ?", (target_user_id,)).fetchone()
+    return {"ok": True, "user": admin_user_payload(updated), **list_admin_users(conn)}
+
+
+def admin_delete_user(conn, acting_user_id, target_user_id):
+    target = conn.execute("SELECT * FROM users WHERE id = ?", (target_user_id,)).fetchone()
+    if not target:
+        raise KeyError("User not found.")
+    if int(target_user_id) == int(acting_user_id):
+        raise ValueError("Use Settings to delete your own profile.")
+    if normalize_email(target["email"]) in ADMIN_EMAILS:
+        raise ValueError("Seed admin accounts cannot be deleted.")
+    clear_user_data(conn, target_user_id)
+    conn.execute("DELETE FROM sessions WHERE user_id = ?", (target_user_id,))
+    conn.execute("DELETE FROM users WHERE id = ?", (target_user_id,))
+    conn.commit()
+    return {"ok": True, **list_admin_users(conn)}
 
 
 def new_share_id(conn):
@@ -8059,6 +8200,12 @@ class Handler(SimpleHTTPRequestHandler):
             raise PermissionError("Please log in to use this feature.")
         return user
 
+    def require_admin(self, conn):
+        user = self.require_user(conn)
+        if not is_admin_user(user):
+            raise ForbiddenError("Admin access required.")
+        return user
+
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
         try:
@@ -8083,7 +8230,14 @@ class Handler(SimpleHTTPRequestHandler):
                 if parsed.path == "/api/email/status":
                     return self.send_json(email_status())
                 if parsed.path == "/api/debug/logs":
-                    self.require_user(conn)
+                    self.require_admin(conn)
+                    params = urllib.parse.parse_qs(parsed.query)
+                    return self.send_json(read_log_tail(params.get("lines", [200])[0]))
+                if parsed.path == "/api/admin/users":
+                    self.require_admin(conn)
+                    return self.send_json(list_admin_users(conn))
+                if parsed.path == "/api/admin/logs":
+                    self.require_admin(conn)
                     params = urllib.parse.parse_qs(parsed.query)
                     return self.send_json(read_log_tail(params.get("lines", [200])[0]))
                 if parsed.path == "/api/cards/for-sale":
@@ -8266,6 +8420,8 @@ class Handler(SimpleHTTPRequestHandler):
             return self.send_json({"error": str(exc)}, HTTPStatus.NOT_FOUND)
         except ValueError as exc:
             return self.send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+        except ForbiddenError as exc:
+            return self.send_json({"error": str(exc)}, HTTPStatus.FORBIDDEN)
         except PermissionError as exc:
             return self.send_json({"error": str(exc)}, HTTPStatus.UNAUTHORIZED)
         except Exception as exc:
@@ -8279,7 +8435,7 @@ class Handler(SimpleHTTPRequestHandler):
             or re.match(r"^/favorites/shared/?$", parsed.path)
             or re.match(r"^/verify-email/[^/]+/?$", parsed.path)
             or re.match(r"^/reset-password/[^/]+/?$", parsed.path)
-            or re.match(r"^/(dashboard|favorites|collection|sets|decks|browse-decks|containers|missing-list|for-sale|store-front|wishlist|notifications|search|import)/?$", parsed.path)
+            or re.match(r"^/(dashboard|favorites|collection|sets|decks|browse-decks|containers|missing-list|for-sale|store-front|wishlist|notifications|admin|search|import)/?$", parsed.path)
         ):
             self.path = "/index.html"
         return super().do_GET()
@@ -8454,6 +8610,8 @@ class Handler(SimpleHTTPRequestHandler):
             return self.send_json({"error": str(exc)}, HTTPStatus.NOT_FOUND)
         except ValueError as exc:
             return self.send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+        except ForbiddenError as exc:
+            return self.send_json({"error": str(exc)}, HTTPStatus.FORBIDDEN)
         except PermissionError as exc:
             return self.send_json({"error": str(exc)}, HTTPStatus.UNAUTHORIZED)
         except Exception as exc:
@@ -8466,6 +8624,10 @@ class Handler(SimpleHTTPRequestHandler):
         try:
             with connect() as conn:
                 init_db(conn)
+                match = re.match(r"^/api/admin/users/([0-9]+)$", parsed.path)
+                if match:
+                    user = self.require_admin(conn)
+                    return self.send_json(update_admin_user(conn, user["id"], int(match.group(1)), self.read_json()))
                 if parsed.path == "/api/user/settings":
                     user = self.require_user(conn)
                     return self.send_json(update_user_settings(conn, user["id"], self.read_json()))
@@ -8485,6 +8647,8 @@ class Handler(SimpleHTTPRequestHandler):
             return self.send_json({"error": str(exc)}, HTTPStatus.NOT_FOUND)
         except ValueError as exc:
             return self.send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+        except ForbiddenError as exc:
+            return self.send_json({"error": str(exc)}, HTTPStatus.FORBIDDEN)
         except PermissionError as exc:
             return self.send_json({"error": str(exc)}, HTTPStatus.UNAUTHORIZED)
         except Exception as exc:
@@ -8497,6 +8661,10 @@ class Handler(SimpleHTTPRequestHandler):
         try:
             with connect() as conn:
                 init_db(conn)
+                match = re.match(r"^/api/admin/users/([0-9]+)$", parsed.path)
+                if match:
+                    user = self.require_admin(conn)
+                    return self.send_json(admin_delete_user(conn, user["id"], int(match.group(1))))
                 if parsed.path == "/api/user/profile":
                     user = self.require_user(conn)
                     result = delete_user_profile(conn, user["id"])
@@ -8533,6 +8701,8 @@ class Handler(SimpleHTTPRequestHandler):
             return self.send_json({"error": str(exc)}, HTTPStatus.NOT_FOUND)
         except ValueError as exc:
             return self.send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+        except ForbiddenError as exc:
+            return self.send_json({"error": str(exc)}, HTTPStatus.FORBIDDEN)
         except PermissionError as exc:
             return self.send_json({"error": str(exc)}, HTTPStatus.UNAUTHORIZED)
         except Exception as exc:
