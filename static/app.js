@@ -14,10 +14,12 @@ const state = {
   adminUsers: [],
   adminLogs: null,
   adminServer: null,
+  adminReports: [],
   userProfile: null,
   activeBlogCard: null,
   activeBlogDeck: null,
   activeBlogListCard: null,
+  activeReportTarget: null,
   ownedSetCards: [],
   ownedSets: [],
   catalogSearchAllResults: [],
@@ -53,6 +55,19 @@ const state = {
   activeSaleCard: null,
   importRows: [],
   importIssues: [],
+  importWizard: {
+    step: "source",
+    format: "",
+    text: "",
+    headers: [],
+    mapping: {},
+    fields: [],
+    jsonPreview: null,
+    rows: [],
+    issues: [],
+    decks: [],
+    wishlists: [],
+  },
   pendingDeckImport: null,
   selectedCards: new Map(),
   selectedSetMissingCards: new Map(),
@@ -158,6 +173,8 @@ const els = {
   notificationsNavDot: document.querySelector("#notificationsNavDot"),
   adminUsersList: document.querySelector("#adminUsersList"),
   adminUserCount: document.querySelector("#adminUserCount"),
+  adminReportsList: document.querySelector("#adminReportsList"),
+  adminReportCount: document.querySelector("#adminReportCount"),
   adminServerDetails: document.querySelector("#adminServerDetails"),
   adminServerVersion: document.querySelector("#adminServerVersion"),
   adminLogs: document.querySelector("#adminLogs"),
@@ -165,6 +182,12 @@ const els = {
   adminLogLineCount: document.querySelector("#adminLogLineCount"),
   refreshAdminButton: document.querySelector("#refreshAdminButton"),
   refreshAdminLogsButton: document.querySelector("#refreshAdminLogsButton"),
+  reportOverlay: document.querySelector("#reportOverlay"),
+  reportForm: document.querySelector("#reportForm"),
+  reportTargetLabel: document.querySelector("#reportTargetLabel"),
+  reportStatus: document.querySelector("#reportStatus"),
+  closeReportButton: document.querySelector("#closeReportButton"),
+  cancelReportButton: document.querySelector("#cancelReportButton"),
   searchInput: document.querySelector("#searchInput"),
   favoriteSearchInput: document.querySelector("#favoriteSearchInput"),
   missingSearchInput: document.querySelector("#missingSearchInput"),
@@ -215,6 +238,22 @@ const els = {
   csvImportFile: document.querySelector("#csvImportFile"),
   previewJsonImportButton: document.querySelector("#previewJsonImportButton"),
   previewCsvImportButton: document.querySelector("#previewCsvImportButton"),
+  importWizardFile: document.querySelector("#importWizardFile"),
+  importWizardJsonText: document.querySelector("#importWizardJsonText"),
+  importWizardBackButton: document.querySelector("#importWizardBackButton"),
+  importWizardResetButton: document.querySelector("#importWizardResetButton"),
+  importWizardNextButton: document.querySelector("#importWizardNextButton"),
+  importWizardSaveButton: document.querySelector("#importWizardSaveButton"),
+  importMappingTable: document.querySelector("#importMappingTable"),
+  importMapTitle: document.querySelector("#importMapTitle"),
+  importMapSubtitle: document.querySelector("#importMapSubtitle"),
+  importJsonPreview: document.querySelector("#importJsonPreview"),
+  importWizardIssues: document.querySelector("#importWizardIssues"),
+  importWizardRows: document.querySelector("#importWizardRows"),
+  importReviewStepTitle: document.querySelector("#importReviewStepTitle"),
+  importReviewStepSubtitle: document.querySelector("#importReviewStepSubtitle"),
+  importRecapRows: document.querySelector("#importRecapRows"),
+  importRecapSubtitle: document.querySelector("#importRecapSubtitle"),
   importReviewOverlay: document.querySelector("#importReviewOverlay"),
   importReviewTitle: document.querySelector("#importReviewTitle"),
   importReviewCount: document.querySelector("#importReviewCount"),
@@ -789,6 +828,7 @@ async function logout() {
   state.adminUsers = [];
   state.adminLogs = null;
   state.adminServer = null;
+  state.adminReports = [];
   state.ownedSetCards = [];
   state.ownedSets = [];
   state.activeWishlist = null;
@@ -3227,15 +3267,18 @@ async function loadAdmin() {
     setStatus("Admin access required.", "error", els.adminStatus);
     return;
   }
-  const [users, server, logs] = await Promise.all([
+  const [users, server, reports, logs] = await Promise.all([
     api("/api/admin/users"),
     api("/api/admin/server"),
+    api("/api/admin/reports"),
     loadAdminLogs(false),
   ]);
   state.adminUsers = users.users || [];
   state.adminServer = server;
+  state.adminReports = reports.reports || [];
   renderAdminUsers();
   renderAdminServer();
+  renderAdminReports();
   renderAdminLogs();
 }
 
@@ -3295,6 +3338,87 @@ function renderAdminUsers() {
     });
     els.adminUsersList.appendChild(row);
   }
+}
+
+function reportTypeLabel(type) {
+  if (type === "card_comment") return "Card comment";
+  if (type === "profile_post") return "Blog post";
+  if (type === "profile_comment") return "Blog comment";
+  return "Reported content";
+}
+
+function reportResolutionLabel(report) {
+  if (report.status === "pending") return "Pending";
+  if (report.resolution === "reviewed_removed") return "Reviewed - removed";
+  if (report.resolution === "reviewed_ok") return "Reviewed - no action";
+  return "Resolved";
+}
+
+function renderAdminReports() {
+  if (!els.adminReportsList) return;
+  const reports = state.adminReports || [];
+  const pendingCount = reports.filter((report) => report.status === "pending").length;
+  if (els.adminReportCount) {
+    els.adminReportCount.textContent = `${integer.format(pendingCount)} pending`;
+  }
+  if (!reports.length) {
+    els.adminReportsList.innerHTML = '<div class="empty-state">No content reports.</div>';
+    return;
+  }
+  els.adminReportsList.innerHTML = reports.map((report) => {
+    const target = report.target || {};
+    const author = target.author || {};
+    const reporter = report.reporter || {};
+    const pending = report.status === "pending";
+    return `
+      <article class="admin-report-row ${pending ? "is-pending" : "is-resolved"}" data-report-id="${escapeHtml(report.id)}">
+        <div class="admin-report-main">
+          <div class="admin-report-title">
+            <strong>${escapeHtml(reportTypeLabel(report.target_type))}</strong>
+            <span>${escapeHtml(reportResolutionLabel(report))}</span>
+          </div>
+          <p>${escapeHtml(report.reason || "")}</p>
+          <blockquote>${escapeHtml(target.body || "Content no longer exists.")}</blockquote>
+          <small>
+            Reported by ${reporter.profile_url ? `<a href="${escapeHtml(reporter.profile_url)}">${escapeHtml(reporter.name || reporter.email || "User")}</a>` : escapeHtml(reporter.name || reporter.email || "User")}
+            ${author.name ? ` - Content by ${author.profile_url ? `<a href="${escapeHtml(author.profile_url)}">${escapeHtml(author.name)}</a>` : escapeHtml(author.name)}` : ""}
+            ${target.context_name ? ` - ${escapeHtml(target.context_name)}` : ""}
+          </small>
+          ${report.resolved_at ? `<small>Resolved ${escapeHtml(formatActivityDate(report.resolved_at))}${report.admin?.name ? ` by ${escapeHtml(report.admin.name)}` : ""}</small>` : ""}
+        </div>
+        ${pending ? `
+          <div class="admin-report-actions">
+            <button class="secondary-button compact-button admin-report-keep-button" type="button">Reviewed, Fine</button>
+            <button class="danger-action-button compact-button admin-report-remove-button" type="button"><span class="trash-icon" aria-hidden="true"></span>Reviewed, Delete</button>
+          </div>
+        ` : ""}
+      </article>
+    `;
+  }).join("");
+  els.adminReportsList.querySelectorAll(".admin-report-keep-button").forEach((button) => {
+    button.addEventListener("click", () => resolveAdminReport(button, "keep").catch((error) => setStatus(error.message, "error", els.adminStatus)));
+  });
+  els.adminReportsList.querySelectorAll(".admin-report-remove-button").forEach((button) => {
+    button.addEventListener("click", () => resolveAdminReport(button, "remove").catch((error) => setStatus(error.message, "error", els.adminStatus)));
+  });
+}
+
+async function resolveAdminReport(button, action) {
+  const row = button.closest(".admin-report-row");
+  const reportId = row?.dataset.reportId;
+  if (!reportId) return;
+  if (action === "remove") {
+    const confirmed = window.confirm("Replace this content with \"this was removed by a moderator\" and resolve all pending reports for it?");
+    if (!confirmed) return;
+  }
+  button.disabled = true;
+  const result = await api(`/api/admin/reports/${encodeURIComponent(reportId)}/resolve`, {
+    method: "POST",
+    body: JSON.stringify({ action }),
+  });
+  state.adminReports = result.reports || [];
+  renderAdminReports();
+  setStatus(action === "remove" ? "Report resolved and content removed." : "Report resolved with no action.", "success", els.adminStatus);
 }
 
 function roleLabel(role) {
@@ -3906,6 +4030,7 @@ function cardBlogPostRowHtml(post) {
         </div>
       </div>
       <p>${escapeHtml(post.body || "")}</p>
+      ${state.user ? `<button class="report-content-button" type="button" data-target-type="profile_post" data-target-id="${escapeHtml(post.id)}" data-target-label="blog post by ${escapeAttribute(post.author?.name || "FoilFolio user")}">Report</button>` : ""}
     </article>
   `;
 }
@@ -5675,6 +5800,427 @@ async function readImportFile(input, label) {
   return file.text();
 }
 
+function resetImportWizard() {
+  state.importWizard = {
+    step: "source",
+    format: "",
+    text: "",
+    headers: [],
+    mapping: {},
+    fields: [],
+    jsonPreview: null,
+    rows: [],
+    issues: [],
+    decks: [],
+    wishlists: [],
+  };
+  if (els.importWizardFile) els.importWizardFile.value = "";
+  if (els.importWizardJsonText) els.importWizardJsonText.value = "";
+  setStatus("", "", els.importStatus);
+  renderImportWizard();
+}
+
+function importStepIndex(step) {
+  return ["source", "map", "review", "recap"].indexOf(step);
+}
+
+function setImportWizardStep(step) {
+  state.importWizard.step = step;
+  renderImportWizard();
+}
+
+function renderImportWizard() {
+  const wizard = state.importWizard;
+  document.querySelectorAll("[data-import-step]").forEach((panel) => {
+    panel.hidden = panel.dataset.importStep !== wizard.step;
+  });
+  document.querySelectorAll("[data-import-step-indicator]").forEach((item) => {
+    item.classList.toggle("is-active", item.dataset.importStepIndicator === wizard.step);
+    item.classList.toggle("is-complete", importStepIndex(item.dataset.importStepIndicator) < importStepIndex(wizard.step));
+  });
+  if (els.importWizardBackButton) els.importWizardBackButton.disabled = wizard.step === "source";
+  if (els.importWizardNextButton) els.importWizardNextButton.hidden = wizard.step === "recap";
+  if (els.importWizardSaveButton) els.importWizardSaveButton.hidden = wizard.step !== "recap";
+  if (wizard.step === "map") {
+    if (wizard.format === "csv") renderImportMappingStep();
+    else renderImportJsonPreviewStep();
+  }
+  if (wizard.step === "review") renderImportWizardReview();
+  if (wizard.step === "recap") renderImportWizardRecap();
+}
+
+async function importWizardSourceNext() {
+  const file = els.importWizardFile?.files?.[0];
+  const pastedJson = (els.importWizardJsonText?.value || "").trim();
+  if (!file && !pastedJson) {
+    setStatus("Upload a CSV/JSON file or paste JSON first.", "error", els.importStatus);
+    return;
+  }
+  setStatus("Reading import source...", "", els.importStatus);
+  let text = pastedJson;
+  let format = "json";
+  if (file) {
+    text = await file.text();
+    const name = file.name.toLowerCase();
+    format = name.endsWith(".csv") || file.type.includes("csv") ? "csv" : "json";
+  }
+  state.importWizard.text = text;
+  state.importWizard.format = format;
+  if (format === "csv") {
+    const result = await api("/api/import/csv/headers", {
+      method: "POST",
+      body: JSON.stringify({ text }),
+    });
+    state.importWizard.headers = result.headers || [];
+    state.importWizard.mapping = result.mapping || {};
+    state.importWizard.fields = result.fields || [];
+    state.importWizard.rowCount = result.row_count || 0;
+    setStatus(`Loaded CSV with ${integer.format(state.importWizard.rowCount)} row${Number(state.importWizard.rowCount) === 1 ? "" : "s"}.`, "success", els.importStatus);
+  } else {
+    const result = await api("/api/import/json/preview", {
+      method: "POST",
+      body: JSON.stringify({ text }),
+    });
+    state.importWizard.jsonPreview = result;
+    state.importWizard.rows = result.cards?.rows || [];
+    state.importWizard.issues = [...(result.cards?.issues || []), ...(result.issues || [])];
+    state.importWizard.decks = result.decks?.normalized_decks || [];
+    state.importWizard.wishlists = result.wishlists?.normalized_wishlists || [];
+    setStatus(result.label || "JSON loaded.", result.can_commit === false ? "error" : "success", els.importStatus);
+  }
+  setImportWizardStep("map");
+}
+
+function renderImportMappingStep() {
+  const wizard = state.importWizard;
+  if (els.importMapTitle) els.importMapTitle.textContent = "Map CSV Columns";
+  if (els.importMapSubtitle) els.importMapSubtitle.textContent = `${integer.format(wizard.headers.length)} headers · ${integer.format(wizard.rowCount || 0)} rows`;
+  if (els.importJsonPreview) els.importJsonPreview.innerHTML = "";
+  const headers = ["", ...wizard.headers];
+  els.importMappingTable.innerHTML = `
+    <div class="import-mapping-head">
+      <span>CSV column</span>
+      <span>FoilFolio field</span>
+      <span>Required</span>
+    </div>
+    ${(wizard.fields || []).map((field) => `
+      <label class="import-mapping-row">
+        <select data-import-field="${escapeHtml(field.key)}">
+          ${headers.map((header) => `<option value="${escapeHtml(header)}" ${wizard.mapping[field.key] === header ? "selected" : ""}>${escapeHtml(header || "Do not import")}</option>`).join("")}
+        </select>
+        <strong>${escapeHtml(field.label)}</strong>
+        <span>${field.required ? "Required" : "Optional"}</span>
+      </label>
+    `).join("")}
+  `;
+  els.importMappingTable.querySelectorAll("select[data-import-field]").forEach((select) => {
+    select.addEventListener("change", () => {
+      state.importWizard.mapping[select.dataset.importField] = select.value;
+    });
+  });
+}
+
+function renderImportJsonPreviewStep() {
+  const preview = state.importWizard.jsonPreview || {};
+  if (els.importMapTitle) els.importMapTitle.textContent = "JSON Detection";
+  if (els.importMapSubtitle) els.importMapSubtitle.textContent = preview.label || "";
+  if (els.importMappingTable) els.importMappingTable.innerHTML = "";
+  const decks = preview.decks?.decks || [];
+  const wishlists = preview.wishlists?.wishlists || [];
+  const cards = preview.cards?.rows || [];
+  const issues = [...(preview.issues || []), ...(preview.cards?.issues || [])];
+  els.importJsonPreview.innerHTML = `
+    <div class="import-json-card ${preview.can_commit === false ? "needs-review" : ""}">
+      <strong>${escapeHtml(preview.label || "JSON import")}</strong>
+      <span>${escapeHtml(preview.kind || "unknown")}</span>
+      ${issues.length ? `<p>${escapeHtml(issues.join(" "))}</p>` : ""}
+    </div>
+    ${decks.length ? `
+      <div class="deck-import-list">
+        ${decks.map((deck) => `
+          <article class="deck-import-row ${deck.issues?.length ? "needs-review" : ""}" data-import-index="${escapeHtml(deck.index)}">
+            <div>
+              <label>
+                Deck name
+                <input type="text" maxlength="20" value="${escapeHtml(deck.name || "")}" data-json-deck-name="${escapeHtml(deck.index)}">
+              </label>
+              ${deck.issues?.length ? `<p>${escapeHtml(deck.issues.join(" "))}</p>` : `<p>Ready to import.</p>`}
+            </div>
+            <span>${integer.format(deck.card_count || 0)} cards</span>
+          </article>
+        `).join("")}
+      </div>
+    ` : ""}
+    ${wishlists.length ? `
+      <div class="deck-import-list">
+        ${wishlists.map((wishlist) => `
+          <article class="deck-import-row ${wishlist.issues?.length ? "needs-review" : ""}" data-import-index="${escapeHtml(wishlist.index)}">
+            <div>
+              <label>
+                Wishlist name
+                <input type="text" maxlength="30" value="${escapeHtml(wishlist.name || "")}" data-json-wishlist-name="${escapeHtml(wishlist.index)}">
+              </label>
+              ${wishlist.issues?.length ? `<p>${escapeHtml(wishlist.issues.join(" "))}</p>` : `<p>Ready to import.</p>`}
+            </div>
+            <span>${integer.format(wishlist.card_count || 0)} cards</span>
+          </article>
+        `).join("")}
+      </div>
+    ` : ""}
+    ${cards.length ? `<div class="empty-state compact-empty">${integer.format(cards.length)} collection card group${cards.length === 1 ? "" : "s"} will be reviewed next.</div>` : ""}
+  `;
+  els.importJsonPreview.querySelectorAll("[data-json-deck-name]").forEach((input) => {
+    input.addEventListener("input", () => {
+      const index = Number(input.dataset.jsonDeckName);
+      const deck = state.importWizard.decks.find((item) => Number(item.index) === index);
+      if (deck) deck.name = input.value.trim().replace(/\s+/g, " ");
+    });
+  });
+  els.importJsonPreview.querySelectorAll("[data-json-wishlist-name]").forEach((input) => {
+    input.addEventListener("input", () => {
+      const index = Number(input.dataset.jsonWishlistName);
+      const wishlist = state.importWizard.wishlists.find((item) => Number(item.index) === index);
+      if (wishlist) wishlist.name = input.value.trim().replace(/\s+/g, " ");
+    });
+  });
+}
+
+async function importWizardMapNext() {
+  const wizard = state.importWizard;
+  if (wizard.format === "csv") {
+    if (!wizard.mapping.name && !wizard.mapping.scryfall_id) {
+      setStatus("Map at least Card title or Scryfall ID before continuing.", "error", els.importStatus);
+      return;
+    }
+    setStatus("Matching CSV rows against Scryfall...", "", els.importStatus);
+    const result = await api("/api/import/csv/match", {
+      method: "POST",
+      body: JSON.stringify({ text: wizard.text, mapping: wizard.mapping }),
+    });
+    wizard.rows = result.rows || [];
+    wizard.issues = result.issues || [];
+  } else if (wizard.jsonPreview?.kind === "unknown") {
+    setStatus("This JSON type cannot be saved yet.", "error", els.importStatus);
+    return;
+  } else if (["decks", "wishlists"].includes(wizard.jsonPreview?.kind)) {
+    setImportWizardStep("recap");
+    return;
+  } else if (wizard.jsonPreview?.kind === "full") {
+    wizard.rows = wizard.jsonPreview.cards?.rows || [];
+    wizard.issues = wizard.jsonPreview.cards?.issues || [];
+    if (!wizard.rows.length) {
+      setImportWizardStep("recap");
+      return;
+    }
+  }
+  setImportWizardStep("review");
+}
+
+function renderImportWizardReview() {
+  const rows = state.importWizard.rows || [];
+  const issues = state.importWizard.issues || [];
+  if (els.importReviewStepTitle) els.importReviewStepTitle.textContent = "Review Matches";
+  if (els.importReviewStepSubtitle) {
+    const selected = rows.filter((row) => row.checked).length;
+    els.importReviewStepSubtitle.textContent = `${integer.format(selected)} of ${integer.format(rows.length)} selected`;
+  }
+  els.importWizardIssues.innerHTML = issues.length
+    ? issues.map((issue) => `<div>Line ${escapeHtml(issue.line || "?")}: ${escapeHtml(issue.error || issue)}</div>`).join("")
+    : "";
+  els.importWizardRows.innerHTML = rows.length ? rows.map((row) => importWizardRowHtml(row)).join("") : '<div class="empty-state">No card rows to review.</div>';
+  els.importWizardRows.querySelectorAll("[data-import-delete-row]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.importWizard.rows = state.importWizard.rows.filter((row) => row.id !== button.dataset.importDeleteRow);
+      renderImportWizardReview();
+    });
+  });
+  els.importWizardRows.querySelectorAll("[data-import-row-check]").forEach((checkbox) => {
+    checkbox.addEventListener("change", () => {
+      const row = state.importWizard.rows.find((item) => item.id === checkbox.dataset.importRowCheck);
+      if (row) row.checked = checkbox.checked;
+      renderImportWizardReview();
+    });
+  });
+  els.importWizardRows.querySelectorAll(".import-match-button").forEach((button) => {
+    button.addEventListener("click", () => {
+      const rowId = button.dataset.rowId;
+      const rowEl = button.closest(".import-wizard-row");
+      const row = state.importWizard.rows.find((item) => item.id === rowId);
+      const input = rowEl.querySelector(".import-match-search");
+      const select = rowEl.querySelector(".import-match-results");
+      searchImportWizardRow(row, input, select, rowEl).catch((error) => setStatus(error.message, "error", els.importStatus));
+    });
+  });
+  els.importWizardRows.querySelectorAll(".import-match-search").forEach((input) => {
+    input.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+      input.closest(".import-wizard-row")?.querySelector(".import-match-button")?.click();
+    });
+  });
+  els.importWizardRows.querySelectorAll(".import-match-results").forEach((select) => {
+    select.addEventListener("change", () => {
+      const row = state.importWizard.rows.find((item) => item.id === select.dataset.rowId);
+      const selected = select._cards?.find((card) => card.scryfall_id === select.value);
+      if (!row || !selected) return;
+      row.match = { source: "scryfall", confidence: "user selected", card: selected };
+      row.status = "matched";
+      row.checked = true;
+      renderImportWizardReview();
+    });
+  });
+}
+
+function importWizardRowHtml(row) {
+  const entry = row.entry || {};
+  const matchCard = row.match?.card;
+  return `
+    <article class="import-wizard-row ${!matchCard ? "needs-review" : ""}" data-row-id="${escapeHtml(row.id)}">
+      <label class="import-row-check">
+        <input type="checkbox" data-import-row-check="${escapeHtml(row.id)}" ${row.checked ? "checked" : ""} ${matchCard ? "" : "disabled"}>
+      </label>
+      <div class="import-row-source">
+        <strong>${escapeHtml(entry.name || "Unnamed row")}</strong>
+        <span>Line ${escapeHtml(entry.line || "?")} · ${escapeHtml(entry.set_name || entry.set_code || "Unknown set")} #${escapeHtml(entry.collector_number || "?")} · ${escapeHtml(entry.variant || "Normal")} · ${escapeHtml(entry.card_condition || "Near Mint")}</span>
+      </div>
+      <div class="import-row-match">${renderImportCard(matchCard)}</div>
+      <b>${integer.format(entry.quantity || 0)}</b>
+      <div class="import-row-tools">
+        <div class="search-control">
+          <input class="import-match-search" type="search" value="${escapeAttribute(entry.name || "")}" placeholder="Search Scryfall">
+          <button class="search-button import-match-button" type="button" data-row-id="${escapeHtml(row.id)}" aria-label="Search Scryfall">&#8981;</button>
+        </div>
+        <select class="import-match-results" data-row-id="${escapeHtml(row.id)}" hidden></select>
+      </div>
+      <button class="delete-movement-button" type="button" data-import-delete-row="${escapeHtml(row.id)}" aria-label="Delete import row" title="Delete row"><span class="trash-icon" aria-hidden="true"></span></button>
+    </article>
+  `;
+}
+
+async function searchImportWizardRow(row, input, select, item) {
+  const query = input.value.trim();
+  if (query.length < 2) return;
+  item.classList.add("is-searching");
+  try {
+    const result = await api(`/api/scryfall/search?q=${encodeURIComponent(query)}`);
+    const cards = result.cards || [];
+    select._cards = cards;
+    select.innerHTML = cards.length
+      ? '<option value="">Choose a Scryfall match</option>' + cards.map((card) => `<option value="${escapeHtml(card.scryfall_id)}">${escapeHtml(card.display_name || card.name)} - ${escapeHtml(card.set_name)} #${escapeHtml(card.collector_number)}</option>`).join("")
+      : '<option value="">No matches</option>';
+    select.hidden = false;
+  } finally {
+    item.classList.remove("is-searching");
+  }
+}
+
+function importWizardReviewNext() {
+  if (!state.importWizard.rows.length) {
+    setStatus("No rows remain to import.", "error", els.importStatus);
+    return;
+  }
+  setImportWizardStep("recap");
+}
+
+function renderImportWizardRecap() {
+  const wizard = state.importWizard;
+  const rows = (wizard.rows || []).filter((row) => row.checked && row.match?.card);
+  const decks = wizard.decks || [];
+  const wishlists = wizard.wishlists || [];
+  const parts = [];
+  if (rows.length) parts.push(`${integer.format(rows.length)} card group${rows.length === 1 ? "" : "s"}`);
+  if (decks.length && ["decks", "full"].includes(wizard.jsonPreview?.kind)) parts.push(`${integer.format(decks.length)} deck${decks.length === 1 ? "" : "s"}`);
+  if (wishlists.length && ["wishlists", "full"].includes(wizard.jsonPreview?.kind)) parts.push(`${integer.format(wishlists.length)} wishlist${wishlists.length === 1 ? "" : "s"}`);
+  if (els.importRecapSubtitle) els.importRecapSubtitle.textContent = parts.join(" · ") || "Nothing selected";
+  const cardRows = rows.length ? `
+    <h4>Cards</h4>
+    <div class="import-recap-list">
+      ${rows.map((row) => `
+        <article>
+          <strong>${escapeHtml(cardTitle(row.match.card))}</strong>
+          <span>${escapeHtml(row.match.card.set_name || "")} #${escapeHtml(row.match.card.collector_number || "")} · ${escapeHtml(row.entry?.variant || "Normal")} · ${escapeHtml(row.entry?.card_condition || "Near Mint")}</span>
+          <b>Qty ${integer.format(row.entry?.quantity || 0)}</b>
+        </article>
+      `).join("")}
+    </div>
+  ` : "";
+  const deckRows = decks.length && ["decks", "full"].includes(wizard.jsonPreview?.kind) ? `
+    <h4>Decks</h4>
+    <div class="import-recap-list">
+      ${decks.map((deck) => `
+        <article>
+          <strong>${escapeHtml(deck.name || "Deck")}</strong>
+          <span>${integer.format((deck.cards || []).length)} unique card row${Number((deck.cards || []).length) === 1 ? "" : "s"}</span>
+          <b>${deck.is_private ? "Private" : "Public"}</b>
+        </article>
+      `).join("")}
+    </div>
+  ` : "";
+  const wishlistRows = wishlists.length && ["wishlists", "full"].includes(wizard.jsonPreview?.kind) ? `
+    <h4>Wishlists</h4>
+    <div class="import-recap-list">
+      ${wishlists.map((wishlist) => `
+        <article>
+          <strong>${escapeHtml(wishlist.name || "Wishlist")}</strong>
+          <span>${integer.format((wishlist.cards || []).length)} unique card row${Number((wishlist.cards || []).length) === 1 ? "" : "s"}</span>
+          <b>Wishlist</b>
+        </article>
+      `).join("")}
+    </div>
+  ` : "";
+  els.importRecapRows.innerHTML = cardRows + deckRows + wishlistRows || '<div class="empty-state">Nothing is selected to save.</div>';
+}
+
+async function saveImportWizard() {
+  const wizard = state.importWizard;
+  const rows = (wizard.rows || []).map((row) => ({
+    checked: row.checked,
+    entry: row.entry,
+    card_id: row.match?.card?.scryfall_id || "",
+    match: row.match,
+  }));
+  const payload = wizard.format === "json"
+    ? { kind: wizard.jsonPreview?.kind, rows, decks: wizard.decks || [], wishlists: wizard.wishlists || [] }
+    : { rows };
+  const endpoint = wizard.format === "json" ? "/api/import/json/commit" : "/api/import/commit";
+  els.importWizardSaveButton.disabled = true;
+  setStatus("Saving import...", "", els.importStatus);
+  try {
+    const result = await api(endpoint, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    const importedCards = result.imported_rows ?? result.imported?.cards ?? 0;
+    const importedDecks = result.imported?.decks ?? 0;
+    const importedWishlists = result.imported?.wishlists ?? 0;
+    const savedParts = [`${integer.format(importedCards)} card group${Number(importedCards) === 1 ? "" : "s"}`];
+    if (importedDecks) savedParts.push(`${integer.format(importedDecks)} deck${Number(importedDecks) === 1 ? "" : "s"}`);
+    if (importedWishlists) savedParts.push(`${integer.format(importedWishlists)} wishlist${Number(importedWishlists) === 1 ? "" : "s"}`);
+    const message = `Saved ${savedParts.join(", ")}.`;
+    resetImportWizard();
+    setStatus(message, "success", els.importStatus);
+    await refresh();
+    await loadDecks().catch(() => {});
+    await loadWishlists().catch(() => {});
+  } finally {
+    els.importWizardSaveButton.disabled = false;
+  }
+}
+
+async function importWizardNext() {
+  const step = state.importWizard.step;
+  if (step === "source") return importWizardSourceNext();
+  if (step === "map") return importWizardMapNext();
+  if (step === "review") return importWizardReviewNext();
+}
+
+function importWizardBack() {
+  const step = state.importWizard.step;
+  if (step === "map") setImportWizardStep("source");
+  if (step === "review") setImportWizardStep("map");
+  if (step === "recap") setImportWizardStep(state.importWizard.format === "json" && state.importWizard.jsonPreview?.kind === "decks" ? "map" : "review");
+}
+
 async function previewImport(format) {
   const isJson = format === "json";
   const input = isJson ? els.jsonImportFile : els.csvImportFile;
@@ -6229,6 +6775,167 @@ function renderMovementHistory(movements) {
   `;
 }
 
+function renderCardComments(card) {
+  const comments = Array.isArray(card.comments) ? card.comments : [];
+  return `
+    <form class="card-comment-form">
+      <textarea name="body" maxlength="1000" placeholder="Add a public comment about this card..."></textarea>
+      <button class="secondary-button" type="submit">Add Comment</button>
+    </form>
+    <div class="card-comment-list">
+      ${comments.length ? comments.map((comment) => `
+        <article class="card-comment-row">
+          <div class="card-comment-meta">
+            <a href="${escapeHtml(comment.author?.profile_url || "#")}" class="card-comment-author">${escapeHtml(comment.author?.name || "FoilFolio user")}</a>
+            <span>${escapeHtml(formatDate(comment.created_at))}</span>
+          </div>
+          <p>${escapeHtml(comment.body || "")}</p>
+          ${state.user ? `<button class="report-content-button" type="button" data-target-type="card_comment" data-target-id="${escapeHtml(comment.id)}" data-target-label="card comment by ${escapeAttribute(comment.author?.name || "FoilFolio user")}">Report</button>` : ""}
+          <button class="comment-upvote-button ${comment.user_upvoted ? "is-active" : ""}" type="button" data-comment-id="${escapeHtml(comment.id)}" ${comment.can_upvote ? "" : "disabled"} title="${comment.can_upvote ? "Upvote this comment" : "You cannot upvote your own comment"}" aria-label="Upvote comment">
+            <span aria-hidden="true">▲</span>
+            <b>${integer.format(comment.upvote_count || 0)}</b>
+          </button>
+        </article>
+      `).join("") : '<div class="empty-state">No public comments yet.</div>'}
+    </div>
+  `;
+}
+
+function wireCardComments(card) {
+  const form = els.cardDetailShell.querySelector(".card-comment-form");
+  form?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    addCardComment(card, form).catch((error) => setStatus(error.message, "error"));
+  });
+  els.cardDetailShell.querySelectorAll(".comment-upvote-button").forEach((button) => {
+    button.addEventListener("click", () => {
+      toggleCardCommentUpvote(card, button).catch((error) => setStatus(error.message, "error"));
+    });
+  });
+}
+
+function refreshCardCommentsPanel(card) {
+  const panel = els.cardDetailShell.querySelector(".card-comments-panel");
+  if (!panel) return;
+  panel.innerHTML = `
+    <div class="panel-head">
+      <h2>Public Comments</h2>
+      <span>${integer.format((card.comments || []).length)} comments</span>
+    </div>
+    ${renderCardComments(card)}
+  `;
+  wireCardComments(card);
+}
+
+function openReportModal(target) {
+  if (!state.user) {
+    openAuthModal("login", "Log in to report content.");
+    return;
+  }
+  state.activeReportTarget = target;
+  if (els.reportTargetLabel) {
+    els.reportTargetLabel.textContent = target.label || "Report this content for moderator review.";
+  }
+  els.reportForm?.reset();
+  setStatus("", "", els.reportStatus);
+  if (els.reportOverlay) {
+    els.reportOverlay.hidden = false;
+    document.body.classList.add("modal-open");
+    els.reportForm?.reason?.focus();
+  }
+}
+
+function closeReportModal() {
+  if (!els.reportOverlay) return;
+  els.reportOverlay.hidden = true;
+  document.body.classList.remove("modal-open");
+  state.activeReportTarget = null;
+  els.reportForm?.reset();
+  setStatus("", "", els.reportStatus);
+}
+
+async function submitContentReport(form) {
+  const target = state.activeReportTarget;
+  if (!target) return;
+  const reason = form.reason.value.trim();
+  if (!reason) {
+    setStatus("Report reason is required.", "error", els.reportStatus);
+    form.reason.focus();
+    return;
+  }
+  const button = form.querySelector('button[type="submit"]');
+  const originalText = button ? button.textContent : "";
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Submitting...";
+  }
+  try {
+    await api("/api/reports", {
+      method: "POST",
+      body: JSON.stringify({
+        target_type: target.type,
+        target_id: target.id,
+        reason,
+      }),
+      promptLogin: true,
+    });
+    closeReportModal();
+    setStatus("Report submitted for moderator review.", "success", activeStatusTarget());
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = originalText || "Submit Report";
+    }
+  }
+}
+
+async function addCardComment(card, form) {
+  const textarea = form.elements.body;
+  const button = form.querySelector("button[type='submit']");
+  const body = textarea.value.trim();
+  if (!body) {
+    setStatus("Write a comment first.", "error");
+    textarea.focus();
+    return;
+  }
+  const originalText = button ? button.textContent : "";
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Adding...";
+  }
+  try {
+    const result = await api(`/api/cards/${encodeURIComponent(card.scryfall_id)}/comments`, {
+      method: "POST",
+      body: JSON.stringify({ body }),
+      promptLogin: true,
+    });
+    card.comments = result.comments || [];
+    refreshCardCommentsPanel(card);
+    setStatus("Comment added.");
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = originalText || "Add Comment";
+    }
+  }
+}
+
+async function toggleCardCommentUpvote(card, button) {
+  const commentId = button.dataset.commentId;
+  if (!commentId) return;
+  button.disabled = true;
+  try {
+    const result = await api(`/api/card-comments/${encodeURIComponent(commentId)}/upvote`, {
+      method: "POST",
+      promptLogin: true,
+    });
+    card.comments = result.comments || [];
+    refreshCardCommentsPanel(card);
+  } finally {
+    button.disabled = false;
+  }
+}
+
 function normalizedPriceSeries(card) {
   const source = Array.isArray(card.price_histories) && card.price_histories.length
     ? card.price_histories
@@ -6555,13 +7262,22 @@ function renderCardDetail(card) {
         </section>
       </aside>` : ""}
     </div>
-    ${owned ? `<section class="purchase-history-panel">
-      <div class="panel-head">
-        <h2>Card History</h2>
-        <span>${integer.format((card.movements || card.purchases || []).length)} entries</span>
-      </div>
-      ${renderMovementHistory(card.movements || card.purchases || [])}
-    </section>` : ""}
+    <div class="card-detail-lower-grid ${owned ? "" : "is-comments-only"}">
+      ${owned ? `<section class="purchase-history-panel">
+        <div class="panel-head">
+          <h2>Card History</h2>
+          <span>${integer.format((card.movements || card.purchases || []).length)} entries</span>
+        </div>
+        ${renderMovementHistory(card.movements || card.purchases || [])}
+      </section>` : ""}
+      <section class="purchase-history-panel card-comments-panel">
+        <div class="panel-head">
+          <h2>Public Comments</h2>
+          <span>${integer.format((card.comments || []).length)} comments</span>
+        </div>
+        ${renderCardComments(card)}
+      </section>
+    </div>
   `;
   els.cardDetailShell.querySelector("#addPurchaseButton")?.addEventListener("click", () => openAddPurchaseModal(card));
   els.cardDetailShell.querySelector("#adjustInventoryButton")?.addEventListener("click", () => openInventoryAdjustModal(card));
@@ -6619,6 +7335,7 @@ function renderCardDetail(card) {
       deleteCardMovement(button).catch((error) => setStatus(error.message, "error"));
     });
   });
+  wireCardComments(card);
 }
 
 async function saveCardPrivateNotes(card, form) {
@@ -7264,6 +7981,7 @@ function profileCommentRows(comments, parentId = null) {
         </div>
       </div>
       <p>${escapeHtml(comment.body || "")}</p>
+      ${state.user ? `<button class="report-content-button" type="button" data-target-type="profile_comment" data-target-id="${escapeHtml(comment.id)}" data-target-label="blog comment by ${escapeAttribute(comment.author?.name || "FoilFolio user")}">Report</button>` : ""}
       ${state.user ? `
         <form class="profile-reply-form" data-post-id="${escapeHtml(comment.post_id)}" data-parent-id="${escapeHtml(comment.id)}">
           <input name="body" type="text" maxlength="1000" placeholder="Reply">
@@ -7358,6 +8076,7 @@ function renderUserProfile(profile) {
         </div>
       </div>
       <p>${escapeHtml(post.body || "")}</p>
+      ${state.user ? `<button class="report-content-button" type="button" data-target-type="profile_post" data-target-id="${escapeHtml(post.id)}" data-target-label="blog post by ${escapeAttribute(profile.name || "Collector")}">Report</button>` : ""}
       ${post.card ? `<div class="profile-post-card-link">${cardBlogPreviewHtml(post.card)}</div>` : ""}
       ${post.deck ? `<div class="profile-post-card-link">${deckBlogPreviewHtml(post.deck)}</div>` : ""}
       ${profile.can_comment ? `
@@ -7717,6 +8436,16 @@ function wireEvents() {
     event.preventDefault();
     event.returnValue = "";
   });
+  document.addEventListener("click", (event) => {
+    const button = event.target.closest?.(".report-content-button");
+    if (!button) return;
+    event.preventDefault();
+    openReportModal({
+      type: button.dataset.targetType,
+      id: button.dataset.targetId,
+      label: button.dataset.targetLabel,
+    });
+  });
   for (const command of els.navCommands) {
     if (command.id === "myProfileButton") continue;
     command.addEventListener("click", () => {
@@ -7933,12 +8662,36 @@ function wireEvents() {
   els.favoriteAddToContainerButton.addEventListener("click", () => {
     openAssignContainerModal().catch((error) => setStatus(error.message, "error", els.favoritesStatus));
   });
-  els.previewJsonImportButton.addEventListener("click", () => {
+  els.importWizardNextButton?.addEventListener("click", () => {
+    importWizardNext().catch((error) => setStatus(error.message, "error", els.importStatus));
+  });
+  els.importWizardBackButton?.addEventListener("click", importWizardBack);
+  els.importWizardResetButton?.addEventListener("click", resetImportWizard);
+  els.importWizardSaveButton?.addEventListener("click", () => {
+    saveImportWizard().catch((error) => setStatus(error.message, "error", els.importStatus));
+  });
+  els.importWizardFile?.addEventListener("change", () => {
+    if (els.importWizardFile.files?.length && els.importWizardJsonText) {
+      els.importWizardJsonText.value = "";
+    }
+    state.importWizard.format = "";
+    state.importWizard.text = "";
+    setStatus("", "", els.importStatus);
+  });
+  els.importWizardJsonText?.addEventListener("input", () => {
+    if (els.importWizardJsonText.value.trim() && els.importWizardFile) {
+      els.importWizardFile.value = "";
+    }
+    state.importWizard.format = "";
+    state.importWizard.text = "";
+    setStatus("", "", els.importStatus);
+  });
+  els.previewJsonImportButton?.addEventListener("click", () => {
     previewImport("json").catch((error) => {
       els.importStatus.textContent = error.message;
     });
   });
-  els.previewCsvImportButton.addEventListener("click", () => {
+  els.previewCsvImportButton?.addEventListener("click", () => {
     previewImport("csv").catch((error) => {
       els.importStatus.textContent = error.message;
     });
@@ -8313,6 +9066,17 @@ function wireEvents() {
     if (event.target === els.cardBlogListOverlay) {
       closeCardBlogListModal();
     }
+  });
+  els.closeReportButton?.addEventListener("click", closeReportModal);
+  els.cancelReportButton?.addEventListener("click", closeReportModal);
+  els.reportOverlay?.addEventListener("click", (event) => {
+    if (event.target === els.reportOverlay) {
+      closeReportModal();
+    }
+  });
+  els.reportForm?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    submitContentReport(event.currentTarget).catch((error) => setStatus(error.message, "error", els.reportStatus));
   });
   els.writeCardBlogFromListButton?.addEventListener("click", () => {
     const card = state.activeBlogListCard;

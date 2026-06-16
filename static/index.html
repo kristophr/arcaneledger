@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>FoilFolio</title>
-    <link rel="stylesheet" href="/styles.css?v=131">
+    <link rel="stylesheet" href="/styles.css?v=134">
   </head>
   <body>
     <header class="topbar">
@@ -524,21 +524,55 @@
           </div>
         </div>
         <div id="importStatus" class="status" aria-live="polite"></div>
-        <div class="import-grid">
-          <article class="import-panel">
-            <span class="import-icon" aria-hidden="true"></span>
-            <h3>JSON Import</h3>
-            <p>Only FoilFolio JSON exports are accepted. Use this when moving data between FoilFolio installs.</p>
-            <input id="jsonImportFile" type="file" accept="application/json,.json">
-            <button id="previewJsonImportButton" class="primary-button" type="button">Preview JSON</button>
-          </article>
-          <article class="import-panel">
-            <span class="collection-icon" aria-hidden="true"></span>
-            <h3>CSV Import</h3>
-            <p>CSV files need a header row. Recommended columns: Name, Set, Card Number, Quantity, Price Paid, Date Acquired, Variant, Condition, Graded, Notes.</p>
-            <input id="csvImportFile" type="file" accept="text/csv,.csv">
-            <button id="previewCsvImportButton" class="primary-button" type="button">Preview CSV</button>
-          </article>
+        <div class="import-wizard">
+          <nav class="import-steps" aria-label="Import steps">
+            <span class="is-active" data-import-step-indicator="source">1. Source</span>
+            <span data-import-step-indicator="map">2. Map</span>
+            <span data-import-step-indicator="review">3. Review</span>
+            <span data-import-step-indicator="recap">4. Save</span>
+          </nav>
+          <section class="import-step-panel" data-import-step="source">
+            <div class="import-source-grid">
+              <label class="file-import-field">
+                Upload CSV or JSON
+                <input id="importWizardFile" type="file" accept=".csv,.json,text/csv,application/json">
+              </label>
+              <label>
+                Paste JSON
+                <textarea id="importWizardJsonText" rows="9" spellcheck="false" placeholder="Paste FoilFolio JSON here"></textarea>
+              </label>
+            </div>
+            <p class="settings-help">CSV files can come from anywhere as long as the first row contains headers. JSON can be a FoilFolio collection export, deck export, or supported FoilFolio data bundle.</p>
+          </section>
+          <section class="import-step-panel" data-import-step="map" hidden>
+            <div class="panel-head">
+              <h3 id="importMapTitle">Map CSV Columns</h3>
+              <span id="importMapSubtitle"></span>
+            </div>
+            <div id="importMappingTable" class="import-mapping-table"></div>
+            <div id="importJsonPreview" class="import-json-preview"></div>
+          </section>
+          <section class="import-step-panel" data-import-step="review" hidden>
+            <div class="panel-head">
+              <h3 id="importReviewStepTitle">Review Matches</h3>
+              <span id="importReviewStepSubtitle"></span>
+            </div>
+            <div id="importWizardIssues" class="import-issues"></div>
+            <div id="importWizardRows" class="import-wizard-rows"></div>
+          </section>
+          <section class="import-step-panel" data-import-step="recap" hidden>
+            <div class="panel-head">
+              <h3>Ready to Save</h3>
+              <span id="importRecapSubtitle"></span>
+            </div>
+            <div id="importRecapRows" class="import-recap-rows"></div>
+          </section>
+          <div class="modal-actions import-wizard-actions">
+            <button id="importWizardBackButton" class="secondary-button" type="button" disabled>Back</button>
+            <button id="importWizardResetButton" class="secondary-button" type="button">Reset</button>
+            <button id="importWizardNextButton" class="primary-button" type="button">Next</button>
+            <button id="importWizardSaveButton" class="primary-button" type="button" hidden>Save</button>
+          </div>
         </div>
       </section>
 
@@ -646,6 +680,13 @@
               <span id="adminUserCount"></span>
             </div>
             <div id="adminUsersList" class="admin-users-list"></div>
+          </section>
+          <section class="panel admin-panel">
+            <div class="panel-head">
+              <h3>Content Reports</h3>
+              <span id="adminReportCount"></span>
+            </div>
+            <div id="adminReportsList" class="admin-reports-list"></div>
           </section>
           <section class="panel admin-panel">
             <div class="panel-head">
@@ -1270,6 +1311,30 @@
       </section>
     </div>
 
+    <div id="reportOverlay" class="modal-overlay" hidden>
+      <section class="settings-modal" role="dialog" aria-modal="true" aria-labelledby="reportTitle">
+        <header class="edit-modal-head">
+          <div>
+            <p class="eyebrow">Report content</p>
+            <h2 id="reportTitle">Tell us what is wrong</h2>
+          </div>
+          <button id="closeReportButton" class="modal-close" type="button" aria-label="Close report dialog">x</button>
+        </header>
+        <form id="reportForm" class="settings-form">
+          <p id="reportTargetLabel" class="settings-help"></p>
+          <label>
+            Reason
+            <textarea name="reason" maxlength="1200" rows="6" required placeholder="Describe why this should be reviewed by a moderator."></textarea>
+          </label>
+          <div id="reportStatus" class="status" aria-live="polite"></div>
+          <div class="modal-actions">
+            <button id="cancelReportButton" class="secondary-button" type="button">Cancel</button>
+            <button class="primary-button" type="submit">Submit Report</button>
+          </div>
+        </form>
+      </section>
+    </div>
+
     <div id="deckJsonOverlay" class="modal-overlay" hidden>
       <section class="json-modal" role="dialog" aria-modal="true" aria-labelledby="deckJsonTitle">
         <header class="edit-modal-head">
@@ -1777,6 +1842,6 @@
       </section>
     </div>
 
-    <script src="/app.js?v=143"></script>
+    <script src="/app.js?v=146"></script>
   </body>
 </html>

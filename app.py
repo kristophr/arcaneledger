@@ -75,8 +75,8 @@ SESSION_IDLE_MINUTES = int(os.environ.get("SESSION_IDLE_MINUTES", "30") or 30)
 EMAIL_VERIFICATION_MINUTES = int(os.environ.get("EMAIL_VERIFICATION_MINUTES", "30") or 30)
 PASSWORD_RESET_MINUTES = int(os.environ.get("PASSWORD_RESET_MINUTES", str(EMAIL_VERIFICATION_MINUTES)) or EMAIL_VERIFICATION_MINUTES)
 SUPPORTED_SCRYFALL_LANGUAGES = {"en"}
-APP_VERSION = "0.1.1 alpha"
-USER_AGENT = "foilfolio/0.1.1"
+APP_VERSION = "0.1.4 alpha"
+USER_AGENT = "foilfolio/0.1.4"
 PROCESS_STARTED_AT = datetime.now(timezone.utc).replace(microsecond=0)
 COLOR_ORDER = ("W", "U", "B", "R", "G")
 CARD_CONDITIONS = (
@@ -321,6 +321,16 @@ def clean_purchase_detail(value, label, limit=120):
         raise ValueError(f"{label} must be {limit} characters or fewer.")
     if any(char in text for char in "\r\n<>"):
         raise ValueError(f"{label} contains unsupported characters.")
+    return text
+
+
+def clean_report_reason(value):
+    text = re.sub(r"\r\n?", "\n", (value or "").strip())
+    text = re.sub(r"\n{4,}", "\n\n\n", text)
+    if not text:
+        raise ValueError("Report reason is required.")
+    if len(text) > 1200:
+        raise ValueError("Report reason must be 1200 characters or fewer.")
     return text
 
 
@@ -1456,6 +1466,42 @@ def init_db(conn):
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
         );
 
+        CREATE TABLE IF NOT EXISTS card_comments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            card_id TEXT NOT NULL,
+            user_id INTEGER NOT NULL,
+            body TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (card_id) REFERENCES cards(scryfall_id) ON DELETE CASCADE,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS card_comment_votes (
+            comment_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (comment_id, user_id),
+            FOREIGN KEY (comment_id) REFERENCES card_comments(id) ON DELETE CASCADE,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS content_reports (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            reporter_user_id INTEGER NOT NULL,
+            target_type TEXT NOT NULL,
+            target_id INTEGER NOT NULL,
+            reason TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            resolution TEXT NOT NULL DEFAULT '',
+            admin_user_id INTEGER,
+            created_at TEXT NOT NULL,
+            resolved_at TEXT,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (reporter_user_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY (admin_user_id) REFERENCES users(id) ON DELETE SET NULL
+        );
+
         CREATE TABLE IF NOT EXISTS decks (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER,
@@ -1519,6 +1565,10 @@ def init_db(conn):
         CREATE INDEX IF NOT EXISTS idx_inventory_adjustments_card ON inventory_adjustments(user_id, card_id, variant, card_condition, adjustment_date);
         CREATE INDEX IF NOT EXISTS idx_snapshots_date ON price_snapshots(snapshot_date);
         CREATE INDEX IF NOT EXISTS idx_card_notes_card ON card_notes(card_id, variant);
+        CREATE INDEX IF NOT EXISTS idx_card_comments_card ON card_comments(card_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_card_comment_votes_user ON card_comment_votes(user_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_content_reports_status ON content_reports(status, created_at);
+        CREATE INDEX IF NOT EXISTS idx_content_reports_target ON content_reports(target_type, target_id);
         CREATE INDEX IF NOT EXISTS idx_profile_friends_user ON profile_friends(user_id, created_at);
         CREATE INDEX IF NOT EXISTS idx_profile_wall_user ON profile_wall_messages(profile_user_id, created_at);
         CREATE INDEX IF NOT EXISTS idx_profile_posts_user ON profile_posts(user_id, created_at);
@@ -1535,6 +1585,8 @@ def init_db(conn):
     migrate_card_sales_schema(conn)
     migrate_notifications_schema(conn)
     migrate_profile_social_schema(conn)
+    migrate_card_comments_schema(conn)
+    migrate_content_reports_schema(conn)
     migrate_user_schema(conn)
     ensure_collection_share_ids(conn)
     ensure_deck_share_ids(conn)
@@ -2243,6 +2295,57 @@ def migrate_profile_social_schema(conn):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_profile_comments_post ON profile_post_comments(post_id, created_at)")
 
 
+def migrate_card_comments_schema(conn):
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS card_comments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            card_id TEXT NOT NULL,
+            user_id INTEGER NOT NULL,
+            body TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (card_id) REFERENCES cards(scryfall_id) ON DELETE CASCADE,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+        CREATE TABLE IF NOT EXISTS card_comment_votes (
+            comment_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (comment_id, user_id),
+            FOREIGN KEY (comment_id) REFERENCES card_comments(id) ON DELETE CASCADE,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_card_comments_card ON card_comments(card_id, created_at)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_card_comment_votes_user ON card_comment_votes(user_id, created_at)")
+
+
+def migrate_content_reports_schema(conn):
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS content_reports (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            reporter_user_id INTEGER NOT NULL,
+            target_type TEXT NOT NULL,
+            target_id INTEGER NOT NULL,
+            reason TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            resolution TEXT NOT NULL DEFAULT '',
+            admin_user_id INTEGER,
+            created_at TEXT NOT NULL,
+            resolved_at TEXT,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (reporter_user_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY (admin_user_id) REFERENCES users(id) ON DELETE SET NULL
+        );
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_content_reports_status ON content_reports(status, created_at)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_content_reports_target ON content_reports(target_type, target_id)")
+
+
 def add_user_id_column(conn, table):
     if "user_id" not in table_columns(conn, table):
         conn.execute(f"ALTER TABLE {table} ADD COLUMN user_id INTEGER")
@@ -2729,6 +2832,11 @@ def clear_user_data(conn, user_id):
             (user_id,),
         )
     conn.execute("DELETE FROM favorite_store_listings WHERE user_id = ? OR seller_user_id = ?", (user_id, user_id))
+    conn.execute(
+        "DELETE FROM card_comment_votes WHERE user_id = ? OR comment_id IN (SELECT id FROM card_comments WHERE user_id = ?)",
+        (user_id, user_id),
+    )
+    conn.execute("DELETE FROM card_comments WHERE user_id = ?", (user_id,))
     for table in ("notifications", "favorite_decks", "card_notes", "card_sale_journal", "card_sales", "inventory_adjustments", "wishlist_cards", "card_meta", "card_purchases", "collection", "wishlists", "containers", "decks"):
         conn.execute(f"DELETE FROM {table} WHERE user_id = ?", (user_id,))
     conn.commit()
@@ -2846,6 +2954,191 @@ def admin_delete_user(conn, acting_user_id, target_user_id):
     conn.execute("DELETE FROM users WHERE id = ?", (target_user_id,))
     conn.commit()
     return {"ok": True, **list_admin_users(conn)}
+
+
+REPORT_TARGET_TYPES = {"card_comment", "profile_post", "profile_comment"}
+MODERATOR_REMOVED_TEXT = "this was removed by a moderator"
+
+
+def clean_report_target_type(value):
+    target_type = (value or "").strip().lower()
+    if target_type not in REPORT_TARGET_TYPES:
+        raise ValueError("That content cannot be reported.")
+    return target_type
+
+
+def report_target_row(conn, target_type, target_id):
+    if target_type == "card_comment":
+        return conn.execute(
+            """
+            SELECT cc.id, cc.body, cc.created_at, cc.card_id, NULL AS parent_id,
+                   u.id AS author_id, u.name AS author_name, u.email AS author_email, u.profile_slug AS author_slug,
+                   c.name AS context_name, c.flavor_name AS context_flavor_name
+            FROM card_comments cc
+            JOIN users u ON u.id = cc.user_id
+            LEFT JOIN cards c ON c.scryfall_id = cc.card_id
+            WHERE cc.id = ?
+            """,
+            (target_id,),
+        ).fetchone()
+    if target_type == "profile_post":
+        return conn.execute(
+            """
+            SELECT p.id, p.body, p.created_at, p.card_id, p.deck_id AS parent_id,
+                   u.id AS author_id, u.name AS author_name, u.email AS author_email, u.profile_slug AS author_slug,
+                   COALESCE(NULLIF(c.flavor_name, ''), c.name, d.name, 'Blog post') AS context_name,
+                   c.flavor_name AS context_flavor_name
+            FROM profile_posts p
+            JOIN users u ON u.id = p.user_id
+            LEFT JOIN cards c ON c.scryfall_id = p.card_id
+            LEFT JOIN decks d ON d.id = p.deck_id
+            WHERE p.id = ?
+            """,
+            (target_id,),
+        ).fetchone()
+    if target_type == "profile_comment":
+        return conn.execute(
+            """
+            SELECT c.id, c.body, c.created_at, NULL AS card_id, c.post_id AS parent_id,
+                   u.id AS author_id, u.name AS author_name, u.email AS author_email, u.profile_slug AS author_slug,
+                   'Blog comment' AS context_name, NULL AS context_flavor_name
+            FROM profile_post_comments c
+            JOIN users u ON u.id = c.author_user_id
+            WHERE c.id = ?
+            """,
+            (target_id,),
+        ).fetchone()
+    return None
+
+
+def report_target_payload(conn, target_type, target_id):
+    row = report_target_row(conn, target_type, target_id)
+    if not row:
+        return None
+    return {
+        "type": target_type,
+        "id": target_id,
+        "body": row["body"] or "",
+        "created_at": row["created_at"],
+        "context_name": row["context_flavor_name"] or row["context_name"] or "",
+        "card_id": row["card_id"],
+        "parent_id": row["parent_id"],
+        "author": {
+            "id": row["author_id"],
+            "name": row["author_name"],
+            "email": row["author_email"],
+            "profile_slug": row["author_slug"],
+            "profile_url": f"/user/{urllib.parse.quote(row['author_slug'])}" if row["author_slug"] else "",
+        },
+    }
+
+
+def create_content_report(conn, reporter_user_id, payload):
+    target_type = clean_report_target_type(payload.get("target_type"))
+    target_id = int(payload.get("target_id") or 0)
+    if target_id <= 0:
+        raise ValueError("Report target is required.")
+    if not report_target_row(conn, target_type, target_id):
+        raise KeyError("Reported content not found")
+    reason = clean_report_reason(payload.get("reason"))
+    timestamp = now_iso()
+    conn.execute(
+        """
+        INSERT INTO content_reports (reporter_user_id, target_type, target_id, reason, status, created_at, updated_at)
+        VALUES (?, ?, ?, ?, 'pending', ?, ?)
+        """,
+        (reporter_user_id, target_type, target_id, reason, timestamp, timestamp),
+    )
+    conn.commit()
+    return {"ok": True, "message": "Report submitted."}
+
+
+def list_content_reports(conn):
+    rows = conn.execute(
+        """
+        SELECT r.*, reporter.name AS reporter_name, reporter.email AS reporter_email, reporter.profile_slug AS reporter_slug,
+               admin.name AS admin_name, admin.email AS admin_email
+        FROM content_reports r
+        JOIN users reporter ON reporter.id = r.reporter_user_id
+        LEFT JOIN users admin ON admin.id = r.admin_user_id
+        ORDER BY CASE r.status WHEN 'pending' THEN 0 ELSE 1 END, r.created_at DESC
+        LIMIT 200
+        """
+    ).fetchall()
+    reports = []
+    for row in rows:
+        reports.append({
+            "id": row["id"],
+            "target_type": row["target_type"],
+            "target_id": row["target_id"],
+            "reason": row["reason"],
+            "status": row["status"],
+            "resolution": row["resolution"],
+            "created_at": row["created_at"],
+            "resolved_at": row["resolved_at"],
+            "reporter": {
+                "name": row["reporter_name"],
+                "email": row["reporter_email"],
+                "profile_slug": row["reporter_slug"],
+                "profile_url": f"/user/{urllib.parse.quote(row['reporter_slug'])}" if row["reporter_slug"] else "",
+            },
+            "admin": {
+                "name": row["admin_name"],
+                "email": row["admin_email"],
+            } if row["admin_user_id"] else None,
+            "target": report_target_payload(conn, row["target_type"], row["target_id"]),
+        })
+    return {"reports": reports}
+
+
+def mark_report_target_removed(conn, target_type, target_id):
+    timestamp = now_iso()
+    if target_type == "card_comment":
+        cursor = conn.execute(
+            "UPDATE card_comments SET body = ?, updated_at = ? WHERE id = ?",
+            (MODERATOR_REMOVED_TEXT, timestamp, target_id),
+        )
+    elif target_type == "profile_post":
+        cursor = conn.execute(
+            "UPDATE profile_posts SET body = ?, updated_at = ? WHERE id = ?",
+            (MODERATOR_REMOVED_TEXT, timestamp, target_id),
+        )
+    elif target_type == "profile_comment":
+        cursor = conn.execute(
+            "UPDATE profile_post_comments SET body = ? WHERE id = ?",
+            (MODERATOR_REMOVED_TEXT, target_id),
+        )
+    else:
+        raise ValueError("That content cannot be moderated.")
+    if cursor.rowcount == 0:
+        raise KeyError("Reported content not found")
+
+
+def resolve_content_report(conn, admin_user_id, report_id, payload):
+    action = (payload.get("action") or "").strip().lower()
+    if action not in {"keep", "remove"}:
+        raise ValueError("Choose a moderation action.")
+    report = conn.execute("SELECT * FROM content_reports WHERE id = ?", (report_id,)).fetchone()
+    if not report:
+        raise KeyError("Report not found")
+    if action == "remove":
+        mark_report_target_removed(conn, report["target_type"], report["target_id"])
+    timestamp = now_iso()
+    resolution = "reviewed_removed" if action == "remove" else "reviewed_ok"
+    conn.execute(
+        """
+        UPDATE content_reports
+        SET status = 'resolved',
+            resolution = ?,
+            admin_user_id = ?,
+            resolved_at = ?,
+            updated_at = ?
+        WHERE target_type = ? AND target_id = ? AND status = 'pending'
+        """,
+        (resolution, admin_user_id, timestamp, timestamp, report["target_type"], report["target_id"]),
+    )
+    conn.commit()
+    return {"ok": True, **list_content_reports(conn)}
 
 
 def new_share_id(conn):
@@ -3865,6 +4158,227 @@ def parse_json_import_text(text):
     return payload
 
 
+IMPORT_FIELD_DEFINITIONS = [
+    {"key": "name", "label": "Card title", "required": True, "aliases": ["name", "card name", "product name", "title"]},
+    {"key": "set_name", "label": "Set name", "required": False, "aliases": ["set", "set name", "expansion"]},
+    {"key": "set_code", "label": "Set code", "required": False, "aliases": ["set code", "set_code", "edition code"]},
+    {"key": "collector_number", "label": "Collector number", "required": False, "aliases": ["collector number", "card number", "number", "cn"]},
+    {"key": "quantity", "label": "Quantity", "required": False, "aliases": ["quantity", "qty", "count", "owned"]},
+    {"key": "paid_price", "label": "Price paid each", "required": False, "aliases": ["price paid", "paid price", "average cost paid", "cost", "price"]},
+    {"key": "acquired_date", "label": "Date acquired", "required": False, "aliases": ["date acquired", "date added", "acquired date", "added"]},
+    {"key": "variant", "label": "Variant", "required": False, "aliases": ["variant", "finish", "foil", "printing"]},
+    {"key": "card_condition", "label": "Condition", "required": False, "aliases": ["condition", "card condition"]},
+    {"key": "graded", "label": "Graded", "required": False, "aliases": ["graded", "is graded"]},
+    {"key": "notes", "label": "Notes", "required": False, "aliases": ["notes", "note"]},
+    {"key": "scryfall_id", "label": "Scryfall ID", "required": False, "aliases": ["scryfall id", "scryfall_id", "card_id", "id"]},
+]
+
+
+def csv_import_headers(text):
+    rows = parse_csv_import_text(text)
+    reader = csv.DictReader(io.StringIO(text))
+    headers = [header for header in (reader.fieldnames or []) if header]
+    return {"headers": headers, "row_count": len(rows), "mapping": suggest_csv_import_mapping(headers), "fields": IMPORT_FIELD_DEFINITIONS}
+
+
+def suggest_csv_import_mapping(headers):
+    normalized_headers = {normalize(header): header for header in headers}
+    mapping = {}
+    for field in IMPORT_FIELD_DEFINITIONS:
+        selected = ""
+        for alias in field["aliases"]:
+            if normalize(alias) in normalized_headers:
+                selected = normalized_headers[normalize(alias)]
+                break
+        if not selected:
+            for header in headers:
+                header_key = normalize(header)
+                if any(normalize(alias) in header_key or header_key in normalize(alias) for alias in field["aliases"]):
+                    selected = header
+                    break
+        mapping[field["key"]] = selected
+    return mapping
+
+
+def apply_csv_import_mapping(rows, mapping):
+    mapped = []
+    mapping = mapping or {}
+    for row in rows:
+        source = {}
+        for field in IMPORT_FIELD_DEFINITIONS:
+            header = mapping.get(field["key"]) or ""
+            source[field["key"]] = row.get(header, "") if header else ""
+        mapped.append(source)
+    return mapped
+
+
+def aggregate_import_preview_rows(preview_rows):
+    aggregated = {}
+    output = []
+    for row in preview_rows:
+        match_card = ((row.get("match") or {}).get("card") or {})
+        entry = row.get("entry") or {}
+        card_id = match_card.get("scryfall_id")
+        if not card_id:
+            output.append(row)
+            continue
+        variant = entry.get("variant") or "Normal"
+        condition = card_condition(entry.get("card_condition"))
+        key = (card_id, variant, condition)
+        if key not in aggregated:
+            clone = json.loads(json.dumps(row))
+            clone["source_rows"] = [entry]
+            clone["entry"]["quantity"] = int(entry.get("quantity") or 0)
+            clone["entry"]["paid_total"] = money(entry.get("paid_price"), fallback=0.01) * int(entry.get("quantity") or 0)
+            clone["entry"]["line"] = str(entry.get("line") or "")
+            aggregated[key] = clone
+            output.append(clone)
+        else:
+            target = aggregated[key]
+            quantity = int(entry.get("quantity") or 0)
+            target["source_rows"].append(entry)
+            target["entry"]["quantity"] = int(target["entry"].get("quantity") or 0) + quantity
+            target["entry"]["paid_total"] = money(target["entry"].get("paid_total"), fallback=0) + (money(entry.get("paid_price"), fallback=0.01) * quantity)
+            if target["entry"]["quantity"] > 0:
+                target["entry"]["paid_price"] = round(target["entry"]["paid_total"] / target["entry"]["quantity"], 4)
+            lines = [str(item.get("line")) for item in target["source_rows"] if item.get("line")]
+            target["entry"]["line"] = ", ".join(lines)
+    for index, row in enumerate(output, start=1):
+        row["id"] = f"group-{index}"
+    return output
+
+
+def import_csv_mapped_preview(conn, payload):
+    text = payload.get("text") or ""
+    mapping = payload.get("mapping") or {}
+    rows = parse_csv_import_text(text)
+    mapped = apply_csv_import_mapping(rows, mapping)
+    preview = preview_import_rows(conn, mapped, "csv")
+    preview["rows"] = aggregate_import_preview_rows(preview["rows"])
+    return preview
+
+
+def looks_like_card_import_row(item):
+    if not isinstance(item, dict):
+        return False
+    keys = {str(key).lower() for key in item.keys()}
+    return bool(keys & {"scryfall_id", "card_id", "name", "card_name", "quantity", "collector_number", "set_name", "set_code"})
+
+
+def looks_like_deck_import(item):
+    return isinstance(item, dict) and isinstance(item.get("cards"), list) and bool(item.get("name") or item.get("deck_name"))
+
+
+def looks_like_wishlist_import(item):
+    return isinstance(item, dict) and isinstance(item.get("cards") or item.get("items"), list) and bool(item.get("name") or item.get("wishlist_name"))
+
+
+def classify_json_import_payload(payload):
+    if isinstance(payload, dict):
+        payload_format = str(payload.get("format") or payload.get("type") or "").lower()
+        if "wishlist" in payload_format or isinstance(payload.get("wishlists"), list) or isinstance(payload.get("wishlist"), dict):
+            return "wishlists"
+        if isinstance(payload.get("decks"), list) or looks_like_deck_import(payload.get("deck")) or looks_like_deck_import(payload):
+            return "decks"
+        if isinstance(payload.get("collection"), list) or isinstance(payload.get("cards"), list):
+            if isinstance(payload.get("decks"), list) or isinstance(payload.get("wishlists"), list):
+                return "full"
+            return "cards"
+    if isinstance(payload, list):
+        if payload and all(looks_like_wishlist_import(item) for item in payload if isinstance(item, dict)):
+            return "wishlists"
+        if payload and all(looks_like_deck_import(item) for item in payload if isinstance(item, dict)):
+            return "decks"
+        if payload and all(looks_like_card_import_row(item) for item in payload if isinstance(item, dict)):
+            return "cards"
+    return "unknown"
+
+
+def json_import_source_for_kind(payload, kind):
+    if kind == "cards":
+        if isinstance(payload, dict):
+            return payload.get("collection") or payload.get("cards") or []
+        return payload
+    if kind == "decks":
+        if isinstance(payload, dict) and isinstance(payload.get("decks"), list):
+            return {"decks": payload.get("decks")}
+        if isinstance(payload, dict) and isinstance(payload.get("deck"), dict):
+            return {"decks": [payload.get("deck")]}
+        return {"decks": payload if isinstance(payload, list) else [payload]}
+    if kind == "full":
+        return {
+            "cards": payload.get("collection") or payload.get("cards") or [],
+            "decks": payload.get("decks") or [],
+            "wishlists": payload.get("wishlists") or [],
+        }
+    if kind == "wishlists":
+        if isinstance(payload, dict) and isinstance(payload.get("wishlists"), list):
+            return {"wishlists": payload.get("wishlists")}
+        if isinstance(payload, dict) and isinstance(payload.get("wishlist"), dict):
+            return {"wishlists": [payload.get("wishlist")]}
+    return payload
+
+
+def import_json_wizard_preview(conn, user_id, payload):
+    text = payload.get("text") or ""
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Invalid JSON: {exc}")
+    kind = classify_json_import_payload(parsed)
+    if kind == "cards":
+        source = json_import_source_for_kind(parsed, kind)
+        preview = preview_import_rows(conn, source, "json")
+        preview["rows"] = aggregate_import_preview_rows(preview["rows"])
+        return {"ok": True, "kind": "cards", "label": f"{len(preview['rows'])} collection card group(s) found", "cards": preview, "can_commit": True}
+    if kind == "decks":
+        source = json_import_source_for_kind(parsed, kind)
+        preview = preview_deck_import(conn, user_id, source)
+        return {"ok": True, "kind": "decks", "label": f"{len(preview['decks'])} deck(s) found", "decks": preview, "can_commit": not any(deck.get("needs_rename") for deck in preview.get("decks", []))}
+    if kind == "full":
+        source = json_import_source_for_kind(parsed, kind)
+        card_preview = preview_import_rows(conn, source.get("cards") or [], "json") if source.get("cards") else {"rows": [], "issues": []}
+        card_preview["rows"] = aggregate_import_preview_rows(card_preview["rows"])
+        deck_preview = preview_deck_import(conn, user_id, {"decks": source.get("decks") or []}) if source.get("decks") else {"decks": [], "normalized_decks": []}
+        wishlist_preview = preview_wishlist_import(conn, user_id, {"wishlists": source.get("wishlists") or []}) if source.get("wishlists") else {"wishlists": [], "normalized_wishlists": []}
+        return {
+            "ok": True,
+            "kind": "full",
+            "label": f"Full data bundle: {len(card_preview['rows'])} card group(s), {len(deck_preview.get('decks', []))} deck(s), {len(wishlist_preview.get('wishlists', []))} wishlist(s)",
+            "cards": card_preview,
+            "decks": deck_preview,
+            "wishlists": wishlist_preview,
+            "can_commit": not any(deck.get("needs_rename") for deck in deck_preview.get("decks", [])) and not any(wishlist.get("needs_rename") for wishlist in wishlist_preview.get("wishlists", [])),
+        }
+    if kind == "wishlists":
+        source = json_import_source_for_kind(parsed, kind)
+        preview = preview_wishlist_import(conn, user_id, source)
+        return {"ok": True, "kind": "wishlists", "label": f"{len(preview['wishlists'])} wishlist(s) found", "wishlists": preview, "can_commit": not any(wishlist.get("needs_rename") for wishlist in preview.get("wishlists", []))}
+    return {"ok": True, "kind": "unknown", "label": "Unknown JSON import", "can_commit": False, "issues": ["FoilFolio could not determine whether this JSON contains cards, decks, wishlists, or a full export."]}
+
+
+def commit_import_wizard_json(conn, user_id, payload):
+    kind = payload.get("kind")
+    imported = {"cards": 0, "decks": 0, "wishlists": 0}
+    skipped = []
+    if kind in {"cards", "full"}:
+        result = commit_import_rows(conn, user_id, {"rows": payload.get("rows") or []})
+        imported["cards"] = result.get("imported_rows", 0)
+        skipped.extend(result.get("skipped_rows") or [])
+    if kind in {"decks", "full"}:
+        deck_payload = {"decks": payload.get("decks") or []}
+        if deck_payload["decks"]:
+            result = commit_deck_import(conn, user_id, deck_payload)
+            imported["decks"] = result.get("imported", 0)
+    if kind in {"wishlists", "full"}:
+        wishlist_payload = {"wishlists": payload.get("wishlists") or []}
+        if wishlist_payload["wishlists"]:
+            result = commit_wishlist_import(conn, user_id, wishlist_payload)
+            imported["wishlists"] = result.get("imported", 0)
+            skipped.extend(result.get("skipped_rows") or [])
+    return {"ok": True, "imported": imported, "skipped_rows": skipped}
+
+
 def import_preview(conn, payload):
     source_format = (payload.get("format") or "").lower()
     text = payload.get("text") or ""
@@ -4660,6 +5174,109 @@ def preview_deck_import(conn, user_id, payload):
     return {"ok": True, "decks": preview, "normalized_decks": decks}
 
 
+def normalize_import_wishlist_source(payload):
+    payload = payload or {}
+    source = payload.get("wishlists") if isinstance(payload, dict) and isinstance(payload.get("wishlists"), list) else None
+    if source is None:
+        if isinstance(payload, dict) and isinstance(payload.get("wishlist"), dict):
+            source = [payload.get("wishlist")]
+        elif isinstance(payload, list):
+            source = payload
+        elif isinstance(payload, dict):
+            source = [payload]
+        else:
+            source = []
+    wishlists = []
+    for index, wishlist_source in enumerate(source or [], start=1):
+        if not isinstance(wishlist_source, dict):
+            continue
+        cards = wishlist_source.get("cards") or wishlist_source.get("items") or []
+        if not isinstance(cards, list):
+            cards = []
+        name = re.sub(r"\s+", " ", (wishlist_source.get("name") or wishlist_source.get("wishlist_name") or "").strip())
+        normalized_cards = []
+        for row_number, card in enumerate(cards, start=1):
+            if not isinstance(card, dict):
+                continue
+            normalized_cards.append({
+                **card,
+                "scryfall_id": card.get("scryfall_id") or card.get("card_id") or card.get("id") or "",
+                "name": card.get("name") or card.get("display_name") or card.get("card_name") or "",
+                "set_code": card.get("set_code") or card.get("set") or "",
+                "set_name": card.get("set_name") or "",
+                "collector_number": card.get("collector_number") or card.get("card_number") or "",
+                "variant": card.get("variant") or "Normal",
+                "quantity": max(1, int(money(card.get("wishlist_quantity") or card.get("quantity") or card.get("deck_quantity"), fallback=1))),
+                "row_number": card.get("row_number") or row_number,
+            })
+        wishlists.append({
+            "index": index,
+            "name": name,
+            "original_name": name,
+            "cards": normalized_cards,
+        })
+    if not wishlists:
+        raise ValueError("Import did not include any wishlists.")
+    return wishlists
+
+
+def wishlist_import_name_issues(conn, user_id, wishlists):
+    issues_by_index = {}
+    seen = {}
+    for wishlist in wishlists:
+        issues = []
+        name = re.sub(r"\s+", " ", (wishlist.get("name") or "").strip())
+        wishlist["name"] = name
+        try:
+            validate_user_content_name(name, "Wishlist name", 30)
+        except ValueError as exc:
+            issues.append(str(exc))
+        lower_name = name.lower()
+        if lower_name:
+            if lower_name in seen:
+                issues.append("Wishlist name is duplicated in this import.")
+                issues_by_index.setdefault(seen[lower_name], []).append("Wishlist name is duplicated in this import.")
+            else:
+                seen[lower_name] = wishlist["index"]
+            if cross_entity_name_exists(conn, user_id, name):
+                issues.append("Wishlist name already exists in your account.")
+        if issues:
+            issues_by_index.setdefault(wishlist["index"], []).extend(issues)
+    return issues_by_index
+
+
+def preview_wishlist_import(conn, user_id, payload):
+    wishlists = normalize_import_wishlist_source(payload)
+    issues_by_index = wishlist_import_name_issues(conn, user_id, wishlists)
+    preview = []
+    for wishlist in wishlists:
+        card_count = 0
+        unique_cards = set()
+        missing_ids = 0
+        for card in wishlist.get("cards") or []:
+            card_id = card.get("scryfall_id") or card.get("card_id") or card.get("id")
+            if not card_id:
+                missing_ids += 1
+                continue
+            variant = card.get("variant") or "Normal"
+            quantity = max(1, int(money(card.get("wishlist_quantity") or card.get("quantity"), fallback=1)))
+            card_count += quantity
+            unique_cards.add((str(card_id), str(variant)))
+        issues = list(dict.fromkeys(issues_by_index.get(wishlist["index"], [])))
+        if missing_ids:
+            issues.append(f"{missing_ids} card row(s) are missing Scryfall IDs and will be skipped.")
+        preview.append({
+            "index": wishlist["index"],
+            "name": wishlist.get("name") or "",
+            "original_name": wishlist.get("original_name") or "",
+            "card_count": card_count,
+            "unique_card_count": len(unique_cards),
+            "issues": issues,
+            "needs_rename": bool(issues_by_index.get(wishlist["index"])),
+        })
+    return {"ok": True, "wishlists": preview, "normalized_wishlists": wishlists}
+
+
 def json_list(value):
     if isinstance(value, list):
         return json.dumps(normalized_color_list(value))
@@ -4778,6 +5395,70 @@ def commit_deck_import(conn, user_id, payload):
         imported.append(deck_detail(conn, user_id, deck_id))
     conn.commit()
     return {"ok": True, "imported": len(imported), "decks": imported}
+
+
+def commit_wishlist_import(conn, user_id, payload):
+    wishlists = normalize_import_wishlist_source(payload)
+    issues_by_index = wishlist_import_name_issues(conn, user_id, wishlists)
+    if issues_by_index:
+        raise ValueError("Resolve duplicate or invalid wishlist names before importing.")
+    timestamp = now_iso()
+    imported = []
+    skipped = []
+    for wishlist in wishlists:
+        cursor = conn.execute(
+            "INSERT INTO wishlists (user_id, share_id, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+            (user_id, new_wishlist_share_id(conn), wishlist["name"], timestamp, timestamp),
+        )
+        wishlist_id = cursor.lastrowid
+        requested = {}
+        card_payloads = {}
+        for card in wishlist.get("cards") or []:
+            if not isinstance(card, dict):
+                continue
+            card_id = card.get("scryfall_id") or card.get("card_id") or card.get("id")
+            if not card_id:
+                skipped.append({"wishlist": wishlist["name"], "row": card.get("row_number"), "error": "Missing Scryfall ID."})
+                continue
+            variant = card.get("variant") or "Normal"
+            quantity = max(1, int(money(card.get("wishlist_quantity") or card.get("quantity"), fallback=1)))
+            key = (str(card_id), str(variant))
+            requested[key] = requested.get(key, 0) + quantity
+            card_payloads[key] = card
+        for (card_id, variant), quantity in requested.items():
+            card_payload = card_payloads[(card_id, variant)]
+            try:
+                ensure_import_card_cached(conn, card_payload)
+            except Exception:
+                cache_card_by_id(conn, card_id)
+            summary_json = None
+            if not conn.execute("SELECT 1 FROM cards WHERE scryfall_id = ?", (card_id,)).fetchone():
+                summary = wishlist_payload_summary(card_id, {"card": card_payload, "variant": variant})
+                summary_json = json.dumps(summary)
+            conn.execute(
+                """
+                INSERT INTO wishlist_items (wishlist_id, user_id, card_id, variant, quantity, card_json, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(wishlist_id, card_id, variant) DO UPDATE SET
+                    quantity = wishlist_items.quantity + excluded.quantity,
+                    card_json = COALESCE(excluded.card_json, wishlist_items.card_json),
+                    updated_at = excluded.updated_at
+                """,
+                (wishlist_id, user_id, card_id, variant, quantity, summary_json, timestamp),
+            )
+            conn.execute(
+                """
+                INSERT INTO card_meta (user_id, card_id, variant, favorite, missing_list, wishlist, updated_at)
+                VALUES (?, ?, ?, 0, 0, 1, ?)
+                ON CONFLICT(user_id, card_id, variant) DO UPDATE SET
+                    wishlist = 1,
+                    updated_at = excluded.updated_at
+                """,
+                (user_id, card_id, variant, timestamp),
+            )
+        imported.append(wishlist_detail(conn, user_id, wishlist_id))
+    conn.commit()
+    return {"ok": True, "imported": len(imported), "wishlists": imported, "skipped_rows": skipped}
 
 
 def import_deck_json(conn, user_id, payload):
@@ -7676,6 +8357,97 @@ def update_card_private_notes(conn, user_id, card_id, payload):
     return {"ok": True, "notes": notes}
 
 
+def card_comments(conn, user_id, card_id):
+    rows = conn.execute(
+        """
+        SELECT cc.id, cc.card_id, cc.body, cc.created_at, cc.updated_at,
+               u.id AS author_id, u.name, u.profile_slug, u.profile_image,
+               COUNT(v.user_id) AS upvote_count,
+               MAX(CASE WHEN v.user_id = ? THEN 1 ELSE 0 END) AS user_upvoted
+        FROM card_comments cc
+        JOIN users u ON u.id = cc.user_id
+        LEFT JOIN card_comment_votes v ON v.comment_id = cc.id
+        WHERE cc.card_id = ? AND COALESCE(u.is_banned, 0) = 0
+        GROUP BY cc.id
+        ORDER BY cc.created_at DESC
+        LIMIT 80
+        """,
+        (user_id, card_id),
+    ).fetchall()
+    return [
+        {
+            "id": row["id"],
+            "card_id": row["card_id"],
+            "body": row["body"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+            "upvote_count": int(row["upvote_count"] or 0),
+            "user_upvoted": bool(row["user_upvoted"]),
+            "can_upvote": int(row["author_id"]) != int(user_id),
+            "author": {
+                "id": row["author_id"],
+                "name": row["name"],
+                "profile_slug": row["profile_slug"],
+                "profile_url": f"/user/{urllib.parse.quote(row['profile_slug'])}" if row["profile_slug"] else "",
+                "profile_image": row["profile_image"],
+            },
+        }
+        for row in rows
+    ]
+
+
+def add_card_comment(conn, user_id, card_id, payload):
+    if not conn.execute("SELECT 1 FROM cards WHERE scryfall_id = ?", (card_id,)).fetchone():
+        raise KeyError("Card not found")
+    body = clean_profile_activity_text(payload.get("body"), "Comment", 1000)
+    timestamp = now_iso()
+    conn.execute(
+        """
+        INSERT INTO card_comments (card_id, user_id, body, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (card_id, user_id, body, timestamp, timestamp),
+    )
+    conn.commit()
+    return {"ok": True, "comments": card_comments(conn, user_id, card_id)}
+
+
+def toggle_card_comment_upvote(conn, user_id, comment_id):
+    comment = conn.execute(
+        """
+        SELECT id, card_id, user_id
+        FROM card_comments
+        WHERE id = ?
+        """,
+        (comment_id,),
+    ).fetchone()
+    if not comment:
+        raise KeyError("Comment not found")
+    if int(comment["user_id"]) == int(user_id):
+        raise ValueError("You cannot upvote your own comment.")
+    existing = conn.execute(
+        "SELECT 1 FROM card_comment_votes WHERE comment_id = ? AND user_id = ?",
+        (comment_id, user_id),
+    ).fetchone()
+    if existing:
+        conn.execute(
+            "DELETE FROM card_comment_votes WHERE comment_id = ? AND user_id = ?",
+            (comment_id, user_id),
+        )
+        upvoted = False
+    else:
+        conn.execute(
+            """
+            INSERT INTO card_comment_votes (comment_id, user_id, created_at)
+            VALUES (?, ?, ?)
+            """,
+            (comment_id, user_id, now_iso()),
+        )
+        upvoted = True
+    conn.commit()
+    return {"ok": True, "upvoted": upvoted, "comments": card_comments(conn, user_id, comment["card_id"])}
+
+
 def card_detail(conn, user_id, card_id, variant="Normal"):
     variant = variant or "Normal"
     price_expr = current_price_sql("c")
@@ -7710,6 +8482,7 @@ def card_detail(conn, user_id, card_id, variant="Normal"):
         card["price_histories"] = card_price_histories(conn, card_id, variants)
         card["aggregate_stats"] = card_aggregate_stats(conn, card_id)
         card["private_notes"] = card_private_notes(conn, user_id, card_id, variant)
+        card["comments"] = card_comments(conn, user_id, card_id)
         return card
     card = dict(row)
     card["purchases"] = purchase_history(conn, user_id, card_id, variant)
@@ -7737,6 +8510,7 @@ def card_detail(conn, user_id, card_id, variant="Normal"):
     card["price_histories"] = card_price_histories(conn, card_id, variants)
     card["aggregate_stats"] = card_aggregate_stats(conn, card_id)
     card["private_notes"] = card_private_notes(conn, user_id, card_id, variant)
+    card["comments"] = card_comments(conn, user_id, card_id)
     return card
 
 
@@ -9075,6 +9849,9 @@ class Handler(SimpleHTTPRequestHandler):
                     self.require_admin(conn)
                     params = urllib.parse.parse_qs(parsed.query)
                     return self.send_json(read_log_tail(params.get("lines", [200])[0]))
+                if parsed.path == "/api/admin/reports":
+                    self.require_admin(conn)
+                    return self.send_json(list_content_reports(conn))
                 if parsed.path == "/api/cards/for-sale":
                     user = self.require_user(conn)
                     return self.send_json({"cards": list_sale_cards(conn, parsed.query, user["id"])})
@@ -9323,6 +10100,9 @@ class Handler(SimpleHTTPRequestHandler):
                 if parsed.path == "/api/user/clear-data":
                     user = self.require_user(conn)
                     return self.send_json(clear_user_data(conn, user["id"]))
+                if parsed.path == "/api/reports":
+                    user = self.require_user(conn)
+                    return self.send_json(create_content_report(conn, user["id"], self.read_json()), HTTPStatus.CREATED)
                 if parsed.path == "/api/sync":
                     return self.send_json(sync_catalog(conn))
                 if parsed.path == "/api/import":
@@ -9331,9 +10111,21 @@ class Handler(SimpleHTTPRequestHandler):
                     return self.send_json(import_csv(conn, payload.get("path") or DEFAULT_IMPORT, user["id"]))
                 if parsed.path == "/api/import/preview":
                     return self.send_json(import_preview(conn, self.read_json()))
+                if parsed.path == "/api/import/csv/headers":
+                    self.require_user(conn)
+                    return self.send_json(csv_import_headers((self.read_json()).get("text") or ""))
+                if parsed.path == "/api/import/csv/match":
+                    self.require_user(conn)
+                    return self.send_json(import_csv_mapped_preview(conn, self.read_json()))
+                if parsed.path == "/api/import/json/preview":
+                    user = self.require_user(conn)
+                    return self.send_json(import_json_wizard_preview(conn, user["id"], self.read_json()))
                 if parsed.path == "/api/import/commit":
                     user = self.require_user(conn)
                     return self.send_json(commit_import_rows(conn, user["id"], self.read_json()))
+                if parsed.path == "/api/import/json/commit":
+                    user = self.require_user(conn)
+                    return self.send_json(commit_import_wizard_json(conn, user["id"], self.read_json()))
                 if parsed.path == "/api/cards":
                     user = self.require_user(conn)
                     return self.send_json(add_card_to_collection(conn, user["id"], self.read_json()), HTTPStatus.CREATED)
@@ -9374,6 +10166,14 @@ class Handler(SimpleHTTPRequestHandler):
                 if match:
                     user = self.require_user(conn)
                     return self.send_json(add_card_direct_sale(conn, user["id"], urllib.parse.unquote(match.group(1)), self.read_json()), HTTPStatus.CREATED)
+                match = re.match(r"^/api/cards/([^/]+)/comments$", parsed.path)
+                if match:
+                    user = self.require_user(conn)
+                    return self.send_json(add_card_comment(conn, user["id"], urllib.parse.unquote(match.group(1)), self.read_json()), HTTPStatus.CREATED)
+                match = re.match(r"^/api/card-comments/([0-9]+)/upvote$", parsed.path)
+                if match:
+                    user = self.require_user(conn)
+                    return self.send_json(toggle_card_comment_upvote(conn, user["id"], int(match.group(1))))
                 if parsed.path == "/api/decks":
                     user = self.require_user(conn)
                     return self.send_json(create_deck(conn, user["id"], self.read_json()), HTTPStatus.CREATED)
@@ -9471,6 +10271,10 @@ class Handler(SimpleHTTPRequestHandler):
                 if match:
                     user = self.require_user(conn)
                     return self.send_json(add_profile_post_comment(conn, user["id"], int(match.group(1)), self.read_json()), HTTPStatus.CREATED)
+                match = re.match(r"^/api/admin/reports/([0-9]+)/resolve$", parsed.path)
+                if match:
+                    user = self.require_admin(conn)
+                    return self.send_json(resolve_content_report(conn, user["id"], int(match.group(1)), self.read_json()))
         except urllib.error.URLError as exc:
             LOGGER.warning("%s %s network error: %s", self.command, self.path, exc)
             return self.send_json({"error": f"Network error: {exc}"}, HTTPStatus.BAD_GATEWAY)
