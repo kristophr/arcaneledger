@@ -315,6 +315,15 @@ def clean_profile_text(value, limit=1200):
     return text
 
 
+def clean_purchase_detail(value, label, limit=120):
+    text = re.sub(r"\s+", " ", (value or "").strip())
+    if len(text) > limit:
+        raise ValueError(f"{label} must be {limit} characters or fewer.")
+    if any(char in text for char in "\r\n<>"):
+        raise ValueError(f"{label} contains unsupported characters.")
+    return text
+
+
 def clean_profile_image(value):
     text = (value or "").strip()
     if not text:
@@ -1288,6 +1297,8 @@ def init_db(conn):
             card_condition TEXT NOT NULL DEFAULT 'Near Mint',
             purchase_date TEXT NOT NULL,
             total_price REAL NOT NULL DEFAULT 0.01,
+            store_name TEXT NOT NULL DEFAULT '',
+            store_location TEXT NOT NULL DEFAULT '',
             created_at TEXT NOT NULL,
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
             FOREIGN KEY (card_id) REFERENCES cards(scryfall_id) ON DELETE CASCADE
@@ -1636,6 +1647,10 @@ def migrate_purchases_schema(conn):
     columns = {col["name"] for col in conn.execute("PRAGMA table_info(card_purchases)").fetchall()}
     if "card_condition" not in columns:
         conn.execute("ALTER TABLE card_purchases ADD COLUMN card_condition TEXT NOT NULL DEFAULT 'Near Mint'")
+    if "store_name" not in columns:
+        conn.execute("ALTER TABLE card_purchases ADD COLUMN store_name TEXT NOT NULL DEFAULT ''")
+    if "store_location" not in columns:
+        conn.execute("ALTER TABLE card_purchases ADD COLUMN store_location TEXT NOT NULL DEFAULT ''")
     conn.execute(
         f"""
         UPDATE card_purchases
@@ -1648,13 +1663,15 @@ def migrate_purchases_schema(conn):
     )
     conn.execute(
         """
-        INSERT INTO card_purchases (card_id, variant, quantity, card_condition, purchase_date, total_price, created_at)
+        INSERT INTO card_purchases (card_id, variant, quantity, card_condition, purchase_date, total_price, store_name, store_location, created_at)
         SELECT col.card_id,
                COALESCE(NULLIF(col.variant, ''), 'Normal'),
                col.quantity,
                COALESCE(NULLIF(col.card_condition, ''), ?),
                COALESCE(NULLIF(col.acquired_date, ''), ?),
                MAX(col.quantity * COALESCE(col.paid_price, 0.01), 0.01),
+               '',
+               '',
                COALESCE(NULLIF(col.updated_at, ''), ?)
         FROM collection col
         WHERE col.quantity > 0
@@ -3336,15 +3353,17 @@ def validate_selected_card(card, payload):
             raise ValueError("Selected Scryfall card changed before save. Please search and choose the card again.")
 
 
-def record_card_purchase(conn, user_id, card_id, variant, quantity, condition, purchase_date, total_price):
+def record_card_purchase(conn, user_id, card_id, variant, quantity, condition, purchase_date, total_price, store_name="", store_location=""):
     quantity = max(1, int(quantity or 1))
     total_price = money(total_price, fallback=0.01)
     if total_price <= 0:
         total_price = 0.01
+    store_name = clean_purchase_detail(store_name, "Store name")
+    store_location = clean_purchase_detail(store_location, "Store location")
     conn.execute(
         """
-        INSERT INTO card_purchases (user_id, card_id, variant, quantity, card_condition, purchase_date, total_price, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO card_purchases (user_id, card_id, variant, quantity, card_condition, purchase_date, total_price, store_name, store_location, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             user_id,
@@ -3354,6 +3373,8 @@ def record_card_purchase(conn, user_id, card_id, variant, quantity, condition, p
             card_condition(condition),
             purchase_date or today_iso(),
             total_price,
+            store_name,
+            store_location,
             now_iso(),
         ),
     )
@@ -7346,13 +7367,15 @@ def purchase_history(conn, user_id, card_id, variant):
         """
         SELECT purchase_date,
                card_condition,
+               store_name,
+               store_location,
                SUM(quantity) AS quantity,
                SUM(total_price) AS total_price,
                ROUND(SUM(total_price) / SUM(quantity), 2) AS price_each,
                MIN(created_at) AS created_at
         FROM card_purchases
         WHERE user_id = ? AND card_id = ? AND variant = ?
-        GROUP BY purchase_date, card_condition
+        GROUP BY purchase_date, card_condition, store_name, store_location
         ORDER BY purchase_date DESC, created_at DESC
         """,
         (user_id, card_id, variant or "Normal"),
@@ -7371,6 +7394,8 @@ def movement_history(conn, user_id, card_id, variant):
                total_price AS total_amount,
                ROUND(total_price / quantity, 2) AS price_each,
                created_at,
+               store_name,
+               store_location,
                NULL AS asking_price_each
         FROM card_purchases
         WHERE user_id = ? AND card_id = ? AND variant = ?
@@ -7388,6 +7413,8 @@ def movement_history(conn, user_id, card_id, variant):
                0 AS total_amount,
                0 AS price_each,
                created_at,
+               '' AS store_name,
+               '' AS store_location,
                note
         FROM inventory_adjustments
         WHERE user_id = ? AND card_id = ? AND variant = ?
@@ -7404,6 +7431,8 @@ def movement_history(conn, user_id, card_id, variant):
                quantity * sold_price_each AS total_amount,
                sold_price_each AS price_each,
                created_at,
+               '' AS store_name,
+               '' AS store_location,
                asking_price_each
         FROM card_sale_journal
         WHERE user_id = ? AND card_id = ? AND variant = ?
@@ -7749,7 +7778,18 @@ def add_card_purchase(conn, user_id, card_id, payload):
     if total_price <= 0:
         total_price = 0.01
     purchase_date = payload.get("purchase_date") or today_iso()
-    record_card_purchase(conn, user_id, card_id, variant, quantity, payload.get("card_condition"), purchase_date, total_price)
+    record_card_purchase(
+        conn,
+        user_id,
+        card_id,
+        variant,
+        quantity,
+        payload.get("card_condition"),
+        purchase_date,
+        total_price,
+        payload.get("store_name"),
+        payload.get("store_location"),
+    )
     rollup_collection_from_purchases(conn, user_id, card_id, variant)
     conn.commit()
     return {"ok": True, "card": card_detail(conn, user_id, card_id, variant)}

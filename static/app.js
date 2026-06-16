@@ -6205,6 +6205,7 @@ function renderMovementHistory(movements) {
         const verb = isAdjust ? (adjustedIn ? "adjusted in" : "adjusted out") : isSale ? "sold" : "bought";
         const amountLabel = isSale ? "received" : "total";
         const deleteLabel = isAdjust ? "Delete adjustment entry" : isSale ? "Delete sold entry" : "Delete purchase entry";
+        const purchaseSource = [movement.store_name, movement.store_location].filter(Boolean).join(" - ");
         return `
         <article class="purchase-history-row ${isAdjust ? "is-adjustment" : isSale ? "is-sale" : "is-purchase"}">
           <div>
@@ -6214,6 +6215,7 @@ function renderMovementHistory(movements) {
           <div>
             <b>${integer.format(movement.quantity || 0)} ${verb}</b>
             <span>${isAdjust ? escapeHtml(movement.note || "Manual inventory adjustment") : `${dollars.format(movement.total_amount ?? movement.total_price ?? 0)} ${amountLabel} - ${dollars.format(movement.price_each || 0)} each`}</span>
+            ${!isSale && !isAdjust && purchaseSource ? `<small>${escapeHtml(purchaseSource)}</small>` : ""}
           </div>
           ${movement.movement_id ? `
             <button class="delete-movement-button" type="button" aria-label="${deleteLabel}" title="${deleteLabel}" data-movement-type="${escapeHtml(movement.movement_type)}" data-movement-id="${escapeHtml(movement.movement_id)}">

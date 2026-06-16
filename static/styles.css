@@ -4352,6 +4352,14 @@ body:not(.is-authenticated) .nav-bottom {
   font-size: 0.82rem;
 }
 
+.purchase-history-row small {
+  display: block;
+  color: var(--muted);
+  font-size: 0.76rem;
+  margin-top: 3px;
+  text-align: right;
+}
+
 .purchase-history-row b {
   color: var(--ink);
   text-align: right;
