@@ -410,6 +410,10 @@ main {
   display: none;
 }
 
+body:not(.is-authenticated) .nav-bottom {
+  display: none;
+}
+
 .share-only .app-shell {
   grid-template-columns: 1fr;
   min-height: 100vh;
@@ -473,6 +477,7 @@ main {
 .wishlist-icon,
 .catalog-search-icon,
 .import-icon,
+.notification-icon,
 .settings-icon,
 .login-icon,
 .logout-icon {
@@ -481,6 +486,52 @@ main {
   width: 18px;
   height: 18px;
   flex: 0 0 auto;
+}
+
+.notification-nav-command {
+  position: relative;
+}
+
+.nav-unread-dot,
+.notification-read-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: #d32f2f;
+  box-shadow: 0 0 0 2px var(--panel);
+}
+
+.nav-unread-dot {
+  margin-left: auto;
+}
+
+.nav-unread-dot[hidden] {
+  display: none;
+}
+
+.notification-icon::before {
+  content: "";
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  top: 4px;
+  height: 9px;
+  border: 1.8px solid currentColor;
+  border-radius: 8px 8px 5px 5px;
+  border-bottom-width: 2px;
+}
+
+.notification-icon::after {
+  content: "";
+  position: absolute;
+  left: 7px;
+  bottom: 3px;
+  width: 4px;
+  height: 2px;
+  border-radius: 99px;
+  background: currentColor;
+  box-shadow: 0 -11px 0 -1px currentColor;
 }
 
 .settings-icon::before {
@@ -899,6 +950,7 @@ main {
 .containers-band,
 .missing-band,
 .sale-band,
+.notifications-band,
 .import-band,
 .settings-band,
 .shared-card-band,
@@ -1822,6 +1874,69 @@ main {
 .sale-list-grid {
   display: grid;
   gap: 10px;
+}
+
+.notifications-list {
+  display: grid;
+  gap: 10px;
+}
+
+.notification-row {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.notification-row.is-unread {
+  border-color: color-mix(in srgb, #d32f2f 48%, var(--line));
+  background:
+    linear-gradient(90deg, rgba(211, 47, 47, 0.08), transparent 42%),
+    var(--panel);
+}
+
+.notification-open-button {
+  width: 100%;
+  min-height: 64px;
+  border: 0;
+  padding: 12px 14px;
+  color: var(--ink);
+  background: transparent;
+  cursor: pointer;
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  text-align: left;
+}
+
+.notification-row:not(.is-unread) .notification-read-dot {
+  opacity: 0;
+}
+
+.notification-open-button strong,
+.notification-open-button small {
+  display: block;
+}
+
+.notification-open-button strong {
+  font-size: 0.98rem;
+  line-height: 1.25;
+}
+
+.notification-open-button small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.notification-detail-form textarea {
+  resize: vertical;
+}
+
+.notification-store-link {
+  justify-self: start;
+  text-decoration: none;
 }
 
 .sale-card-row {

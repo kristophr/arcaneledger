@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>FoilFolio</title>
-    <link rel="stylesheet" href="/styles.css?v=112">
+    <link rel="stylesheet" href="/styles.css?v=115">
   </head>
   <body>
     <header class="topbar">
@@ -28,12 +28,16 @@
           <button class="nav-command" type="button" data-page-target="sets"><span class="sets-icon" aria-hidden="true"></span>Sets</button>
           <button class="nav-command" type="button" data-page-target="decks"><span class="deck-icon" aria-hidden="true"></span>Decks</button>
           <button class="nav-command" type="button" data-page-target="containers"><span class="container-icon box-icon" aria-hidden="true"></span>Containers</button>
-          <button class="nav-command" type="button" data-page-target="missing-list"><span class="missing-icon" aria-hidden="true"></span>Missing List</button>
           <button class="nav-command" type="button" data-page-target="for-sale"><span class="sale-icon" aria-hidden="true"></span>For Sale</button>
           <button class="nav-command" type="button" data-page-target="wishlist"><span class="wishlist-icon" aria-hidden="true"></span>Wishlist</button>
           <button class="nav-command" type="button" data-page-target="import"><span class="import-icon" aria-hidden="true"></span>Import</button>
         </nav>
         <nav class="nav-bottom">
+          <button class="nav-command notification-nav-command" type="button" data-page-target="notifications">
+            <span class="notification-icon" aria-hidden="true"></span>
+            Notifications
+            <span id="notificationsNavDot" class="nav-unread-dot" aria-hidden="true" hidden></span>
+          </button>
           <button class="nav-command" type="button" data-page-target="settings"><span class="settings-icon" aria-hidden="true"></span>Settings</button>
           <button id="logoutButton" class="nav-command" type="button"><span class="login-icon" aria-hidden="true"></span><span class="auth-command-label">Log In</span></button>
         </nav>
@@ -513,6 +517,17 @@
         </div>
       </section>
 
+      <section class="notifications-band app-page" data-page="notifications" hidden>
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Store alerts</p>
+            <h2>Notifications</h2>
+          </div>
+        </div>
+        <div id="notificationsStatus" class="status" aria-live="polite"></div>
+        <div id="notificationsList" class="notifications-list"></div>
+      </section>
+
       <section class="shared-card-band app-page" data-page="shared" hidden>
         <div id="sharedCardShell" class="shared-card-shell"></div>
       </section>
@@ -807,6 +822,32 @@
             <button class="primary-button" type="submit">Save</button>
           </div>
         </form>
+      </section>
+    </div>
+
+    <div id="notificationDetailOverlay" class="modal-overlay" hidden>
+      <section class="settings-modal" role="dialog" aria-modal="true" aria-labelledby="notificationDetailTitle">
+        <header class="edit-modal-head">
+          <div>
+            <p class="eyebrow">Notification</p>
+            <h2 id="notificationDetailTitle">Notification</h2>
+          </div>
+          <button id="closeNotificationDetailButton" class="modal-close" type="button" aria-label="Close notification dialog">x</button>
+        </header>
+        <div class="settings-form notification-detail-form">
+          <label>
+            Subject
+            <input id="notificationSubjectInput" type="text" readonly>
+          </label>
+          <label>
+            Body
+            <textarea id="notificationBodyInput" rows="7" readonly></textarea>
+          </label>
+          <a id="notificationStoreLink" class="primary-button notification-store-link" href="#" target="_blank" rel="noreferrer">Open Store</a>
+          <div class="modal-actions">
+            <button id="closeNotificationDetailFooterButton" class="secondary-button" type="button">Close</button>
+          </div>
+        </div>
       </section>
     </div>
 
@@ -1153,10 +1194,6 @@
             <option value="name">Name</option>
             <option value="price">Card price</option>
           </select>
-          <div class="view-toggle" aria-label="Wishlist view" hidden>
-            <button id="wishlistTileViewButton" class="is-active" type="button">Tiles</button>
-            <button id="wishlistListViewButton" type="button">List</button>
-          </div>
         </div>
         <div id="wishlistGrid" class="missing-list-grid wishlist-detail-grid"></div>
         <div class="modal-actions deck-detail-footer">
@@ -1497,6 +1534,6 @@
       </section>
     </div>
 
-    <script src="/app.js?v=123"></script>
+    <script src="/app.js?v=126"></script>
   </body>
 </html>

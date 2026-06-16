@@ -1147,6 +1147,21 @@ def init_db(conn):
             FOREIGN KEY (card_id) REFERENCES cards(scryfall_id) ON DELETE CASCADE
         );
 
+        CREATE TABLE IF NOT EXISTS notifications (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            subject TEXT NOT NULL,
+            body TEXT NOT NULL,
+            link_url TEXT NOT NULL DEFAULT '',
+            source_type TEXT NOT NULL DEFAULT '',
+            source_key TEXT NOT NULL DEFAULT '',
+            is_read INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            read_at TEXT,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+
         CREATE TABLE IF NOT EXISTS card_sale_journal (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER,
@@ -1254,6 +1269,8 @@ def init_db(conn):
         CREATE INDEX IF NOT EXISTS idx_deck_cards_card ON deck_cards(card_id, variant);
         CREATE INDEX IF NOT EXISTS idx_container_cards_card ON container_cards(card_id, variant);
         CREATE INDEX IF NOT EXISTS idx_card_sales_card ON card_sales(user_id, card_id, variant, card_condition);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_notifications_source ON notifications(user_id, source_type, source_key);
+        CREATE INDEX IF NOT EXISTS idx_notifications_user_read ON notifications(user_id, is_read, updated_at);
         CREATE INDEX IF NOT EXISTS idx_card_sale_journal_card ON card_sale_journal(user_id, card_id, variant, card_condition, sold_date);
         CREATE INDEX IF NOT EXISTS idx_inventory_adjustments_card ON inventory_adjustments(user_id, card_id, variant, card_condition, adjustment_date);
         CREATE INDEX IF NOT EXISTS idx_snapshots_date ON price_snapshots(snapshot_date);
@@ -1268,6 +1285,7 @@ def init_db(conn):
     migrate_decks_schema(conn)
     migrate_containers_schema(conn)
     migrate_card_sales_schema(conn)
+    migrate_notifications_schema(conn)
     migrate_user_schema(conn)
     ensure_collection_share_ids(conn)
     ensure_deck_share_ids(conn)
@@ -1841,6 +1859,45 @@ def migrate_card_sales_user_schema(conn):
     conn.execute("DROP TABLE card_sales_old_user_migration")
 
 
+def migrate_notifications_schema(conn):
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS notifications (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            subject TEXT NOT NULL,
+            body TEXT NOT NULL,
+            link_url TEXT NOT NULL DEFAULT '',
+            source_type TEXT NOT NULL DEFAULT '',
+            source_key TEXT NOT NULL DEFAULT '',
+            is_read INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            read_at TEXT,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+        """
+    )
+    columns = table_columns(conn, "notifications")
+    additions = {
+        "link_url": "TEXT NOT NULL DEFAULT ''",
+        "source_type": "TEXT NOT NULL DEFAULT ''",
+        "source_key": "TEXT NOT NULL DEFAULT ''",
+        "is_read": "INTEGER NOT NULL DEFAULT 0",
+        "created_at": "TEXT NOT NULL DEFAULT ''",
+        "updated_at": "TEXT NOT NULL DEFAULT ''",
+        "read_at": "TEXT",
+    }
+    for name, definition in additions.items():
+        if name not in columns:
+            conn.execute(f"ALTER TABLE notifications ADD COLUMN {name} {definition}")
+    timestamp = now_iso()
+    conn.execute("UPDATE notifications SET created_at = ? WHERE COALESCE(created_at, '') = ''", (timestamp,))
+    conn.execute("UPDATE notifications SET updated_at = created_at WHERE COALESCE(updated_at, '') = ''")
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_notifications_source ON notifications(user_id, source_type, source_key)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_notifications_user_read ON notifications(user_id, is_read, updated_at)")
+
+
 def add_user_id_column(conn, table):
     if "user_id" not in table_columns(conn, table):
         conn.execute(f"ALTER TABLE {table} ADD COLUMN user_id INTEGER")
@@ -2253,7 +2310,7 @@ def clear_user_data(conn, user_id):
             f"DELETE FROM {table} WHERE {id_column} IN (SELECT id FROM {owner_table} WHERE user_id = ?)",
             (user_id,),
         )
-    for table in ("favorite_decks", "card_notes", "card_sale_journal", "card_sales", "inventory_adjustments", "wishlist_cards", "card_meta", "card_purchases", "collection", "wishlists", "containers", "decks"):
+    for table in ("notifications", "favorite_decks", "card_notes", "card_sale_journal", "card_sales", "inventory_adjustments", "wishlist_cards", "card_meta", "card_purchases", "collection", "wishlists", "containers", "decks"):
         conn.execute(f"DELETE FROM {table} WHERE user_id = ?", (user_id,))
     conn.commit()
     return {"ok": True}
@@ -5493,6 +5550,118 @@ def list_sale_cards(conn, query, user_id):
     return rows_to_dicts(rows)
 
 
+def price_for_variant_from_row(card_row, variant):
+    variant_key = (variant or "Normal").lower()
+    if "etched" in variant_key and card_row["current_usd_etched"]:
+        return float(card_row["current_usd_etched"] or 0)
+    if "foil" in variant_key and card_row["current_usd_foil"]:
+        return float(card_row["current_usd_foil"] or 0)
+    return float(card_row["current_usd"] or card_row["current_usd_foil"] or card_row["current_usd_etched"] or 0)
+
+
+def list_notifications(conn, user_id, limit=100):
+    limit = min(max(int(money(limit, fallback=100)), 1), 250)
+    rows = rows_to_dicts(conn.execute(
+        """
+        SELECT id, subject, body, link_url, source_type, is_read, created_at, updated_at, read_at
+        FROM notifications
+        WHERE user_id = ?
+        ORDER BY is_read ASC, updated_at DESC, id DESC
+        LIMIT ?
+        """,
+        (user_id, limit),
+    ).fetchall())
+    unread = conn.execute(
+        "SELECT COUNT(*) AS count FROM notifications WHERE user_id = ? AND COALESCE(is_read, 0) = 0",
+        (user_id,),
+    ).fetchone()["count"] or 0
+    return {"notifications": rows, "unread_count": int(unread)}
+
+
+def mark_notification_read(conn, user_id, notification_id):
+    timestamp = now_iso()
+    cursor = conn.execute(
+        """
+        UPDATE notifications
+        SET is_read = 1, read_at = COALESCE(read_at, ?)
+        WHERE id = ? AND user_id = ?
+        """,
+        (timestamp, notification_id, user_id),
+    )
+    if cursor.rowcount == 0:
+        raise KeyError("Notification not found")
+    conn.commit()
+    return {"ok": True, **list_notifications(conn, user_id)}
+
+
+def notify_wishlist_users_for_sale(conn, seller_user_id, card_id, variant, sale_condition, quantity, asking_price):
+    card = conn.execute(
+        """
+        SELECT scryfall_id, name, flavor_name, current_usd, current_usd_foil, current_usd_etched
+        FROM cards
+        WHERE scryfall_id = ?
+        """,
+        (card_id,),
+    ).fetchone()
+    if not card:
+        return 0
+    seller = conn.execute(
+        "SELECT id, name, email, store_share_id FROM users WHERE id = ?",
+        (seller_user_id,),
+    ).fetchone()
+    if not seller:
+        return 0
+    store_share_id = seller["store_share_id"] or new_store_share_id(conn)
+    if not seller["store_share_id"]:
+        conn.execute("UPDATE users SET store_share_id = ? WHERE id = ?", (store_share_id, seller_user_id))
+    seller_name = public_display_name({**dict(seller), "store_share_id": store_share_id}, "Seller")
+    title = card_email_title(dict(card))
+    market_price = price_for_variant_from_row(card, variant)
+    store_url = store_share_url(store_share_id)
+    subject = "A Card on your wishlist is for sale!"
+    body = (
+        f"The card - {title} was just listed for sale on {seller_name}'s store. "
+        f"They have {int(quantity or 0)} for sale. "
+        f"They're asking ${float(asking_price or 0):.2f}. "
+        f"The current market value of this card is ${float(market_price or 0):.2f}."
+    )
+    rows = conn.execute(
+        """
+        SELECT DISTINCT user_id
+        FROM (
+            SELECT user_id FROM wishlist_items WHERE card_id = ? AND user_id IS NOT NULL AND user_id != ?
+            UNION
+            SELECT user_id FROM wishlist_cards WHERE card_id = ? AND user_id IS NOT NULL AND user_id != ?
+            UNION
+            SELECT user_id FROM card_meta WHERE card_id = ? AND COALESCE(wishlist, 0) = 1 AND user_id IS NOT NULL AND user_id != ?
+        )
+        """,
+        (card_id, seller_user_id, card_id, seller_user_id, card_id, seller_user_id),
+    ).fetchall()
+    timestamp = now_iso()
+    source_key = f"sale:{seller_user_id}:{card_id}:{variant or 'Normal'}:{sale_condition or DEFAULT_CARD_CONDITION}"
+    notified = 0
+    for row in rows:
+        conn.execute(
+            """
+            INSERT INTO notifications (
+                user_id, subject, body, link_url, source_type, source_key, is_read, created_at, updated_at, read_at
+            )
+            VALUES (?, ?, ?, ?, 'wishlist-sale', ?, 0, ?, ?, NULL)
+            ON CONFLICT(user_id, source_type, source_key) DO UPDATE SET
+                subject = excluded.subject,
+                body = excluded.body,
+                link_url = excluded.link_url,
+                is_read = 0,
+                updated_at = excluded.updated_at,
+                read_at = NULL
+            """,
+            (row["user_id"], subject, body, store_url, source_key, timestamp, timestamp),
+        )
+        notified += 1
+    return notified
+
+
 def card_deck_references(conn, card_id):
     rows = conn.execute(
         """
@@ -6710,6 +6879,7 @@ def update_cards_for_sale(conn, user_id, payload):
     timestamp = now_iso()
     updated = 0
     skipped = 0
+    notifications = 0
     for item in cards:
         if not isinstance(item, dict):
             skipped += 1
@@ -6810,9 +6980,10 @@ def update_cards_for_sale(conn, user_id, payload):
             """,
             (user_id, card_id, variant, sale_condition, quantity, asking_price, timestamp),
         )
+        notifications += notify_wishlist_users_for_sale(conn, user_id, card_id, variant, sale_condition, quantity, asking_price)
         updated += 1
     conn.commit()
-    return {"ok": True, "updated": updated, "skipped": skipped}
+    return {"ok": True, "updated": updated, "skipped": skipped, "notifications": notifications}
 
 
 def condition_owned_quantity(conn, user_id, card_id, variant, condition):
@@ -7381,6 +7552,10 @@ class Handler(SimpleHTTPRequestHandler):
                 if parsed.path == "/api/cards/for-sale":
                     user = self.require_user(conn)
                     return self.send_json({"cards": list_sale_cards(conn, parsed.query, user["id"])})
+                if parsed.path == "/api/notifications":
+                    user = self.require_user(conn)
+                    params = urllib.parse.parse_qs(parsed.query)
+                    return self.send_json(list_notifications(conn, user["id"], params.get("limit", [100])[0]))
                 if parsed.path == "/api/cards/wishlist":
                     user = self.require_user(conn)
                     return self.send_json({"cards": list_wishlist_cards(conn, parsed.query, user["id"])})
@@ -7549,7 +7724,7 @@ class Handler(SimpleHTTPRequestHandler):
             or re.match(r"^/favorites/shared/?$", parsed.path)
             or re.match(r"^/verify-email/[^/]+/?$", parsed.path)
             or re.match(r"^/reset-password/[^/]+/?$", parsed.path)
-            or re.match(r"^/(favorites|collection|sets|decks|containers|missing-list|for-sale|wishlist|search|import)/?$", parsed.path)
+            or re.match(r"^/(favorites|collection|sets|decks|containers|missing-list|for-sale|wishlist|notifications|search|import)/?$", parsed.path)
         ):
             self.path = "/index.html"
         return super().do_GET()
@@ -7613,6 +7788,10 @@ class Handler(SimpleHTTPRequestHandler):
                 if parsed.path == "/api/cards/for-sale":
                     user = self.require_user(conn)
                     return self.send_json(update_cards_for_sale(conn, user["id"], self.read_json()))
+                match = re.match(r"^/api/notifications/([0-9]+)/read$", parsed.path)
+                if match:
+                    user = self.require_user(conn)
+                    return self.send_json(mark_notification_read(conn, user["id"], int(match.group(1))))
                 if parsed.path == "/api/cards/sold":
                     user = self.require_user(conn)
                     return self.send_json(mark_card_sold(conn, user["id"], self.read_json()))

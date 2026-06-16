@@ -6,6 +6,8 @@ const state = {
   saleCards: [],
   wishlistCards: [],
   wishlists: [],
+  notifications: [],
+  unreadNotificationCount: 0,
   ownedSetCards: [],
   ownedSets: [],
   catalogSearchAllResults: [],
@@ -44,7 +46,6 @@ const state = {
   user: null,
   collectionView: localStorage.getItem("foilfolio.collectionView") || "tiles",
   favoritesView: localStorage.getItem("foilfolio.favoritesView") || "tiles",
-  wishlistView: localStorage.getItem("foilfolio.wishlistView") || "tiles",
   settings: null,
 };
 
@@ -80,6 +81,7 @@ const pageRoutes = {
   "missing-list": "/missing-list",
   "for-sale": "/for-sale",
   wishlist: "/wishlist",
+  notifications: "/notifications",
   settings: "/settings",
   import: "/import",
 };
@@ -118,7 +120,10 @@ const els = {
   saleStatus: document.querySelector("#saleStatus"),
   saleModalStatus: document.querySelector("#saleModalStatus"),
   wishlistStatus: document.querySelector("#wishlistStatus"),
+  notificationsStatus: document.querySelector("#notificationsStatus"),
   catalogSearchStatus: document.querySelector("#catalogSearchStatus"),
+  notificationsList: document.querySelector("#notificationsList"),
+  notificationsNavDot: document.querySelector("#notificationsNavDot"),
   searchInput: document.querySelector("#searchInput"),
   favoriteSearchInput: document.querySelector("#favoriteSearchInput"),
   missingSearchInput: document.querySelector("#missingSearchInput"),
@@ -145,8 +150,6 @@ const els = {
   listViewButton: document.querySelector("#listViewButton"),
   favoriteTileViewButton: document.querySelector("#favoriteTileViewButton"),
   favoriteListViewButton: document.querySelector("#favoriteListViewButton"),
-  wishlistTileViewButton: document.querySelector("#wishlistTileViewButton"),
-  wishlistListViewButton: document.querySelector("#wishlistListViewButton"),
   shareFavoritesButton: document.querySelector("#shareFavoritesButton"),
   collectionBulkBar: document.querySelector("#collectionBulkBar"),
   favoritesBulkBar: document.querySelector("#favoritesBulkBar"),
@@ -200,6 +203,12 @@ const els = {
   settingsPageForm: document.querySelector("#settingsPageForm"),
   settingsAccountEmail: document.querySelector("#settingsAccountEmail"),
   settingsPageStatus: document.querySelector("#settingsPageStatus"),
+  notificationDetailOverlay: document.querySelector("#notificationDetailOverlay"),
+  notificationSubjectInput: document.querySelector("#notificationSubjectInput"),
+  notificationBodyInput: document.querySelector("#notificationBodyInput"),
+  notificationStoreLink: document.querySelector("#notificationStoreLink"),
+  closeNotificationDetailButton: document.querySelector("#closeNotificationDetailButton"),
+  closeNotificationDetailFooterButton: document.querySelector("#closeNotificationDetailFooterButton"),
   clearDatabaseButton: document.querySelector("#clearDatabaseButton"),
   deleteProfileButton: document.querySelector("#deleteProfileButton"),
   authOverlay: document.querySelector("#authOverlay"),
@@ -449,6 +458,9 @@ async function api(path, options = {}) {
 
 function updateAuthUi() {
   const loggedIn = Boolean(state.user);
+  if (!loggedIn) {
+    state.unreadNotificationCount = 0;
+  }
   document.body.classList.toggle("is-authenticated", loggedIn);
   for (const command of els.navCommands || []) {
     const target = command.dataset.pageTarget;
@@ -475,6 +487,7 @@ function updateAuthUi() {
   if (els.settingsAccountEmail) {
     els.settingsAccountEmail.textContent = loggedIn ? state.user.email : "Not logged in";
   }
+  updateNotificationsDot();
 }
 
 function syncSettingsFromUser(user) {
@@ -489,6 +502,7 @@ async function loadSession() {
   state.user = payload.user || null;
   if (state.user) {
     syncSettingsFromUser(state.user);
+    await loadNotificationSummary().catch(() => {});
   }
   updateAuthUi();
   return state.user;
@@ -611,6 +625,7 @@ async function submitAuthForm() {
     state.user = result.user;
     syncSettingsFromUser(state.user);
     updateAuthUi();
+    await loadNotificationSummary().catch(() => {});
     closeAuthModal();
     await activatePage("dashboard", { replace: true });
     return;
@@ -623,6 +638,7 @@ async function submitAuthForm() {
   state.user = result.user;
   syncSettingsFromUser(state.user);
   updateAuthUi();
+  await loadNotificationSummary().catch(() => {});
   closeAuthModal();
   await activatePage("dashboard", { replace: true });
 }
@@ -662,11 +678,14 @@ async function logout() {
   state.saleCards = [];
   state.wishlistCards = [];
   state.wishlists = [];
+  state.notifications = [];
+  state.unreadNotificationCount = 0;
   state.ownedSetCards = [];
   state.ownedSets = [];
   state.activeWishlist = null;
   state.activeOwnedSet = null;
   updateAuthUi();
+  updateNotificationsDot();
   activatePage("search", { push: true });
 }
 
@@ -1243,14 +1262,6 @@ function setFavoritesView(view) {
   renderFavorites();
 }
 
-function setWishlistView(view) {
-  state.wishlistView = view === "list" ? "list" : "tiles";
-  localStorage.setItem("foilfolio.wishlistView", state.wishlistView);
-  els.wishlistTileViewButton.classList.toggle("is-active", state.wishlistView === "tiles");
-  els.wishlistListViewButton.classList.toggle("is-active", state.wishlistView === "list");
-  renderWishlist();
-}
-
 function renderDashboard(data) {
   state.dashboard = data;
   els.currentValue.textContent = dollars.format(data.current_total || 0);
@@ -1417,6 +1428,11 @@ function activatePage(pageName, options = {}) {
       setStatus(error.message, "error", els.wishlistStatus);
     });
   }
+  if (page === "notifications") {
+    loadNotifications().catch((error) => {
+      setStatus(error.message, "error", els.notificationsStatus);
+    });
+  }
   if (page === "search") {
     clearSelectedCards();
     renderCatalogSearchResults();
@@ -1440,6 +1456,7 @@ function activeStatusTarget() {
   if (visiblePage === "missing-list") return els.missingStatus;
   if (visiblePage === "for-sale") return els.saleStatus;
   if (visiblePage === "wishlist") return els.wishlistStatus;
+  if (visiblePage === "notifications") return els.notificationsStatus;
   if (visiblePage === "search") return els.catalogSearchStatus;
   return els.status;
 }
@@ -1450,6 +1467,7 @@ async function reloadVisibleCardPages() {
   const missingVisible = Array.from(els.pages).some((page) => page.dataset.page === "missing-list" && !page.hidden);
   const saleVisible = Array.from(els.pages).some((page) => page.dataset.page === "for-sale" && !page.hidden);
   const wishlistVisible = Array.from(els.pages).some((page) => page.dataset.page === "wishlist" && !page.hidden);
+  const notificationsVisible = Array.from(els.pages).some((page) => page.dataset.page === "notifications" && !page.hidden);
   if (favoritesVisible) {
     tasks.push(loadFavorites());
   }
@@ -1464,6 +1482,11 @@ async function reloadVisibleCardPages() {
     if (state.activeWishlist) {
       tasks.push(loadWishlist());
     }
+  }
+  if (notificationsVisible) {
+    tasks.push(loadNotifications());
+  } else {
+    tasks.push(loadNotificationSummary());
   }
   const cardDetailVisible = Array.from(els.pages).some((page) => page.dataset.page === "card-detail" && !page.hidden);
   if (cardDetailVisible && state.activeCardDetail?.scryfall_id) {
@@ -1844,6 +1867,34 @@ async function loadWishlists() {
   return state.wishlists;
 }
 
+function updateNotificationsDot() {
+  const unread = Number(state.unreadNotificationCount || 0);
+  if (els.notificationsNavDot) {
+    els.notificationsNavDot.hidden = unread <= 0;
+    els.notificationsNavDot.title = unread > 0 ? `${integer.format(unread)} unread notification${unread === 1 ? "" : "s"}` : "";
+  }
+}
+
+async function loadNotifications() {
+  const data = await api("/api/notifications");
+  state.notifications = data.notifications || [];
+  state.unreadNotificationCount = Number(data.unread_count || 0);
+  updateNotificationsDot();
+  renderNotifications();
+  return state.notifications;
+}
+
+async function loadNotificationSummary() {
+  if (!state.user) {
+    state.unreadNotificationCount = 0;
+    updateNotificationsDot();
+    return;
+  }
+  const data = await api("/api/notifications?limit=1", { promptLogin: false });
+  state.unreadNotificationCount = Number(data.unread_count || 0);
+  updateNotificationsDot();
+}
+
 function scryfallQuoted(value) {
   return `"${String(value || "").replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
@@ -2195,8 +2246,6 @@ function renderFavoriteDecks() {
 
 function renderWishlist() {
   els.wishlistGrid.className = "missing-list-grid wishlist-detail-grid";
-  if (els.wishlistTileViewButton) els.wishlistTileViewButton.classList.remove("is-active");
-  if (els.wishlistListViewButton) els.wishlistListViewButton.classList.add("is-active");
   els.wishlistGrid.innerHTML = "";
   if (!state.wishlistCards.length) {
     els.wishlistGrid.innerHTML = '<div class="empty-state">No cards are on this Wishlist yet.</div>';
@@ -2219,6 +2268,7 @@ function renderWishlist() {
             <span>${escapeHtml(card.rarity || "unknown")}</span>
             <span>${escapeHtml(cardTypeLabel(card))}</span>
             <span>${escapeHtml(cardColorLabel(card))}</span>
+            <span>Market ${dollars.format(card.display_price || 0)}</span>
             <span>Need ${integer.format(card.wishlist_quantity || 1)}</span>
             ${card.fulfilled ? "<span>Owned</span>" : ""}
           </div>
@@ -2664,6 +2714,67 @@ function renderSaleList() {
   }
 }
 
+function renderNotifications() {
+  if (!els.notificationsList) return;
+  els.notificationsList.innerHTML = "";
+  if (!state.notifications.length) {
+    els.notificationsList.innerHTML = '<div class="empty-state">No notifications yet.</div>';
+    return;
+  }
+  for (const notification of state.notifications) {
+    const row = document.createElement("article");
+    row.className = `notification-row ${notification.is_read ? "" : "is-unread"}`;
+    row.innerHTML = `
+      <button class="notification-open-button" type="button">
+        <span class="notification-read-dot" aria-hidden="true"></span>
+        <span>
+          <strong>${escapeHtml(notification.subject || "Notification")}</strong>
+          <small>${escapeHtml(formatDate(notification.updated_at || notification.created_at || ""))}</small>
+        </span>
+      </button>
+    `;
+    row.querySelector(".notification-open-button").addEventListener("click", () => {
+      openNotificationDetail(notification).catch((error) => setStatus(error.message, "error", els.notificationsStatus));
+    });
+    els.notificationsList.appendChild(row);
+  }
+}
+
+async function openNotificationDetail(notification) {
+  if (!notification) return;
+  if (els.notificationSubjectInput) els.notificationSubjectInput.value = notification.subject || "";
+  if (els.notificationBodyInput) els.notificationBodyInput.value = notification.body || "";
+  if (els.notificationStoreLink) {
+    els.notificationStoreLink.href = notification.link_url || "#";
+    els.notificationStoreLink.hidden = !notification.link_url;
+  }
+  if (els.notificationDetailOverlay) {
+    els.notificationDetailOverlay.hidden = false;
+    document.body.classList.add("modal-open");
+  }
+  if (!notification.is_read) {
+    const result = await api(`/api/notifications/${encodeURIComponent(notification.id)}/read`, {
+      method: "POST",
+      body: "{}",
+    });
+    state.notifications = result.notifications || state.notifications.map((item) => (
+      item.id === notification.id ? { ...item, is_read: 1, read_at: new Date().toISOString() } : item
+    ));
+    state.unreadNotificationCount = Number(result.unread_count || 0);
+    updateNotificationsDot();
+    renderNotifications();
+  }
+}
+
+function closeNotificationDetailModal() {
+  if (!els.notificationDetailOverlay) return;
+  els.notificationDetailOverlay.hidden = true;
+  document.body.classList.remove("modal-open");
+  if (els.notificationSubjectInput) els.notificationSubjectInput.value = "";
+  if (els.notificationBodyInput) els.notificationBodyInput.value = "";
+  if (els.notificationStoreLink) els.notificationStoreLink.href = "#";
+}
+
 function salePayloadFromRow(row) {
   const quantityInput = row.querySelector('input[name="quantity"]');
   const priceInput = row.querySelector('input[name="asking_price"]');
@@ -2690,6 +2801,7 @@ async function saveSaleRow(row) {
     body: JSON.stringify({ cards: [payload], for_sale: true }),
   });
   setStatus("Sale listing updated.", "success", els.saleStatus);
+  await loadNotificationSummary();
   await loadCards();
 }
 
@@ -6384,8 +6496,6 @@ function wireEvents() {
   els.listViewButton.addEventListener("click", () => setCollectionView("list"));
   els.favoriteTileViewButton.addEventListener("click", () => setFavoritesView("tiles"));
   els.favoriteListViewButton.addEventListener("click", () => setFavoritesView("list"));
-  els.wishlistTileViewButton.addEventListener("click", () => setWishlistView("tiles"));
-  els.wishlistListViewButton.addEventListener("click", () => setWishlistView("list"));
   els.shareFavoritesButton.addEventListener("click", openFavoritesShareModal);
   els.addToDeckButton.addEventListener("click", () => {
     openAssignDeckModal().catch((error) => setStatus(error.message, "error"));
@@ -6430,6 +6540,13 @@ function wireEvents() {
   els.settingsOverlay.addEventListener("click", (event) => {
     if (event.target === els.settingsOverlay) {
       closeSettingsModal();
+    }
+  });
+  els.closeNotificationDetailButton?.addEventListener("click", closeNotificationDetailModal);
+  els.closeNotificationDetailFooterButton?.addEventListener("click", closeNotificationDetailModal);
+  els.notificationDetailOverlay?.addEventListener("click", (event) => {
+    if (event.target === els.notificationDetailOverlay) {
+      closeNotificationDetailModal();
     }
   });
   els.closeAuthButton.addEventListener("click", closeAuthModal);
@@ -6766,6 +6883,9 @@ function wireEvents() {
     }
     if (event.key === "Escape" && !els.settingsOverlay.hidden) {
       closeSettingsModal();
+    }
+    if (event.key === "Escape" && els.notificationDetailOverlay && !els.notificationDetailOverlay.hidden) {
+      closeNotificationDetailModal();
     }
     if (event.key === "Escape" && !els.authOverlay.hidden) {
       closeAuthModal();
@@ -7211,6 +7331,7 @@ function wireEvents() {
       setStatus(`Marked ${integer.format(result.updated || 0)} card${result.updated === 1 ? "" : "s"} for sale.`, "success");
       closeSaleModal();
       clearSelectedCards();
+      await loadNotificationSummary();
       await reloadVisibleCardPages();
     } catch (error) {
       setStatus(error.message, "error", els.saleModalStatus);
