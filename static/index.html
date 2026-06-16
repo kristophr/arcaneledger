@@ -4,12 +4,12 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>FoilFolio</title>
-    <link rel="stylesheet" href="/styles.css?v=124">
+    <link rel="stylesheet" href="/styles.css?v=130">
   </head>
   <body>
     <header class="topbar">
       <div>
-        <p class="eyebrow">Self-hosted collection</p>
+        <p class="eyebrow">Magic collection tracker</p>
         <h1>FoilFolio</h1>
       </div>
       <div class="actions">
@@ -56,6 +56,7 @@
             <span id="notificationsNavDot" class="nav-unread-dot" aria-hidden="true" hidden></span>
           </button>
           <button class="nav-command" type="button" data-page-target="admin"><span class="admin-icon" aria-hidden="true"></span>Admin</button>
+          <button id="myProfileButton" class="nav-command" type="button"><span class="profile-icon" aria-hidden="true"></span>My Profile</button>
           <button class="nav-command" type="button" data-page-target="settings"><span class="settings-icon" aria-hidden="true"></span>Settings</button>
           <button id="logoutButton" class="nav-command" type="button"><span class="login-icon" aria-hidden="true"></span><span class="auth-command-label">Log In</span></button>
         </nav>
@@ -67,7 +68,7 @@
           <div>
             <p class="eyebrow">Welcome to FoilFolio</p>
             <h2>Catalog the collection. Build the decks. Find the cards.</h2>
-            <p>FoilFolio is a self-hosted Magic: The Gathering collection tracker powered by Scryfall catalog data and collector-owned pricing history.</p>
+            <p>FoilFolio is a Magic: The Gathering collection tracker powered by Scryfall catalog data and collector-owned pricing history.</p>
           </div>
           <div class="home-stat-card home-stat-card-feature">
             <span>Total cataloged value</span>
@@ -589,9 +590,10 @@
                   <option value="en">English (EN)</option>
                 </select>
               </label>
-              <div class="modal-actions">
-                <button class="primary-button" type="submit">Save Settings</button>
-              </div>
+            <div class="modal-actions">
+              <button id="editProfileButton" class="secondary-button" type="button">Edit Profile</button>
+              <button class="primary-button" type="submit">Save Settings</button>
+            </div>
             </form>
             <div id="settingsPageStatus" class="status" aria-live="polite"></div>
           </section>
@@ -631,6 +633,13 @@
         </div>
         <div id="adminStatus" class="status" aria-live="polite"></div>
         <div class="admin-grid">
+          <section class="panel admin-panel admin-server-panel">
+            <div class="panel-head">
+              <h3>Server Details</h3>
+              <span id="adminServerVersion"></span>
+            </div>
+            <dl id="adminServerDetails" class="admin-server-details"></dl>
+          </section>
           <section class="panel admin-panel">
             <div class="panel-head">
               <h3>User Management</h3>
@@ -692,6 +701,10 @@
       <section class="store-share-band app-page" data-page="store-share" hidden>
         <div id="storeShareShell" class="deck-share-shell"></div>
       </section>
+
+      <section class="user-profile-band app-page" data-page="user-profile" hidden>
+        <div id="userProfileShell" class="user-profile-shell"></div>
+      </section>
       </main>
     </div>
 
@@ -743,6 +756,7 @@
             <button class="edit-button" type="button" aria-label="Edit card" title="Edit card"><span class="edit-icon" aria-hidden="true"></span></button>
             <a class="scryfall-button" aria-label="Open on Scryfall" title="Open on Scryfall" target="_blank" rel="noreferrer">S</a>
             <button class="refresh-card-button" type="button" aria-label="Refresh card metadata" title="Refresh from Scryfall">&#8635;</button>
+            <button class="blog-card-button" type="button" aria-label="Write blog post about this card" title="Write blog post"><span class="blog-post-icon" aria-hidden="true"></span></button>
             <button class="share-button" type="button" aria-label="Share card" title="Share card">&#8599;</button>
           </div>
         </footer>
@@ -780,6 +794,7 @@
           </button>
           <a class="scryfall-button" aria-label="Open on Scryfall" title="Open on Scryfall" target="_blank" rel="noreferrer">S</a>
           <button class="refresh-card-button" type="button" aria-label="Refresh card metadata" title="Refresh from Scryfall">&#8635;</button>
+          <button class="blog-card-button" type="button" aria-label="Write blog post about this card" title="Write blog post"><span class="blog-post-icon" aria-hidden="true"></span></button>
           <button class="edit-button" type="button" aria-label="Edit card" title="Edit card"><span class="edit-icon" aria-hidden="true"></span></button>
           <button class="share-button" type="button" aria-label="Share card" title="Share card">&#8599;</button>
           <button class="wishlist-button" type="button" aria-label="Wishlist card" title="Wishlist"></button>
@@ -935,6 +950,55 @@
           <div class="modal-actions">
             <button id="cancelSettingsButton" class="secondary-button" type="button">Cancel</button>
             <button class="primary-button" type="submit">Save</button>
+          </div>
+        </form>
+      </section>
+    </div>
+
+    <div id="profileOverlay" class="modal-overlay" hidden>
+      <section class="settings-modal profile-modal" role="dialog" aria-modal="true" aria-labelledby="profileTitle">
+        <header class="edit-modal-head">
+          <div>
+            <p class="eyebrow">Public profile</p>
+            <h2 id="profileTitle">Edit Profile</h2>
+          </div>
+          <button id="closeProfileButton" class="modal-close" type="button" aria-label="Close profile dialog">x</button>
+        </header>
+        <form id="profileForm" class="settings-form">
+          <label>
+            Display Name
+            <input name="name" type="text" maxlength="80" autocomplete="name" required>
+          </label>
+          <label>
+            About Me
+            <textarea name="about_me" maxlength="1200" rows="6" placeholder="Tell other collectors a bit about you."></textarea>
+          </label>
+          <label>
+            Profile Picture
+            <input id="profileImageInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif">
+            <input name="profile_image" type="hidden">
+          </label>
+          <div id="profileImagePreview" class="profile-image-preview" aria-live="polite"></div>
+          <label>
+            Discord Username
+            <input name="contact_discord" type="text" maxlength="80" autocomplete="off">
+          </label>
+          <label>
+            Instagram
+            <input name="contact_instagram" type="text" maxlength="80" autocomplete="off" placeholder="@username">
+          </label>
+          <label>
+            Bluesky
+            <input name="contact_bluesky" type="text" maxlength="80" autocomplete="off" placeholder="name.bsky.social">
+          </label>
+          <label>
+            Threads
+            <input name="contact_threads" type="text" maxlength="80" autocomplete="off" placeholder="@username">
+          </label>
+          <div id="profileStatus" class="status" aria-live="polite"></div>
+          <div class="modal-actions">
+            <button id="cancelProfileButton" class="secondary-button" type="button">Cancel</button>
+            <button class="primary-button" type="submit">Save Profile</button>
           </div>
         </form>
       </section>
@@ -1151,6 +1215,49 @@
           <div class="modal-actions">
             <button id="copyShareButton" class="primary-button" type="button">Copy</button>
           </div>
+        </div>
+      </section>
+    </div>
+
+    <div id="cardBlogOverlay" class="modal-overlay" hidden>
+      <section class="settings-modal card-blog-modal" role="dialog" aria-modal="true" aria-labelledby="cardBlogTitle">
+        <header class="edit-modal-head">
+          <div>
+            <p class="eyebrow">Profile blog</p>
+            <h2 id="cardBlogTitle">Write About This Card</h2>
+          </div>
+          <button id="closeCardBlogButton" class="modal-close" type="button" aria-label="Close blog dialog">x</button>
+        </header>
+        <div id="cardBlogPreview" class="card-blog-preview"></div>
+        <form id="cardBlogForm" class="settings-form">
+          <label>
+            Blog post
+            <textarea name="body" maxlength="2400" rows="8" placeholder="Write your thoughts, deck tech, trade notes, or collector story..."></textarea>
+          </label>
+          <div id="cardBlogStatus" class="status" aria-live="polite"></div>
+          <div class="modal-actions">
+            <button id="cancelCardBlogButton" class="secondary-button" type="button">Cancel</button>
+            <button class="primary-button" type="submit">Save Blog Post</button>
+          </div>
+        </form>
+      </section>
+    </div>
+
+    <div id="cardBlogListOverlay" class="modal-overlay" hidden>
+      <section class="settings-modal card-blog-list-modal" role="dialog" aria-modal="true" aria-labelledby="cardBlogListTitle">
+        <header class="edit-modal-head">
+          <div>
+            <p class="eyebrow">Card blogs</p>
+            <h2 id="cardBlogListTitle">Posts About This Card</h2>
+          </div>
+          <button id="closeCardBlogListButton" class="modal-close" type="button" aria-label="Close card blogs dialog">x</button>
+        </header>
+        <div id="cardBlogListPreview" class="card-blog-preview"></div>
+        <div id="cardBlogList" class="card-blog-list"></div>
+        <div id="cardBlogListStatus" class="status" aria-live="polite"></div>
+        <div class="modal-actions">
+          <button id="writeCardBlogFromListButton" class="primary-button" type="button">Write Blog</button>
+          <button id="dismissCardBlogListButton" class="secondary-button" type="button">Close</button>
         </div>
       </section>
     </div>
@@ -1662,6 +1769,6 @@
       </section>
     </div>
 
-    <script src="/app.js?v=136"></script>
+    <script src="/app.js?v=142"></script>
   </body>
 </html>

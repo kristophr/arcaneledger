@@ -8,9 +8,12 @@ import io
 import json
 import logging
 import os
+import platform
 import re
 import secrets
+import shutil
 import smtplib
+import socket
 import sqlite3
 import sys
 import time
@@ -72,7 +75,9 @@ SESSION_IDLE_MINUTES = int(os.environ.get("SESSION_IDLE_MINUTES", "30") or 30)
 EMAIL_VERIFICATION_MINUTES = int(os.environ.get("EMAIL_VERIFICATION_MINUTES", "30") or 30)
 PASSWORD_RESET_MINUTES = int(os.environ.get("PASSWORD_RESET_MINUTES", str(EMAIL_VERIFICATION_MINUTES)) or EMAIL_VERIFICATION_MINUTES)
 SUPPORTED_SCRYFALL_LANGUAGES = {"en"}
+APP_VERSION = "0.1.1 alpha"
 USER_AGENT = "foilfolio/0.1.1"
+PROCESS_STARTED_AT = datetime.now(timezone.utc).replace(microsecond=0)
 COLOR_ORDER = ("W", "U", "B", "R", "G")
 CARD_CONDITIONS = (
     "Near Mint",
@@ -220,6 +225,37 @@ def validate_display_name(value):
     return name
 
 
+def profile_slug(value):
+    slug = re.sub(r"[^a-z0-9]+", "-", (value or "").strip().lower()).strip("-")
+    return slug[:80].strip("-") or "user"
+
+
+def unique_profile_slug(conn, name, user_id=None):
+    base = profile_slug(name)
+    slug = base
+    counter = 2
+    while True:
+        if user_id:
+            row = conn.execute("SELECT 1 FROM users WHERE profile_slug = ? AND id != ?", (slug, user_id)).fetchone()
+        else:
+            row = conn.execute("SELECT 1 FROM users WHERE profile_slug = ?", (slug,)).fetchone()
+        if not row:
+            return slug
+        suffix = f"-{counter}"
+        slug = f"{base[:80 - len(suffix)]}{suffix}".strip("-")
+        counter += 1
+
+
+def validate_unique_display_name(conn, name, user_id=None):
+    if user_id:
+        exists = conn.execute("SELECT 1 FROM users WHERE lower(name) = lower(?) AND id != ?", (name, user_id)).fetchone()
+    else:
+        exists = conn.execute("SELECT 1 FROM users WHERE lower(name) = lower(?)", (name,)).fetchone()
+    if exists:
+        raise ValueError("Display name must be unique.")
+    return name
+
+
 def contains_disallowed_name_word(value):
     normalized = re.sub(r"[^a-z0-9]+", " ", (value or "").lower())
     tokens = set(normalized.split())
@@ -268,6 +304,25 @@ def clean_contact_url(value):
     parsed = urllib.parse.urlparse(text) if text else None
     if text and (parsed.scheme not in {"http", "https"} or not parsed.netloc or " " in text):
         raise ValueError("Enter a valid website URL.")
+    return text
+
+
+def clean_profile_text(value, limit=1200):
+    text = re.sub(r"\r\n?", "\n", (value or "").strip())
+    text = re.sub(r"\n{4,}", "\n\n\n", text)
+    if len(text) > limit:
+        raise ValueError(f"About me must be {limit} characters or fewer.")
+    return text
+
+
+def clean_profile_image(value):
+    text = (value or "").strip()
+    if not text:
+        return ""
+    if len(text) > 900_000:
+        raise ValueError("Profile picture is too large. Use an image under about 650 KB.")
+    if not re.match(r"^data:image/(png|jpe?g|webp|gif);base64,[A-Za-z0-9+/=]+$", text, flags=re.I):
+        raise ValueError("Profile picture must be a PNG, JPG, WebP, or GIF image.")
     return text
 
 
@@ -332,6 +387,101 @@ def read_log_tail(line_count=200, max_bytes=256 * 1024):
         data = handle.read().decode("utf-8", errors="replace")
     lines = data.splitlines()[-line_count:]
     return {**debug_log_status(), "lines": lines}
+
+
+def file_size(path):
+    try:
+        return Path(path).stat().st_size
+    except OSError:
+        return 0
+
+
+def process_memory_bytes():
+    statm_path = Path("/proc/self/statm")
+    if statm_path.exists():
+        try:
+            pages = int(statm_path.read_text(encoding="utf-8").split()[1])
+            return pages * os.sysconf("SC_PAGE_SIZE")
+        except (OSError, ValueError, IndexError):
+            pass
+    try:
+        import resource
+
+        value = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        multiplier = 1024 if sys.platform != "darwin" else 1
+        return int(value * multiplier)
+    except (ImportError, OSError, ValueError):
+        return 0
+
+
+def system_memory_info():
+    meminfo_path = Path("/proc/meminfo")
+    if meminfo_path.exists():
+        values = {}
+        try:
+            for line in meminfo_path.read_text(encoding="utf-8").splitlines():
+                if ":" not in line:
+                    continue
+                key, raw = line.split(":", 1)
+                number = re.search(r"\d+", raw)
+                if number:
+                    values[key] = int(number.group(0)) * 1024
+        except OSError:
+            values = {}
+        total = values.get("MemTotal", 0)
+        available = values.get("MemAvailable", 0)
+        return {
+            "total_bytes": total,
+            "available_bytes": available,
+            "used_bytes": max(0, total - available) if total and available else 0,
+        }
+    total = 0
+    try:
+        if hasattr(os, "sysconf"):
+            total = int(os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE"))
+    except (OSError, ValueError):
+        total = 0
+    return {"total_bytes": total, "available_bytes": 0, "used_bytes": 0}
+
+
+def server_details():
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    uptime_seconds = max(0, int((now - PROCESS_STARTED_AT).total_seconds()))
+    try:
+        load_average = list(os.getloadavg())
+    except (AttributeError, OSError):
+        load_average = []
+    try:
+        disk = shutil.disk_usage(DATA_DIR)
+        disk_payload = {
+            "path": str(DATA_DIR),
+            "total_bytes": disk.total,
+            "used_bytes": disk.used,
+            "free_bytes": disk.free,
+        }
+    except OSError:
+        disk_payload = {"path": str(DATA_DIR), "total_bytes": 0, "used_bytes": 0, "free_bytes": 0}
+    return {
+        "app_version": APP_VERSION,
+        "user_agent": USER_AGENT,
+        "started_at": PROCESS_STARTED_AT.isoformat().replace("+00:00", "Z"),
+        "now": now.isoformat().replace("+00:00", "Z"),
+        "uptime_seconds": uptime_seconds,
+        "host": socket.gethostname(),
+        "platform": platform.platform(),
+        "python_version": platform.python_version(),
+        "pid": os.getpid(),
+        "cpu_count": os.cpu_count() or 0,
+        "load_average": load_average,
+        "process_memory_bytes": process_memory_bytes(),
+        "system_memory": system_memory_info(),
+        "disk": disk_payload,
+        "database": {
+            "path": str(DB_PATH),
+            "size_bytes": file_size(DB_PATH),
+        },
+        "logs": debug_log_status(),
+    }
 
 
 def collector_keys(value):
@@ -1002,6 +1152,12 @@ def init_db(conn):
             contact_telegram TEXT NOT NULL DEFAULT '',
             contact_discord TEXT NOT NULL DEFAULT '',
             contact_website TEXT NOT NULL DEFAULT '',
+            contact_instagram TEXT NOT NULL DEFAULT '',
+            contact_bluesky TEXT NOT NULL DEFAULT '',
+            contact_threads TEXT NOT NULL DEFAULT '',
+            about_me TEXT NOT NULL DEFAULT '',
+            profile_image TEXT NOT NULL DEFAULT '',
+            profile_slug TEXT UNIQUE,
             role TEXT NOT NULL DEFAULT 'normal',
             is_banned INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL,
@@ -1032,6 +1188,51 @@ def init_db(conn):
             expires_at TEXT NOT NULL,
             used_at TEXT,
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS profile_friends (
+            user_id INTEGER NOT NULL,
+            friend_user_id INTEGER NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (user_id, friend_user_id),
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY (friend_user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS profile_wall_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            profile_user_id INTEGER NOT NULL,
+            author_user_id INTEGER NOT NULL,
+            body TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (profile_user_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY (author_user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS profile_posts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            body TEXT NOT NULL,
+            card_id TEXT,
+            deck_id INTEGER,
+            variant TEXT NOT NULL DEFAULT 'Normal',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY (card_id) REFERENCES cards(scryfall_id) ON DELETE SET NULL,
+            FOREIGN KEY (deck_id) REFERENCES decks(id) ON DELETE SET NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS profile_post_comments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            post_id INTEGER NOT NULL,
+            author_user_id INTEGER NOT NULL,
+            parent_comment_id INTEGER,
+            body TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (post_id) REFERENCES profile_posts(id) ON DELETE CASCADE,
+            FOREIGN KEY (author_user_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY (parent_comment_id) REFERENCES profile_post_comments(id) ON DELETE CASCADE
         );
 
         CREATE TABLE IF NOT EXISTS cards (
@@ -1307,6 +1508,10 @@ def init_db(conn):
         CREATE INDEX IF NOT EXISTS idx_inventory_adjustments_card ON inventory_adjustments(user_id, card_id, variant, card_condition, adjustment_date);
         CREATE INDEX IF NOT EXISTS idx_snapshots_date ON price_snapshots(snapshot_date);
         CREATE INDEX IF NOT EXISTS idx_card_notes_card ON card_notes(card_id, variant);
+        CREATE INDEX IF NOT EXISTS idx_profile_friends_user ON profile_friends(user_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_profile_wall_user ON profile_wall_messages(profile_user_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_profile_posts_user ON profile_posts(user_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_profile_comments_post ON profile_post_comments(post_id, created_at);
         """
     )
     migrate_sets_schema(conn)
@@ -1318,6 +1523,7 @@ def init_db(conn):
     migrate_containers_schema(conn)
     migrate_card_sales_schema(conn)
     migrate_notifications_schema(conn)
+    migrate_profile_social_schema(conn)
     migrate_user_schema(conn)
     ensure_collection_share_ids(conn)
     ensure_deck_share_ids(conn)
@@ -1959,6 +2165,67 @@ def migrate_notifications_schema(conn):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_notifications_user_read ON notifications(user_id, is_read, updated_at)")
 
 
+def migrate_profile_social_schema(conn):
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS profile_friends (
+            user_id INTEGER NOT NULL,
+            friend_user_id INTEGER NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (user_id, friend_user_id),
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY (friend_user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+        CREATE TABLE IF NOT EXISTS profile_wall_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            profile_user_id INTEGER NOT NULL,
+            author_user_id INTEGER NOT NULL,
+            body TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (profile_user_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY (author_user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+        CREATE TABLE IF NOT EXISTS profile_posts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            body TEXT NOT NULL,
+            card_id TEXT,
+            deck_id INTEGER,
+            variant TEXT NOT NULL DEFAULT 'Normal',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY (card_id) REFERENCES cards(scryfall_id) ON DELETE SET NULL,
+            FOREIGN KEY (deck_id) REFERENCES decks(id) ON DELETE SET NULL
+        );
+        CREATE TABLE IF NOT EXISTS profile_post_comments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            post_id INTEGER NOT NULL,
+            author_user_id INTEGER NOT NULL,
+            parent_comment_id INTEGER,
+            body TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (post_id) REFERENCES profile_posts(id) ON DELETE CASCADE,
+            FOREIGN KEY (author_user_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY (parent_comment_id) REFERENCES profile_post_comments(id) ON DELETE CASCADE
+        );
+        """
+    )
+    columns = table_columns(conn, "profile_posts")
+    if "card_id" not in columns:
+        conn.execute("ALTER TABLE profile_posts ADD COLUMN card_id TEXT")
+    if "deck_id" not in columns:
+        conn.execute("ALTER TABLE profile_posts ADD COLUMN deck_id INTEGER")
+    if "variant" not in columns:
+        conn.execute("ALTER TABLE profile_posts ADD COLUMN variant TEXT NOT NULL DEFAULT 'Normal'")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_profile_friends_user ON profile_friends(user_id, created_at)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_profile_wall_user ON profile_wall_messages(profile_user_id, created_at)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_profile_posts_user ON profile_posts(user_id, created_at)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_profile_posts_card ON profile_posts(card_id, variant, created_at)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_profile_posts_deck ON profile_posts(deck_id, created_at)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_profile_comments_post ON profile_post_comments(post_id, created_at)")
+
+
 def add_user_id_column(conn, table):
     if "user_id" not in table_columns(conn, table):
         conn.execute(f"ALTER TABLE {table} ADD COLUMN user_id INTEGER")
@@ -1991,11 +2258,21 @@ def migrate_user_schema(conn):
         conn.execute("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'normal'")
     if "is_banned" not in user_columns:
         conn.execute("ALTER TABLE users ADD COLUMN is_banned INTEGER NOT NULL DEFAULT 0")
-    for column in ("public_email", "contact_whatsapp", "contact_signal", "contact_telegram", "contact_discord", "contact_website"):
+    for column in (
+        "public_email", "contact_whatsapp", "contact_signal", "contact_telegram", "contact_discord",
+        "contact_website", "contact_instagram", "contact_bluesky", "contact_threads", "about_me", "profile_image",
+    ):
         if column not in user_columns:
             conn.execute(f"ALTER TABLE users ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
+    if "profile_slug" not in user_columns:
+        conn.execute("ALTER TABLE users ADD COLUMN profile_slug TEXT")
     conn.execute("UPDATE users SET name = email WHERE trim(COALESCE(name, '')) = ''")
     conn.execute("UPDATE users SET email_verified = 1 WHERE email_verified = 0 AND trim(COALESCE(password_hash, '')) != ''")
+    ensure_unique_user_display_names(conn)
+    rows = conn.execute("SELECT id, name, email, profile_slug FROM users ORDER BY id").fetchall()
+    for row in rows:
+        if not row["profile_slug"]:
+            conn.execute("UPDATE users SET profile_slug = ? WHERE id = ?", (unique_profile_slug(conn, row["name"] or row["email"], row["id"]), row["id"]))
     conn.execute("UPDATE users SET role = 'normal' WHERE role NOT IN ('admin', 'paid', 'normal') OR trim(COALESCE(role, '')) = ''")
     for email in ADMIN_EMAILS:
         conn.execute("UPDATE users SET role = 'admin', is_banned = 0 WHERE lower(email) = ?", (email,))
@@ -2024,6 +2301,8 @@ def migrate_user_schema(conn):
         """
     )
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email)")
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_name_unique ON users(lower(name))")
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_profile_slug ON users(profile_slug)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_users_role ON users(role, is_banned)")
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_store_share_id ON users(store_share_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id, expires_at)")
@@ -2041,6 +2320,25 @@ def migrate_user_schema(conn):
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_decks_share_id ON decks(share_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_collection_user_quantity ON collection(user_id, quantity)")
     migrate_legacy_wishlists(conn)
+
+
+def ensure_unique_user_display_names(conn):
+    seen = set()
+    rows = conn.execute("SELECT id, name, email FROM users ORDER BY id").fetchall()
+    for row in rows:
+        try:
+            base = validate_display_name(row["name"] or (row["email"] or "user").split("@", 1)[0])
+        except ValueError:
+            base = validate_display_name((row["email"] or "user").split("@", 1)[0])
+        candidate = base
+        counter = 2
+        while candidate.lower() in seen:
+            suffix = f" {counter}"
+            candidate = f"{base[:80 - len(suffix)]}{suffix}"
+            counter += 1
+        seen.add(candidate.lower())
+        if candidate != row["name"]:
+            conn.execute("UPDATE users SET name = ? WHERE id = ?", (candidate, row["id"]))
 
 
 def user_payload(row):
@@ -2062,6 +2360,13 @@ def user_payload(row):
         "contact_telegram": row["contact_telegram"] if "contact_telegram" in row.keys() else "",
         "contact_discord": row["contact_discord"] if "contact_discord" in row.keys() else "",
         "contact_website": row["contact_website"] if "contact_website" in row.keys() else "",
+        "contact_instagram": row["contact_instagram"] if "contact_instagram" in row.keys() else "",
+        "contact_bluesky": row["contact_bluesky"] if "contact_bluesky" in row.keys() else "",
+        "contact_threads": row["contact_threads"] if "contact_threads" in row.keys() else "",
+        "about_me": row["about_me"] if "about_me" in row.keys() else "",
+        "profile_image": row["profile_image"] if "profile_image" in row.keys() else "",
+        "profile_slug": row["profile_slug"] if "profile_slug" in row.keys() else profile_slug(row["name"] if "name" in row.keys() else row["email"]),
+        "profile_url": f"/user/{urllib.parse.quote(row['profile_slug'])}" if "profile_slug" in row.keys() and row["profile_slug"] else "",
         "store_share_id": row["store_share_id"] if "store_share_id" in row.keys() else "",
         "created_at": row["created_at"],
     }
@@ -2225,18 +2530,19 @@ def complete_registration(conn, payload):
             raise ValueError("Verification token is required.")
         verification = verification_from_token(conn, token)
         email = verification["email"]
-    name = validate_display_name(payload.get("name"))
-    password = validate_password(payload.get("password"))
-    timestamp = now_iso()
     if conn.execute("SELECT 1 FROM users WHERE email = ?", (email,)).fetchone():
         raise ValueError("An account with that email already exists.")
+    name = validate_display_name(payload.get("name"))
+    validate_unique_display_name(conn, name)
+    password = validate_password(payload.get("password"))
+    timestamp = now_iso()
     role = role_for_email(email)
     cursor = conn.execute(
         """
-        INSERT INTO users (name, email, password_hash, language, theme, email_verified, store_share_id, role, is_banned, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, 1, ?, ?, 0, ?, ?)
+        INSERT INTO users (name, email, password_hash, language, theme, email_verified, store_share_id, profile_slug, role, is_banned, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, 0, ?, ?)
         """,
-        (name, email, hash_password(password), scryfall_language(payload.get("language")), clean_theme(payload.get("theme")), new_store_share_id(conn), role, timestamp, timestamp),
+        (name, email, hash_password(password), scryfall_language(payload.get("language")), clean_theme(payload.get("theme")), new_store_share_id(conn), unique_profile_slug(conn, name), role, timestamp, timestamp),
     )
     user_id = cursor.lastrowid
     if not legacy_direct:
@@ -2351,22 +2657,31 @@ def update_user_settings(conn, user_id, payload):
     language = scryfall_language(payload.get("language"))
     theme = clean_theme(payload.get("theme"))
     display_name = validate_display_name(payload.get("name"))
+    validate_unique_display_name(conn, display_name, user_id)
+    profile_slug_value = unique_profile_slug(conn, display_name, user_id)
     public_email = validate_optional_email(payload.get("public_email"))
     contact_whatsapp = clean_contact_handle(payload.get("contact_whatsapp"), "WhatsApp username")
     contact_signal = clean_contact_handle(payload.get("contact_signal"), "Signal username")
     contact_telegram = clean_contact_handle(payload.get("contact_telegram"), "Telegram username")
     contact_discord = clean_contact_handle(payload.get("contact_discord"), "Discord username")
     contact_website = clean_contact_url(payload.get("contact_website"))
+    contact_instagram = clean_contact_handle(payload.get("contact_instagram"), "Instagram username")
+    contact_bluesky = clean_contact_handle(payload.get("contact_bluesky"), "Bluesky username")
+    contact_threads = clean_contact_handle(payload.get("contact_threads"), "Threads username")
+    about_me = clean_profile_text(payload.get("about_me"))
+    profile_image = clean_profile_image(payload.get("profile_image"))
     conn.execute(
         """
         UPDATE users
-        SET name = ?, language = ?, theme = ?, public_email = ?, contact_whatsapp = ?,
+        SET name = ?, profile_slug = ?, language = ?, theme = ?, public_email = ?, contact_whatsapp = ?,
             contact_signal = ?, contact_telegram = ?, contact_discord = ?, contact_website = ?,
+            contact_instagram = ?, contact_bluesky = ?, contact_threads = ?, about_me = ?, profile_image = ?,
             updated_at = ?
         WHERE id = ?
         """,
         (
             display_name,
+            profile_slug_value,
             language,
             theme,
             public_email,
@@ -2375,6 +2690,11 @@ def update_user_settings(conn, user_id, payload):
             contact_telegram,
             contact_discord,
             contact_website,
+            contact_instagram,
+            contact_bluesky,
+            contact_threads,
+            about_me,
+            profile_image,
             now_iso(),
             user_id,
         ),
@@ -6380,6 +6700,478 @@ def store_front_card_detail(conn, card_id, current_user_id=None):
     return {"card": card_payload, "sellers": sellers}
 
 
+def profile_url_from_slug(slug):
+    return f"{verification_base_url()}/user/{urllib.parse.quote(slug or '')}"
+
+
+def public_profile_contacts(user):
+    contact_email = user["public_email"] or user["email"]
+    contacts = [
+        {"label": "Email", "value": contact_email, "href": f"mailto:{contact_email}"},
+        {"label": "Discord", "value": user["contact_discord"], "href": ""},
+        {"label": "Instagram", "value": user["contact_instagram"], "href": f"https://instagram.com/{user['contact_instagram'].lstrip('@')}" if user["contact_instagram"] else ""},
+        {"label": "Bluesky", "value": user["contact_bluesky"], "href": f"https://bsky.app/profile/{user['contact_bluesky'].lstrip('@')}" if user["contact_bluesky"] else ""},
+        {"label": "Threads", "value": user["contact_threads"], "href": f"https://threads.net/@{user['contact_threads'].lstrip('@')}" if user["contact_threads"] else ""},
+        {"label": "WhatsApp", "value": user["contact_whatsapp"], "href": ""},
+        {"label": "Signal", "value": user["contact_signal"], "href": ""},
+        {"label": "Telegram", "value": user["contact_telegram"], "href": f"https://t.me/{user['contact_telegram'].lstrip('@')}" if user["contact_telegram"] else ""},
+        {"label": "Website", "value": user["contact_website"], "href": user["contact_website"]},
+    ]
+    return [contact for contact in contacts if contact["value"]]
+
+
+def public_profile_stats(conn, user_id):
+    price_expr = (
+        "CASE "
+        "WHEN lower(coalesce(col.variant, '')) LIKE '%etched%' AND c.current_usd_etched > 0 THEN c.current_usd_etched "
+        "WHEN lower(coalesce(col.variant, '')) LIKE '%foil%' AND c.current_usd_foil > 0 THEN c.current_usd_foil "
+        "WHEN c.current_usd > 0 THEN c.current_usd "
+        "WHEN c.current_usd_foil > 0 THEN c.current_usd_foil "
+        "WHEN c.current_usd_etched > 0 THEN c.current_usd_etched "
+        "ELSE 0 END"
+    )
+    row = conn.execute(
+        f"""
+        SELECT COALESCE(SUM(col.quantity), 0) AS owned_quantity,
+               COUNT(DISTINCT col.card_id) AS unique_cards,
+               COALESCE(SUM(col.quantity * ({price_expr})), 0) AS collection_value
+        FROM collection col
+        JOIN cards c ON c.scryfall_id = col.card_id
+        WHERE col.user_id = ? AND COALESCE(col.quantity, 0) > 0
+        """,
+        (user_id,),
+    ).fetchone()
+    deck_count = conn.execute(
+        "SELECT COUNT(*) AS count FROM decks WHERE user_id = ? AND COALESCE(is_private, 0) = 0",
+        (user_id,),
+    ).fetchone()
+    sale_row = conn.execute(
+        "SELECT COALESCE(SUM(quantity), 0) AS quantity, COUNT(*) AS listings FROM card_sales WHERE user_id = ? AND COALESCE(quantity, 0) > 0",
+        (user_id,),
+    ).fetchone()
+    return {
+        "owned_quantity": int(row["owned_quantity"] or 0),
+        "unique_cards": int(row["unique_cards"] or 0),
+        "collection_value": float(row["collection_value"] or 0),
+        "public_deck_count": int(deck_count["count"] or 0),
+        "sale_quantity": int(sale_row["quantity"] or 0),
+        "sale_listing_count": int(sale_row["listings"] or 0),
+    }
+
+
+def public_profile_decks(conn, user_id):
+    rows = conn.execute(
+        """
+        SELECT d.id, d.share_id, d.name,
+               COALESCE(d.description, '') AS description,
+               d.updated_at,
+               COALESCE(SUM(dc.quantity), 0) AS card_count,
+               COUNT(dc.card_id) AS unique_card_count,
+               (
+                   SELECT GROUP_CONCAT(image, '|||')
+                   FROM (
+                       SELECT DISTINCT COALESCE(NULLIF(c2.image_normal, ''), NULLIF(c2.image_small, '')) AS image
+                       FROM deck_cards dc2
+                       JOIN cards c2 ON c2.scryfall_id = dc2.card_id
+                       WHERE dc2.deck_id = d.id
+                         AND COALESCE(NULLIF(c2.image_normal, ''), NULLIF(c2.image_small, '')) IS NOT NULL
+                       ORDER BY RANDOM()
+                       LIMIT 5
+                   )
+               ) AS preview_images
+        FROM decks d
+        LEFT JOIN deck_cards dc ON dc.deck_id = d.id
+        WHERE d.user_id = ? AND COALESCE(d.is_private, 0) = 0
+        GROUP BY d.id
+        ORDER BY d.updated_at DESC, d.name COLLATE NOCASE
+        LIMIT 12
+        """,
+        (user_id,),
+    ).fetchall()
+    decks = rows_to_dicts(rows)
+    for deck in decks:
+        deck["preview_images"] = [image for image in (deck.get("preview_images") or "").split("|||") if image][:5]
+        deck["deck_url"] = deck_share_url(deck)
+    return decks
+
+
+def clean_profile_activity_text(value, label, limit=1200):
+    text = re.sub(r"\r\n?", "\n", (value or "").strip())
+    text = re.sub(r"\n{4,}", "\n\n\n", text)
+    if not text:
+        raise ValueError(f"{label} is required.")
+    if len(text) > limit:
+        raise ValueError(f"{label} must be {limit} characters or fewer.")
+    return text
+
+
+def profile_user_by_slug(conn, slug):
+    normalized_slug = profile_slug(slug)
+    user = conn.execute(
+        """
+        SELECT id, name, email, created_at, store_share_id, public_email, contact_whatsapp, contact_signal,
+               contact_telegram, contact_discord, contact_website, contact_instagram, contact_bluesky,
+               contact_threads, about_me, profile_image, profile_slug
+        FROM users
+        WHERE profile_slug = ? AND COALESCE(is_banned, 0) = 0
+        """,
+        (normalized_slug,),
+    ).fetchone()
+    if not user:
+        raise KeyError("User profile not found")
+    return user
+
+
+def profile_actor_payload(row):
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "profile_slug": row["profile_slug"],
+        "profile_url": f"/user/{urllib.parse.quote(row['profile_slug'])}" if row["profile_slug"] else "",
+        "profile_image": row["profile_image"] if "profile_image" in row.keys() else "",
+    }
+
+
+def profile_friend_rows(conn, user_id):
+    rows = conn.execute(
+        """
+        SELECT u.id, u.name, u.profile_slug, u.profile_image, f.created_at
+        FROM profile_friends f
+        JOIN users u ON u.id = f.friend_user_id
+        WHERE f.user_id = ? AND COALESCE(u.is_banned, 0) = 0
+        ORDER BY f.created_at DESC, u.name COLLATE NOCASE
+        """,
+        (user_id,),
+    ).fetchall()
+    friends = []
+    for row in rows:
+        friend = profile_actor_payload(row)
+        friend["created_at"] = row["created_at"]
+        friends.append(friend)
+    return friends
+
+
+def profile_wall_rows(conn, profile_user_id):
+    rows = conn.execute(
+        """
+        SELECT m.id, m.body, m.created_at,
+               u.id AS author_id, u.name, u.profile_slug, u.profile_image
+        FROM profile_wall_messages m
+        JOIN users u ON u.id = m.author_user_id
+        WHERE m.profile_user_id = ? AND COALESCE(u.is_banned, 0) = 0
+        ORDER BY m.created_at DESC
+        LIMIT 30
+        """,
+        (profile_user_id,),
+    ).fetchall()
+    return [
+        {
+            "id": row["id"],
+            "body": row["body"],
+            "created_at": row["created_at"],
+            "author": {
+                "id": row["author_id"],
+                "name": row["name"],
+                "profile_slug": row["profile_slug"],
+                "profile_url": f"/user/{urllib.parse.quote(row['profile_slug'])}" if row["profile_slug"] else "",
+                "profile_image": row["profile_image"],
+            },
+        }
+        for row in rows
+    ]
+
+
+def profile_post_rows(conn, profile_user_id):
+    post_rows = conn.execute(
+        """
+        SELECT p.id, p.body, p.card_id, p.deck_id, p.variant, p.created_at, p.updated_at,
+               c.scryfall_id, c.name, c.flavor_name, c.set_code, c.set_name, c.collector_number,
+               c.rarity, c.type_line, c.colors, c.image_small, c.image_normal, c.scryfall_uri,
+               c.current_usd, c.current_usd_foil, c.current_usd_etched,
+               d.share_id AS deck_share_id, d.name AS deck_name, d.description AS deck_description,
+               d.is_private AS deck_is_private,
+               COALESCE(SUM(dc.quantity), 0) AS deck_card_count,
+               COUNT(dc.card_id) AS deck_unique_card_count,
+               (
+                   SELECT GROUP_CONCAT(image, '|||')
+                   FROM (
+                       SELECT DISTINCT COALESCE(NULLIF(c2.image_normal, ''), NULLIF(c2.image_small, '')) AS image
+                       FROM deck_cards dc2
+                       JOIN cards c2 ON c2.scryfall_id = dc2.card_id
+                       WHERE dc2.deck_id = d.id
+                         AND COALESCE(NULLIF(c2.image_normal, ''), NULLIF(c2.image_small, '')) IS NOT NULL
+                       ORDER BY RANDOM()
+                       LIMIT 5
+                   )
+               ) AS deck_preview_images
+        FROM profile_posts p
+        LEFT JOIN cards c ON c.scryfall_id = p.card_id
+        LEFT JOIN decks d ON d.id = p.deck_id
+        LEFT JOIN deck_cards dc ON dc.deck_id = d.id
+        WHERE p.user_id = ?
+        GROUP BY p.id
+        ORDER BY p.created_at DESC
+        LIMIT 20
+        """,
+        (profile_user_id,),
+    ).fetchall()
+    posts = []
+    for row in post_rows:
+        post = {
+            "id": row["id"],
+            "body": row["body"],
+            "card_id": row["card_id"],
+            "deck_id": row["deck_id"],
+            "variant": row["variant"] or "Normal",
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+            "card": None,
+            "deck": None,
+        }
+        if row["scryfall_id"]:
+            post["card"] = {
+                "scryfall_id": row["scryfall_id"],
+                "name": row["name"],
+                "flavor_name": row["flavor_name"],
+                "set_code": row["set_code"],
+                "set_name": row["set_name"],
+                "collector_number": row["collector_number"],
+                "rarity": row["rarity"],
+                "type_line": row["type_line"],
+                "colors": row["colors"],
+                "image_small": row["image_small"],
+                "image_normal": row["image_normal"],
+                "scryfall_uri": row["scryfall_uri"],
+                "current_usd": row["current_usd"],
+                "current_usd_foil": row["current_usd_foil"],
+                "current_usd_etched": row["current_usd_etched"],
+                "variant": row["variant"] or "Normal",
+                "display_price": price_for_variant_from_row(row, row["variant"] or "Normal"),
+            }
+        if row["deck_id"]:
+            post["deck"] = {
+                "id": row["deck_id"],
+                "share_id": row["deck_share_id"],
+                "name": row["deck_name"],
+                "description": row["deck_description"],
+                "is_private": row["deck_is_private"],
+                "card_count": row["deck_card_count"],
+                "unique_card_count": row["deck_unique_card_count"],
+                "preview_images": [image for image in (row["deck_preview_images"] or "").split("|||") if image][:5],
+                "deck_url": deck_share_url({"share_id": row["deck_share_id"]}) if row["deck_share_id"] else "",
+            }
+        posts.append(post)
+    if not posts:
+        return []
+    post_ids = [post["id"] for post in posts]
+    placeholders = ",".join("?" for _ in post_ids)
+    comment_rows = conn.execute(
+        f"""
+        SELECT c.id, c.post_id, c.parent_comment_id, c.body, c.created_at,
+               u.id AS author_id, u.name, u.profile_slug, u.profile_image
+        FROM profile_post_comments c
+        JOIN users u ON u.id = c.author_user_id
+        WHERE c.post_id IN ({placeholders}) AND COALESCE(u.is_banned, 0) = 0
+        ORDER BY c.created_at ASC
+        """,
+        post_ids,
+    ).fetchall()
+    comments_by_post = {post["id"]: [] for post in posts}
+    for row in comment_rows:
+        comments_by_post.setdefault(row["post_id"], []).append({
+            "id": row["id"],
+            "post_id": row["post_id"],
+            "parent_comment_id": row["parent_comment_id"],
+            "body": row["body"],
+            "created_at": row["created_at"],
+            "author": {
+                "id": row["author_id"],
+                "name": row["name"],
+                "profile_slug": row["profile_slug"],
+                "profile_url": f"/user/{urllib.parse.quote(row['profile_slug'])}" if row["profile_slug"] else "",
+                "profile_image": row["profile_image"],
+            },
+        })
+    for post in posts:
+        post["comments"] = comments_by_post.get(post["id"], [])
+    return posts
+
+
+def profile_posts_for_card(conn, card_id, variant=None):
+    card = conn.execute("SELECT * FROM cards WHERE scryfall_id = ?", (card_id,)).fetchone()
+    if not card:
+        raise KeyError("Card not found")
+    params = [card_id]
+    variant_filter = ""
+    if variant:
+        variant_filter = " AND COALESCE(p.variant, 'Normal') = ?"
+        params.append(variant)
+    rows = conn.execute(
+        f"""
+        SELECT p.id, p.body, p.variant, p.created_at,
+               u.id AS author_id, u.name, u.profile_slug, u.profile_image
+        FROM profile_posts p
+        JOIN users u ON u.id = p.user_id
+        WHERE p.card_id = ? {variant_filter} AND COALESCE(u.is_banned, 0) = 0
+        ORDER BY p.created_at DESC
+        LIMIT 50
+        """,
+        params,
+    ).fetchall()
+    card_payload = dict(card)
+    card_payload["variant"] = variant or "Normal"
+    card_payload["display_price"] = price_for_variant_from_row(card, variant or "Normal")
+    return {
+        "card": card_payload,
+        "posts": [
+            {
+                "id": row["id"],
+                "body": row["body"],
+                "variant": row["variant"] or "Normal",
+                "created_at": row["created_at"],
+                "author": {
+                    "id": row["author_id"],
+                    "name": row["name"],
+                    "profile_slug": row["profile_slug"],
+                    "profile_url": f"/user/{urllib.parse.quote(row['profile_slug'])}" if row["profile_slug"] else "",
+                    "profile_image": row["profile_image"],
+                },
+            }
+            for row in rows
+        ],
+    }
+
+
+def public_user_profile(conn, slug, viewer_user_id=None):
+    user = profile_user_by_slug(conn, slug)
+    is_self = bool(viewer_user_id and int(viewer_user_id) == int(user["id"]))
+    is_friend = False
+    if viewer_user_id and not is_self:
+        is_friend = bool(conn.execute(
+            "SELECT 1 FROM profile_friends WHERE user_id = ? AND friend_user_id = ?",
+            (viewer_user_id, user["id"]),
+        ).fetchone())
+    stats = public_profile_stats(conn, user["id"])
+    favorite_cards = list_cards(conn, "owned=owned&favorite=1&sort=value&limit=12", user["id"])
+    store_url = store_share_url(user["store_share_id"]) if stats["sale_quantity"] > 0 else ""
+    payload = {
+        "name": user["name"],
+        "profile_slug": user["profile_slug"],
+        "profile_url": profile_url_from_slug(user["profile_slug"]),
+        "profile_image": user["profile_image"],
+        "about_me": user["about_me"],
+        "member_since": user["created_at"],
+        "contacts": public_profile_contacts(user),
+        "stats": stats,
+        "favorites": favorite_cards,
+        "public_decks": public_profile_decks(conn, user["id"]),
+        "store_url": store_url,
+        "wall_messages": profile_wall_rows(conn, user["id"]),
+        "posts": profile_post_rows(conn, user["id"]),
+        "is_self": is_self,
+        "is_friend": is_friend,
+        "can_add_friend": bool(viewer_user_id and not is_self and not is_friend),
+        "can_post_wall": bool(viewer_user_id),
+        "can_post_blog": is_self,
+        "can_comment": bool(viewer_user_id),
+        "readonly": not is_self,
+    }
+    if is_self:
+        payload["friends"] = profile_friend_rows(conn, user["id"])
+    return payload
+
+
+def add_profile_friend(conn, user_id, slug):
+    target = profile_user_by_slug(conn, slug)
+    if int(target["id"]) == int(user_id):
+        raise ValueError("You cannot add yourself as a friend.")
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO profile_friends (user_id, friend_user_id, created_at)
+        VALUES (?, ?, ?)
+        """,
+        (user_id, target["id"], now_iso()),
+    )
+    conn.commit()
+    return {"ok": True, "profile": public_user_profile(conn, target["profile_slug"], user_id)}
+
+
+def add_profile_wall_message(conn, user_id, slug, payload):
+    target = profile_user_by_slug(conn, slug)
+    body = clean_profile_activity_text(payload.get("body"), "Message", 800)
+    conn.execute(
+        """
+        INSERT INTO profile_wall_messages (profile_user_id, author_user_id, body, created_at)
+        VALUES (?, ?, ?, ?)
+        """,
+        (target["id"], user_id, body, now_iso()),
+    )
+    conn.commit()
+    return {"ok": True, "profile": public_user_profile(conn, target["profile_slug"], user_id)}
+
+
+def add_profile_post(conn, user_id, slug, payload):
+    target = profile_user_by_slug(conn, slug)
+    if int(target["id"]) != int(user_id):
+        raise ForbiddenError("Only the profile owner can post blog updates.")
+    body = clean_profile_activity_text(payload.get("body"), "Post", 2400)
+    card_id = (payload.get("card_id") or "").strip()
+    deck_id = payload.get("deck_id")
+    deck_id = int(deck_id) if deck_id not in (None, "", 0, "0") else None
+    variant = (payload.get("variant") or "Normal").strip() or "Normal"
+    if card_id:
+        if not conn.execute("SELECT 1 FROM cards WHERE scryfall_id = ?", (card_id,)).fetchone():
+            raise KeyError("Card not found")
+    else:
+        card_id = None
+    if deck_id:
+        if not conn.execute("SELECT 1 FROM decks WHERE id = ? AND user_id = ?", (deck_id, user_id)).fetchone():
+            raise KeyError("Deck not found")
+    created = now_iso()
+    conn.execute(
+        """
+        INSERT INTO profile_posts (user_id, body, card_id, deck_id, variant, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (user_id, body, card_id, deck_id, variant, created, created),
+    )
+    conn.commit()
+    return {"ok": True, "profile": public_user_profile(conn, target["profile_slug"], user_id)}
+
+
+def add_profile_post_comment(conn, user_id, post_id, payload):
+    post = conn.execute(
+        """
+        SELECT p.id, p.user_id, u.profile_slug
+        FROM profile_posts p
+        JOIN users u ON u.id = p.user_id
+        WHERE p.id = ?
+        """,
+        (post_id,),
+    ).fetchone()
+    if not post:
+        raise KeyError("Profile post not found")
+    parent_id = payload.get("parent_comment_id")
+    parent_id = int(parent_id) if parent_id not in (None, "", 0, "0") else None
+    if parent_id:
+        parent = conn.execute(
+            "SELECT 1 FROM profile_post_comments WHERE id = ? AND post_id = ?",
+            (parent_id, post_id),
+        ).fetchone()
+        if not parent:
+            raise ValueError("Reply target was not found.")
+    body = clean_profile_activity_text(payload.get("body"), "Comment", 1000)
+    conn.execute(
+        """
+        INSERT INTO profile_post_comments (post_id, author_user_id, parent_comment_id, body, created_at)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (post_id, user_id, parent_id, body, now_iso()),
+    )
+    conn.commit()
+    return {"ok": True, "profile": public_user_profile(conn, post["profile_slug"], user_id)}
+
+
 def shared_store(conn, share_id):
     user = conn.execute(
         """
@@ -8236,6 +9028,9 @@ class Handler(SimpleHTTPRequestHandler):
                 if parsed.path == "/api/admin/users":
                     self.require_admin(conn)
                     return self.send_json(list_admin_users(conn))
+                if parsed.path == "/api/admin/server":
+                    self.require_admin(conn)
+                    return self.send_json(server_details())
                 if parsed.path == "/api/admin/logs":
                     self.require_admin(conn)
                     params = urllib.parse.parse_qs(parsed.query)
@@ -8298,6 +9093,14 @@ class Handler(SimpleHTTPRequestHandler):
                 match = re.match(r"^/api/cards/([^/]+)/scryfall-json$", parsed.path)
                 if match:
                     return self.send_json(scryfall_card_json(urllib.parse.unquote(match.group(1))))
+                match = re.match(r"^/api/cards/([^/]+)/posts$", parsed.path)
+                if match:
+                    params = urllib.parse.parse_qs(parsed.query)
+                    return self.send_json(profile_posts_for_card(
+                        conn,
+                        urllib.parse.unquote(match.group(1)),
+                        params.get("variant", [None])[0],
+                    ))
                 match = re.match(r"^/api/cards/([^/]+)/deck-references$", parsed.path)
                 if match:
                     self.require_user(conn)
@@ -8378,6 +9181,14 @@ class Handler(SimpleHTTPRequestHandler):
                 match = re.match(r"^/api/stores/([^/]+)$", parsed.path)
                 if match:
                     return self.send_json(shared_store(conn, urllib.parse.unquote(match.group(1))))
+                match = re.match(r"^/api/users/profile/([^/]+)$", parsed.path)
+                if match:
+                    user = self.current_user(conn)
+                    return self.send_json(public_user_profile(
+                        conn,
+                        urllib.parse.unquote(match.group(1)),
+                        user["id"] if user else None,
+                    ))
                 if parsed.path == "/api/shared-favorites":
                     user = self.require_user(conn)
                     return self.send_json({
@@ -8432,10 +9243,11 @@ class Handler(SimpleHTTPRequestHandler):
             or re.match(r"^/sets/shared/[^/]+/[^/]+/?$", parsed.path)
             or re.match(r"^/card/[^/]+/[^/]+/?$", parsed.path)
             or re.match(r"^/stores/[^/]+/?$", parsed.path)
+            or re.match(r"^/user/[^/]+/?$", parsed.path)
             or re.match(r"^/favorites/shared/?$", parsed.path)
             or re.match(r"^/verify-email/[^/]+/?$", parsed.path)
             or re.match(r"^/reset-password/[^/]+/?$", parsed.path)
-            or re.match(r"^/(dashboard|favorites|collection|sets|decks|browse-decks|containers|missing-list|for-sale|store-front|wishlist|notifications|admin|search|import)/?$", parsed.path)
+            or re.match(r"^/(dashboard|favorites|collection|sets|decks|browse-decks|containers|missing-list|for-sale|store-front|wishlist|notifications|admin|settings|search|import)/?$", parsed.path)
         ):
             self.path = "/index.html"
         return super().do_GET()
@@ -8603,6 +9415,22 @@ class Handler(SimpleHTTPRequestHandler):
                 if match:
                     user = self.require_user(conn)
                     return self.send_json(create_set_missing_wishlist(conn, user["id"], urllib.parse.unquote(match.group(1)).lower()), HTTPStatus.CREATED)
+                match = re.match(r"^/api/users/profile/([^/]+)/friend$", parsed.path)
+                if match:
+                    user = self.require_user(conn)
+                    return self.send_json(add_profile_friend(conn, user["id"], urllib.parse.unquote(match.group(1))))
+                match = re.match(r"^/api/users/profile/([^/]+)/wall$", parsed.path)
+                if match:
+                    user = self.require_user(conn)
+                    return self.send_json(add_profile_wall_message(conn, user["id"], urllib.parse.unquote(match.group(1)), self.read_json()), HTTPStatus.CREATED)
+                match = re.match(r"^/api/users/profile/([^/]+)/posts$", parsed.path)
+                if match:
+                    user = self.require_user(conn)
+                    return self.send_json(add_profile_post(conn, user["id"], urllib.parse.unquote(match.group(1)), self.read_json()), HTTPStatus.CREATED)
+                match = re.match(r"^/api/profile/posts/([0-9]+)/comments$", parsed.path)
+                if match:
+                    user = self.require_user(conn)
+                    return self.send_json(add_profile_post_comment(conn, user["id"], int(match.group(1)), self.read_json()), HTTPStatus.CREATED)
         except urllib.error.URLError as exc:
             LOGGER.warning("%s %s network error: %s", self.command, self.path, exc)
             return self.send_json({"error": f"Network error: {exc}"}, HTTPStatus.BAD_GATEWAY)

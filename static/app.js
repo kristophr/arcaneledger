@@ -13,6 +13,11 @@ const state = {
   unreadNotificationCount: 0,
   adminUsers: [],
   adminLogs: null,
+  adminServer: null,
+  userProfile: null,
+  activeBlogCard: null,
+  activeBlogDeck: null,
+  activeBlogListCard: null,
   ownedSetCards: [],
   ownedSets: [],
   catalogSearchAllResults: [],
@@ -153,6 +158,8 @@ const els = {
   notificationsNavDot: document.querySelector("#notificationsNavDot"),
   adminUsersList: document.querySelector("#adminUsersList"),
   adminUserCount: document.querySelector("#adminUserCount"),
+  adminServerDetails: document.querySelector("#adminServerDetails"),
+  adminServerVersion: document.querySelector("#adminServerVersion"),
   adminLogs: document.querySelector("#adminLogs"),
   adminLogMeta: document.querySelector("#adminLogMeta"),
   adminLogLineCount: document.querySelector("#adminLogLineCount"),
@@ -201,6 +208,7 @@ const els = {
   accountButton: document.querySelector("#accountButton"),
   topThemeControl: document.querySelector("#topThemeControl"),
   topThemeSelect: document.querySelector("#topThemeSelect"),
+  myProfileButton: document.querySelector("#myProfileButton"),
   logoutButton: document.querySelector("#logoutButton"),
   importStatus: document.querySelector("#importStatus"),
   jsonImportFile: document.querySelector("#jsonImportFile"),
@@ -387,6 +395,20 @@ const els = {
   shareUrlInput: document.querySelector("#shareUrlInput"),
   copyShareButton: document.querySelector("#copyShareButton"),
   closeShareButton: document.querySelector("#closeShareButton"),
+  cardBlogOverlay: document.querySelector("#cardBlogOverlay"),
+  cardBlogTitle: document.querySelector("#cardBlogTitle"),
+  cardBlogForm: document.querySelector("#cardBlogForm"),
+  cardBlogPreview: document.querySelector("#cardBlogPreview"),
+  cardBlogStatus: document.querySelector("#cardBlogStatus"),
+  closeCardBlogButton: document.querySelector("#closeCardBlogButton"),
+  cancelCardBlogButton: document.querySelector("#cancelCardBlogButton"),
+  cardBlogListOverlay: document.querySelector("#cardBlogListOverlay"),
+  cardBlogListPreview: document.querySelector("#cardBlogListPreview"),
+  cardBlogList: document.querySelector("#cardBlogList"),
+  cardBlogListStatus: document.querySelector("#cardBlogListStatus"),
+  closeCardBlogListButton: document.querySelector("#closeCardBlogListButton"),
+  dismissCardBlogListButton: document.querySelector("#dismissCardBlogListButton"),
+  writeCardBlogFromListButton: document.querySelector("#writeCardBlogFromListButton"),
   deckJsonOverlay: document.querySelector("#deckJsonOverlay"),
   deckJsonTitle: document.querySelector("#deckJsonTitle"),
   deckJsonText: document.querySelector("#deckJsonText"),
@@ -415,7 +437,16 @@ const els = {
   wishlistShareShell: document.querySelector("#wishlistShareShell"),
   containerShareShell: document.querySelector("#containerShareShell"),
   storeShareShell: document.querySelector("#storeShareShell"),
+  userProfileShell: document.querySelector("#userProfileShell"),
   cardDetailShell: document.querySelector("#cardDetailShell"),
+  editProfileButton: document.querySelector("#editProfileButton"),
+  profileOverlay: document.querySelector("#profileOverlay"),
+  profileForm: document.querySelector("#profileForm"),
+  profileImageInput: document.querySelector("#profileImageInput"),
+  profileImagePreview: document.querySelector("#profileImagePreview"),
+  profileStatus: document.querySelector("#profileStatus"),
+  closeProfileButton: document.querySelector("#closeProfileButton"),
+  cancelProfileButton: document.querySelector("#cancelProfileButton"),
   addPurchaseOverlay: document.querySelector("#addPurchaseOverlay"),
   addPurchaseForm: document.querySelector("#addPurchaseForm"),
   addPurchaseTitle: document.querySelector("#addPurchaseTitle"),
@@ -526,6 +557,9 @@ function updateAuthUi() {
   if (els.topThemeControl) {
     els.topThemeControl.hidden = !loggedIn;
   }
+  if (els.myProfileButton) {
+    els.myProfileButton.hidden = !loggedIn;
+  }
   if (els.logoutButton) {
     const icon = els.logoutButton.querySelector("[aria-hidden='true']");
     const label = els.logoutButton.querySelector(".auth-command-label");
@@ -543,6 +577,21 @@ function updateAuthUi() {
     els.settingsAccountEmail.textContent = loggedIn ? state.user.email : "Not logged in";
   }
   updateNotificationsDot();
+}
+
+function openMyProfile() {
+  if (!state.user) {
+    openAuthModal("login", "Log in to view your profile.");
+    return;
+  }
+  const slug = state.user.profile_slug || "";
+  if (!slug) {
+    activatePage("settings", { push: true });
+    setStatus("Save a display name before opening your profile.", "error", els.settingsPageStatus);
+    return;
+  }
+  window.history.pushState({}, "", `/user/${encodeURIComponent(slug)}`);
+  loadUserProfile(slug);
 }
 
 function syncSettingsFromUser(user) {
@@ -739,6 +788,7 @@ async function logout() {
   state.unreadNotificationCount = 0;
   state.adminUsers = [];
   state.adminLogs = null;
+  state.adminServer = null;
   state.ownedSetCards = [];
   state.ownedSets = [];
   state.activeWishlist = null;
@@ -1425,6 +1475,7 @@ function showPage(pageName) {
   for (const command of els.navCommands) {
     command.classList.toggle("is-active", command.dataset.pageTarget === activePage);
   }
+  els.myProfileButton?.classList.toggle("is-active", pageName === "user-profile");
 }
 
 function pagePath(pageName) {
@@ -1666,6 +1717,11 @@ function containerRouteId() {
 
 function storeRouteId() {
   const match = window.location.pathname.match(/^\/stores\/([^/]+)\/?$/);
+  return match ? decodeURIComponent(match[1]) : "";
+}
+
+function userProfileRoute() {
+  const match = window.location.pathname.match(/^\/user\/([^/]+)\/?$/);
   return match ? decodeURIComponent(match[1]) : "";
 }
 
@@ -3171,12 +3227,15 @@ async function loadAdmin() {
     setStatus("Admin access required.", "error", els.adminStatus);
     return;
   }
-  const [users, logs] = await Promise.all([
+  const [users, server, logs] = await Promise.all([
     api("/api/admin/users"),
+    api("/api/admin/server"),
     loadAdminLogs(false),
   ]);
   state.adminUsers = users.users || [];
+  state.adminServer = server;
   renderAdminUsers();
+  renderAdminServer();
   renderAdminLogs();
 }
 
@@ -3281,6 +3340,65 @@ function renderAdminLogs() {
   }
 }
 
+function renderAdminServer() {
+  if (!els.adminServerDetails) return;
+  const data = state.adminServer || {};
+  const load = Array.isArray(data.load_average) && data.load_average.length
+    ? data.load_average.map((value) => Number(value || 0).toFixed(2)).join(" / ")
+    : "Unavailable";
+  const memory = data.system_memory || {};
+  const disk = data.disk || {};
+  const rows = [
+    ["App version", data.app_version || "Unknown"],
+    ["Uptime", formatDuration(data.uptime_seconds || 0)],
+    ["Host", data.host || "Unknown"],
+    ["Platform", data.platform || "Unknown"],
+    ["Python", data.python_version || "Unknown"],
+    ["Process", `PID ${data.pid || "?"} · ${formatBytes(data.process_memory_bytes || 0)} memory`],
+    ["CPU", `${integer.format(data.cpu_count || 0)} cores · load ${load}`],
+    ["System memory", memory.total_bytes ? `${formatBytes(memory.used_bytes || 0)} used / ${formatBytes(memory.total_bytes || 0)} total${memory.available_bytes ? ` · ${formatBytes(memory.available_bytes)} available` : ""}` : "Unavailable"],
+    ["Data disk", disk.total_bytes ? `${formatBytes(disk.used_bytes || 0)} used / ${formatBytes(disk.total_bytes || 0)} total · ${formatBytes(disk.free_bytes || 0)} free` : "Unavailable"],
+    ["Database", `${formatBytes(data.database?.size_bytes || 0)} · ${data.database?.path || ""}`],
+    ["Logs", `${formatBytes(data.logs?.size || 0)} · ${data.logs?.path || ""}`],
+  ];
+  if (els.adminServerVersion) {
+    els.adminServerVersion.textContent = data.app_version || "";
+  }
+  els.adminServerDetails.innerHTML = rows.map(([label, value]) => `
+    <div>
+      <dt>${escapeHtml(label)}</dt>
+      <dd>${escapeHtml(value)}</dd>
+    </div>
+  `).join("");
+}
+
+function formatBytes(value) {
+  const bytes = Number(value || 0);
+  if (!bytes) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let size = bytes;
+  let index = 0;
+  while (size >= 1024 && index < units.length - 1) {
+    size /= 1024;
+    index += 1;
+  }
+  const decimals = size >= 10 || index === 0 ? 0 : 1;
+  return `${size.toFixed(decimals)} ${units[index]}`;
+}
+
+function formatDuration(seconds) {
+  let remaining = Math.max(0, Number(seconds || 0));
+  const days = Math.floor(remaining / 86400);
+  remaining %= 86400;
+  const hours = Math.floor(remaining / 3600);
+  remaining %= 3600;
+  const minutes = Math.floor(remaining / 60);
+  if (days) return `${days}d ${hours}h ${minutes}m`;
+  if (hours) return `${hours}h ${minutes}m`;
+  if (minutes) return `${minutes}m`;
+  return `${Math.floor(remaining)}s`;
+}
+
 function salePayloadFromRow(row) {
   const quantityInput = row.querySelector('input[name="quantity"]');
   const priceInput = row.querySelector('input[name="asking_price"]');
@@ -3371,6 +3489,7 @@ function renderCards(cards, target = els.cardsGrid, options = {}) {
     const containerButton = node.querySelector(".container-membership-button");
     const scryfallButton = node.querySelector(".scryfall-button");
     const shareButton = node.querySelector(".share-button");
+    const blogButton = node.querySelector(".blog-card-button");
     const tileBackgroundImage = cssImageUrl(card.image_normal || card.image_small || "");
     node.style.setProperty("--card-tile-bg-image", tileBackgroundImage);
     if (tileBackground) tileBackground.style.backgroundImage = tileBackgroundImage;
@@ -3455,11 +3574,13 @@ function renderCards(cards, target = els.cardsGrid, options = {}) {
       refreshButton.hidden = true;
       editButton.hidden = true;
       shareButton.hidden = true;
+      blogButton.hidden = true;
       deckButton.hidden = true;
       containerButton.hidden = true;
     } else {
       wireRefreshCardButton(refreshButton, card);
       editButton.addEventListener("click", () => openCardDetail(card));
+      blogButton.addEventListener("click", () => openCardBlogModal(card));
       wireDeckMembershipButton(deckButton, card, target === els.cardsGrid);
       wireContainerMembershipButton(containerButton, card, target === els.cardsGrid);
       wireCardDetailNavigation(node, card);
@@ -3505,6 +3626,7 @@ function renderCardList(cards, target = els.cardsGrid, options = {}) {
     const refreshButton = node.querySelector(".refresh-card-button");
     const editButton = node.querySelector(".edit-button");
     const shareButton = node.querySelector(".share-button");
+    const blogButton = node.querySelector(".blog-card-button");
     const wishlistButton = node.querySelector(".wishlist-button");
     const deleteButton = node.querySelector(".delete-card-button");
 
@@ -3537,10 +3659,12 @@ function renderCardList(cards, target = els.cardsGrid, options = {}) {
       refreshButton.hidden = true;
       editButton.hidden = true;
       shareButton.hidden = true;
+      blogButton.hidden = true;
       deleteButton.hidden = true;
     } else {
       wireRefreshCardButton(refreshButton, card);
       editButton.addEventListener("click", () => openCardDetail(card));
+      blogButton.addEventListener("click", () => openCardBlogModal(card));
       wireShareButton(shareButton, card);
       wireDeleteCardButton(deleteButton, card);
       wireCardDetailNavigation(node, card);
@@ -3688,6 +3812,129 @@ function openSetShareModal(set) {
 
 function openFavoritesShareModal() {
   openShareUrl("Favorites", shareUrlForFavorites());
+}
+
+function cardBlogPreviewHtml(card) {
+  if (!card) return "";
+  return `
+    <a class="card-blog-card" href="${escapeHtml(cardDetailUrl(card))}">
+      <img src="${escapeHtml(card.image_small || card.image_normal || "")}" alt="${escapeHtml(cardTitle(card))}">
+      <span>
+        <strong>${escapeHtml(cardTitle(card))}</strong>
+        <small>${escapeHtml(card.set_name || "")} #${escapeHtml(card.collector_number || "")} - ${escapeHtml(card.variant || "Normal")}</small>
+        <small>${escapeHtml(card.type_line || "")}</small>
+      </span>
+    </a>
+  `;
+}
+
+function deckBlogPreviewHtml(deck) {
+  if (!deck) return "";
+  const images = uniqueDeckPreviewImages(deck);
+  return `
+    <a class="card-blog-card deck-blog-card" href="${escapeHtml(deck.deck_url || `/decks/${encodeURIComponent(deck.share_id || deck.id || "")}`)}">
+      <span class="deck-blog-thumb">
+        ${images.length ? images.slice(0, 3).map((src) => `<img src="${escapeHtml(src)}" alt="">`).join("") : '<span class="deck-icon" aria-hidden="true"></span>'}
+      </span>
+      <span>
+        <strong>${escapeHtml(deck.name || "Deck")}</strong>
+        <small>${integer.format(deck.card_count || 0)} cards - ${integer.format(deck.unique_card_count || 0)} unique</small>
+        ${deck.description ? `<small>${escapeHtml(deck.description)}</small>` : ""}
+      </span>
+    </a>
+  `;
+}
+
+function openCardBlogModal(card, presetText = "") {
+  if (!state.user) {
+    openAuthModal("login", "Log in to write a blog post.");
+    return;
+  }
+  state.activeBlogCard = card;
+  state.activeBlogDeck = null;
+  if (els.cardBlogTitle) els.cardBlogTitle.textContent = "Write About This Card";
+  if (els.cardBlogPreview) {
+    els.cardBlogPreview.innerHTML = cardBlogPreviewHtml(card);
+  }
+  if (els.cardBlogForm) {
+    els.cardBlogForm.body.value = presetText;
+  }
+  setStatus("", "", els.cardBlogStatus);
+  els.cardBlogOverlay.hidden = false;
+  document.body.classList.add("modal-open");
+  els.cardBlogForm?.body?.focus();
+}
+
+function openDeckBlogModal(deck, presetText = "") {
+  if (!state.user) {
+    openAuthModal("login", "Log in to write a blog post.");
+    return;
+  }
+  state.activeBlogCard = null;
+  state.activeBlogDeck = deck;
+  if (els.cardBlogTitle) els.cardBlogTitle.textContent = "Write About This Deck";
+  if (els.cardBlogPreview) {
+    els.cardBlogPreview.innerHTML = deckBlogPreviewHtml(deck);
+  }
+  if (els.cardBlogForm) {
+    els.cardBlogForm.body.value = presetText;
+  }
+  setStatus("", "", els.cardBlogStatus);
+  els.cardBlogOverlay.hidden = false;
+  document.body.classList.add("modal-open");
+  els.cardBlogForm?.body?.focus();
+}
+
+function closeCardBlogModal() {
+  els.cardBlogOverlay.hidden = true;
+  document.body.classList.remove("modal-open");
+  state.activeBlogCard = null;
+  state.activeBlogDeck = null;
+  els.cardBlogForm?.reset();
+  if (els.cardBlogPreview) els.cardBlogPreview.innerHTML = "";
+  setStatus("", "", els.cardBlogStatus);
+}
+
+function cardBlogPostRowHtml(post) {
+  return `
+    <article class="card-blog-row">
+      <div class="profile-feed-author">
+        ${profileAvatarHtml(post.author)}
+        <div>
+          <strong>${profileActorLink(post.author)}</strong>
+          <span>${escapeHtml(formatActivityDate(post.created_at))}</span>
+        </div>
+      </div>
+      <p>${escapeHtml(post.body || "")}</p>
+    </article>
+  `;
+}
+
+async function openCardBlogListModal(card) {
+  state.activeBlogListCard = card;
+  els.cardBlogListPreview.innerHTML = cardBlogPreviewHtml(card);
+  els.cardBlogList.innerHTML = '<div class="empty-state compact-empty">Loading blog posts...</div>';
+  setStatus("", "", els.cardBlogListStatus);
+  els.cardBlogListOverlay.hidden = false;
+  document.body.classList.add("modal-open");
+  try {
+    const result = await api(`/api/cards/${encodeURIComponent(card.scryfall_id || card.card_id)}/posts?variant=${encodeURIComponent(card.variant || "Normal")}`, { promptLogin: false });
+    const posts = result.posts || [];
+    els.cardBlogList.innerHTML = posts.length
+      ? posts.map(cardBlogPostRowHtml).join("")
+      : '<div class="empty-state compact-empty">No blog posts have been written about this card yet.</div>';
+  } catch (error) {
+    els.cardBlogList.innerHTML = `<div class="empty-state compact-empty">${escapeHtml(error.message)}</div>`;
+  }
+}
+
+function closeCardBlogListModal() {
+  els.cardBlogListOverlay.hidden = true;
+  document.body.classList.remove("modal-open");
+  state.activeBlogListCard = null;
+  if (els.cardBlogListPreview) els.cardBlogListPreview.innerHTML = "";
+  if (els.cardBlogList) els.cardBlogList.innerHTML = "";
+  setStatus("", "", els.cardBlogListStatus);
 }
 
 function deckMemberships(card) {
@@ -4318,6 +4565,76 @@ function renderSettingsPage() {
   }
 }
 
+function renderProfileImagePreview(dataUrl) {
+  if (!els.profileImagePreview) return;
+  if (!dataUrl) {
+    els.profileImagePreview.innerHTML = '<span>No profile picture selected.</span>';
+    return;
+  }
+  els.profileImagePreview.innerHTML = `<img src="${escapeHtml(dataUrl)}" alt="Profile picture preview"><button class="secondary-button compact-button" type="button">Remove</button>`;
+  els.profileImagePreview.querySelector("button")?.addEventListener("click", () => {
+    if (els.profileForm) els.profileForm.profile_image.value = "";
+    if (els.profileImageInput) els.profileImageInput.value = "";
+    renderProfileImagePreview("");
+  });
+}
+
+function openProfileModal() {
+  if (!els.profileOverlay || !els.profileForm) return;
+  const user = state.user || {};
+  els.profileForm.name.value = user.name || "";
+  els.profileForm.about_me.value = user.about_me || "";
+  els.profileForm.contact_discord.value = user.contact_discord || "";
+  els.profileForm.contact_instagram.value = user.contact_instagram || "";
+  els.profileForm.contact_bluesky.value = user.contact_bluesky || "";
+  els.profileForm.contact_threads.value = user.contact_threads || "";
+  els.profileForm.profile_image.value = user.profile_image || "";
+  if (els.profileImageInput) els.profileImageInput.value = "";
+  renderProfileImagePreview(user.profile_image || "");
+  setStatus("", "", els.profileStatus);
+  els.profileOverlay.hidden = false;
+  document.body.classList.add("modal-open");
+  els.profileForm.name.focus();
+}
+
+function closeProfileModal() {
+  if (!els.profileOverlay) return;
+  els.profileOverlay.hidden = true;
+  document.body.classList.remove("modal-open");
+  if (els.profileForm) els.profileForm.reset();
+  if (els.profileImageInput) els.profileImageInput.value = "";
+  renderProfileImagePreview("");
+}
+
+function profilePayloadFromForm() {
+  const formValues = Object.fromEntries(new FormData(els.profileForm).entries());
+  return userSettingsPayload({
+    name: formValues.name || "",
+    about_me: formValues.about_me || "",
+    profile_image: formValues.profile_image || "",
+    contact_discord: formValues.contact_discord || "",
+    contact_instagram: formValues.contact_instagram || "",
+    contact_bluesky: formValues.contact_bluesky || "",
+    contact_threads: formValues.contact_threads || "",
+  });
+}
+
+async function readProfileImageFile(file) {
+  if (!file) return "";
+  if (!/^image\/(png|jpe?g|webp|gif)$/i.test(file.type || "")) {
+    throw new Error("Choose a PNG, JPG, WebP, or GIF image.");
+  }
+  if (file.size > 650 * 1024) {
+    throw new Error("Choose an image under 650 KB.");
+  }
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener("load", () => resolve(String(reader.result || "")));
+    reader.addEventListener("error", () => reject(new Error("Could not read that image.")));
+    reader.readAsDataURL(file);
+  });
+}
+
 function userSettingsPayload(overrides = {}) {
   const settings = state.settings || defaultSettings();
   const user = state.user || {};
@@ -4329,6 +4646,11 @@ function userSettingsPayload(overrides = {}) {
     contact_telegram: user.contact_telegram || "",
     contact_discord: user.contact_discord || "",
     contact_website: user.contact_website || "",
+    contact_instagram: user.contact_instagram || "",
+    contact_bluesky: user.contact_bluesky || "",
+    contact_threads: user.contact_threads || "",
+    about_me: user.about_me || "",
+    profile_image: user.profile_image || "",
     language: settings.language || "en",
     theme: settings.theme || "light",
     ...overrides,
@@ -4356,10 +4678,11 @@ function renderDecks(decks) {
     return;
   }
   for (const deck of decks) {
-    const item = document.createElement("button");
+    const item = document.createElement("article");
     const previewImages = uniqueDeckPreviewImages(deck);
     item.className = `deck-card${previewImages.length ? " has-deck-preview" : ""}`;
-    item.type = "button";
+    item.tabIndex = 0;
+    item.setAttribute("role", "button");
     item.dataset.deckId = deck.id;
     item.setAttribute("aria-label", `Open ${deck.name}`);
     item.innerHTML = `
@@ -4370,11 +4693,26 @@ function renderDecks(decks) {
       </div>
       <strong>${integer.format(deck.card_count || 0)}</strong>
       <span>${integer.format(deck.unique_card_count || 0)} unique cards assigned</span>
+      <button class="deck-blog-button" type="button" aria-label="Write blog post about ${escapeAttribute(deck.name || "deck")}" title="Write blog post"><span class="blog-post-icon" aria-hidden="true"></span></button>
     `;
-    item.addEventListener("click", () => {
+    const openDeck = () => {
       openDeckPage(deck.id).catch((error) => {
         els.decksStatus.textContent = error.message;
       });
+    };
+    item.addEventListener("click", (event) => {
+      if (event.target.closest("button")) return;
+      openDeck();
+    });
+    item.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      if (event.target.closest("button")) return;
+      event.preventDefault();
+      openDeck();
+    });
+    item.querySelector(".deck-blog-button")?.addEventListener("click", (event) => {
+      event.stopPropagation();
+      openDeckBlogModal(deck);
     });
     els.decksGrid.appendChild(item);
   }
@@ -4735,6 +5073,7 @@ function renderDeckEditor(deck) {
             <button class="primary-button" type="submit">Save</button>
             <button class="share-button" type="button" data-deck-action="email" aria-label="Email deck" title="Email deck"><span class="send-icon" aria-hidden="true"></span></button>
             <button class="share-button" type="button" data-deck-action="share" aria-label="Share deck" title="Share deck">&#8599;</button>
+            <button class="share-button" type="button" data-deck-action="blog" aria-label="Write blog post about deck" title="Write blog post"><span class="blog-post-icon" aria-hidden="true"></span></button>
             <button class="share-button deck-json-button" type="button" data-deck-action="json" aria-label="Copy deck JSON" title="Copy deck JSON">{}</button>
             <button class="share-button" type="button" data-deck-action="full-json" aria-label="Export full deck JSON" title="Export full deck JSON"><span class="extract-json-icon" aria-hidden="true"></span></button>
           </div>
@@ -4779,6 +5118,7 @@ function renderDeckEditor(deck) {
   els.deckEditorShell.querySelector('[data-deck-action="add-card"]').addEventListener("click", openDeckCardSearchModal);
   els.deckEditorShell.querySelector('[data-deck-action="email"]').addEventListener("click", () => openEmailDeckModal(state.activeDeck));
   els.deckEditorShell.querySelector('[data-deck-action="share"]').addEventListener("click", () => openDeckShareModal(state.activeDeck));
+  els.deckEditorShell.querySelector('[data-deck-action="blog"]').addEventListener("click", () => openDeckBlogModal(state.activeDeck));
   els.deckEditorShell.querySelector('[data-deck-action="json"]').addEventListener("click", () => openDeckJsonModal(state.activeDeck, false));
   els.deckEditorShell.querySelector('[data-deck-action="full-json"]').addEventListener("click", () => openDeckJsonModal(state.activeDeck, true));
   els.deckEditorShell.querySelector('[data-deck-action="delete"]').addEventListener("click", () => {
@@ -5808,9 +6148,14 @@ function renderSharedCard(card) {
   const specialClass = isSpecialVariant(card.variant) ? " is-special" : "";
   els.sharedCardShell.innerHTML = `
     <article class="shared-card${specialClass}">
-      <a class="shared-card-art" href="${escapeHtml(card.scryfall_uri || "#")}" target="_blank" rel="noreferrer">
-        <img src="${escapeHtml(card.image_normal || card.image_small || "")}" alt="${escapeHtml(cardTitle(card))}">
-      </a>
+      <div class="card-detail-media">
+        <a class="shared-card-art" href="${escapeHtml(card.scryfall_uri || "#")}" target="_blank" rel="noreferrer">
+          <img src="${escapeHtml(card.image_normal || card.image_small || "")}" alt="${escapeHtml(cardTitle(card))}">
+        </a>
+        <div class="detail-storage-actions shared-card-blog-actions">
+          <button class="detail-storage-button detail-blog-posts-button" type="button" aria-label="View blog posts about this card" title="View blog posts"><span class="blog-post-icon" aria-hidden="true"></span></button>
+        </div>
+      </div>
       <div class="shared-card-copy">
         <p class="eyebrow">Shared from FoilFolio</p>
         <h2>${escapeHtml(cardTitle(card))}</h2>
@@ -5842,6 +6187,9 @@ function renderSharedCard(card) {
       </aside>
     </article>
   `;
+  els.sharedCardShell.querySelector(".detail-blog-posts-button")?.addEventListener("click", () => {
+    openCardBlogListModal(card).catch((error) => setStatus(error.message, "error"));
+  });
 }
 
 function renderMovementHistory(movements) {
@@ -6135,15 +6483,16 @@ function renderCardDetail(card) {
           <a class="shared-card-art" href="${escapeHtml(card.scryfall_uri || "#")}" target="_blank" rel="noreferrer" title="Open on Scryfall">
             <img src="${escapeHtml(card.image_normal || card.image_small || "")}" alt="${escapeHtml(cardTitle(card))}">
           </a>
-          ${owned ? `<div class="detail-storage-actions">
-            <button class="detail-storage-button detail-decks-button ${hasDecks ? "is-linked" : "is-add"}" type="button" aria-label="${hasDecks ? "View decks" : "Add to deck"}" title="${hasDecks ? "View decks" : "Add to deck"}">
+          <div class="detail-storage-actions">
+            ${owned ? `<button class="detail-storage-button detail-decks-button ${hasDecks ? "is-linked" : "is-add"}" type="button" aria-label="${hasDecks ? "View decks" : "Add to deck"}" title="${hasDecks ? "View decks" : "Add to deck"}">
               ${hasDecks ? '<span class="deck-icon" aria-hidden="true"></span>' : '<span class="add-to-deck-icon" aria-hidden="true"></span>'}
             </button>
             <button class="detail-storage-button detail-containers-button ${hasContainers ? "is-stored" : "is-missing-storage"}" type="button" aria-label="${hasContainers ? "View container" : "Not in a container"}" title="${hasContainers ? "View container" : "Not in a container - add to container"}">
               ${hasContainers ? '<span class="storage-check-icon" aria-hidden="true"></span>' : '<span class="storage-x-icon" aria-hidden="true"></span>'}
             </button>
-            ${listedForSale ? '<button class="detail-storage-button detail-store-button" type="button" aria-label="Manage sale listing" title="Manage sale listing"><span class="sale-icon" aria-hidden="true"></span></button>' : ""}
-          </div>` : ""}
+            ${listedForSale ? '<button class="detail-storage-button detail-store-button" type="button" aria-label="Manage sale listing" title="Manage sale listing"><span class="sale-icon" aria-hidden="true"></span></button>' : ""}` : ""}
+            <button class="detail-storage-button detail-blog-posts-button" type="button" aria-label="View blog posts about this card" title="View blog posts"><span class="blog-post-icon" aria-hidden="true"></span></button>
+          </div>
         </div>
         <div class="shared-card-copy">
           <p class="eyebrow">${owned ? "Collection card" : "Catalog card"}</p>
@@ -6240,6 +6589,9 @@ function renderCardDetail(card) {
     refreshCardDetailMetadata(event.currentTarget, card).catch((error) => setStatus(error.message, "error"));
   });
   els.cardDetailShell.querySelector(".detail-for-sale-button")?.addEventListener("click", () => openSaleModalForCardDetail(card));
+  els.cardDetailShell.querySelector(".detail-blog-posts-button")?.addEventListener("click", () => {
+    openCardBlogListModal(card).catch((error) => setStatus(error.message, "error"));
+  });
   els.cardDetailShell.querySelector(".detail-share-button").addEventListener("click", () => openShareModal(card));
   els.cardDetailShell.querySelector(".detail-email-button").addEventListener("click", () => openEmailCardModal(card));
   els.cardDetailShell.querySelector(".detail-delete-button")?.addEventListener("click", () => {
@@ -6876,6 +7228,302 @@ function renderSharedStore(store) {
   `;
 }
 
+function profileAvatarHtml(actor, className = "profile-mini-avatar") {
+  const name = actor?.name || "User";
+  if (actor?.profile_image) {
+    return `<span class="${className}"><img src="${escapeHtml(actor.profile_image)}" alt="${escapeHtml(name)} profile picture"></span>`;
+  }
+  return `<span class="${className}">${escapeHtml(name.slice(0, 1).toUpperCase())}</span>`;
+}
+
+function profileActorLink(actor) {
+  const name = escapeHtml(actor?.name || "Collector");
+  const href = actor?.profile_url || (actor?.profile_slug ? `/user/${encodeURIComponent(actor.profile_slug)}` : "");
+  return href ? `<a href="${escapeHtml(href)}">${name}</a>` : `<span>${name}</span>`;
+}
+
+function formatActivityDate(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return formatDate(value);
+  return date.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
+
+function profileCommentRows(comments, parentId = null) {
+  const rows = (comments || []).filter((comment) => (comment.parent_comment_id || null) === parentId);
+  if (!rows.length) return "";
+  return rows.map((comment) => `
+    <article class="profile-comment ${parentId ? "is-reply" : ""}">
+      <div class="profile-feed-author">
+        ${profileAvatarHtml(comment.author)}
+        <div>
+          <strong>${profileActorLink(comment.author)}</strong>
+          <span>${escapeHtml(formatActivityDate(comment.created_at))}</span>
+        </div>
+      </div>
+      <p>${escapeHtml(comment.body || "")}</p>
+      ${state.user ? `
+        <form class="profile-reply-form" data-post-id="${escapeHtml(comment.post_id)}" data-parent-id="${escapeHtml(comment.id)}">
+          <input name="body" type="text" maxlength="1000" placeholder="Reply">
+          <button class="secondary-button compact-button" type="submit">Reply</button>
+        </form>
+      ` : ""}
+      ${profileCommentRows(comments, comment.id)}
+    </article>
+  `).join("");
+}
+
+function profileFeedItemHtml(item) {
+  return `
+    <article class="profile-feed-item">
+      <div class="profile-feed-author">
+        ${profileAvatarHtml(item.author)}
+        <div>
+          <strong>${profileActorLink(item.author)}</strong>
+          <span>${escapeHtml(formatActivityDate(item.created_at))}</span>
+        </div>
+      </div>
+      <p>${escapeHtml(item.body || "")}</p>
+    </article>
+  `;
+}
+
+function renderUserProfile(profile) {
+  state.userProfile = profile;
+  const stats = profile.stats || {};
+  const contacts = profile.contacts || [];
+  const favorites = profile.favorites || [];
+  const decks = profile.public_decks || [];
+  const friends = profile.friends || [];
+  const wallMessages = profile.wall_messages || [];
+  const posts = profile.posts || [];
+  const contactHtml = contacts.length ? `
+    <div class="store-contact-list profile-contact-list" aria-label="Profile contact methods">
+      ${contacts.map((contact) => {
+        const value = escapeHtml(contact.value || "");
+        const label = escapeHtml(contact.label || "Contact");
+        return contact.href
+          ? `<a href="${escapeHtml(contact.href)}" target="${String(contact.href).startsWith("mailto:") ? "_self" : "_blank"}" rel="noreferrer"><strong>${label}</strong><span>${value}</span></a>`
+          : `<span><strong>${label}</strong><span>${value}</span></span>`;
+      }).join("")}
+    </div>
+  ` : "";
+  const profileImage = profile.profile_image
+    ? `<img src="${escapeHtml(profile.profile_image)}" alt="${escapeHtml(profile.name || "User")} profile picture">`
+    : `<span>${escapeHtml((profile.name || "U").slice(0, 1).toUpperCase())}</span>`;
+  const favoriteRows = favorites.length ? deckRowsHtml(favorites) : '<div class="empty-state">No public favorite cards yet.</div>';
+  const deckRows = decks.length ? `
+    <div class="profile-deck-list">
+      ${decks.map((deck) => `
+        <a class="profile-deck-card" href="${escapeHtml(deck.deck_url || `/decks/${encodeURIComponent(deck.share_id || "")}`)}">
+          ${deckPreviewImagesHtml(deck.preview_images || [])}
+          <strong>${escapeHtml(deck.name || "Deck")}</strong>
+          <span>${integer.format(deck.card_count || 0)} cards · ${integer.format(deck.unique_card_count || 0)} unique</span>
+        </a>
+      `).join("")}
+    </div>
+  ` : '<div class="empty-state">No public decks yet.</div>';
+  const friendRows = friends.length ? `
+    <div class="profile-friend-list">
+      ${friends.map((friend) => `
+        <a class="profile-friend-row" href="${escapeHtml(friend.profile_url || `/user/${encodeURIComponent(friend.profile_slug || "")}`)}">
+          ${profileAvatarHtml(friend)}
+          <span>${escapeHtml(friend.name || "Collector")}</span>
+        </a>
+      `).join("")}
+    </div>
+  ` : '<div class="empty-state compact-empty">No friends added yet.</div>';
+  const wallForm = profile.can_post_wall ? `
+    <form id="profileWallForm" class="profile-compose-form">
+      <textarea name="body" maxlength="800" rows="3" placeholder="Leave a message on ${escapeHtml(profile.name || "this profile")}'s wall."></textarea>
+      <button class="primary-button" type="submit">Post Message</button>
+    </form>
+  ` : '<div class="empty-state compact-empty">Log in to leave a wall message.</div>';
+  const wallRows = wallMessages.length ? wallMessages.map(profileFeedItemHtml).join("") : '<div class="empty-state compact-empty">No wall messages yet.</div>';
+  const postForm = profile.can_post_blog ? `
+    <form id="profilePostForm" class="profile-compose-form">
+      <textarea name="body" maxlength="2400" rows="4" placeholder="Post an update for your followers."></textarea>
+      <button class="primary-button" type="submit">Post Update</button>
+    </form>
+  ` : "";
+  const postRows = posts.length ? posts.map((post) => `
+    <article class="profile-post">
+      <div class="profile-feed-author">
+        ${profileAvatarHtml(profile)}
+        <div>
+          <strong>${escapeHtml(profile.name || "Collector")}</strong>
+          <span>${escapeHtml(formatActivityDate(post.created_at))}</span>
+        </div>
+      </div>
+      <p>${escapeHtml(post.body || "")}</p>
+      ${post.card ? `<div class="profile-post-card-link">${cardBlogPreviewHtml(post.card)}</div>` : ""}
+      ${post.deck ? `<div class="profile-post-card-link">${deckBlogPreviewHtml(post.deck)}</div>` : ""}
+      ${profile.can_comment ? `
+        <form class="profile-comment-form" data-post-id="${escapeHtml(post.id)}">
+          <input name="body" type="text" maxlength="1000" placeholder="Write a comment">
+          <button class="secondary-button compact-button" type="submit">Comment</button>
+        </form>
+      ` : ""}
+      <div class="profile-comments">
+        ${profileCommentRows(post.comments || []) || '<div class="empty-state compact-empty">No comments yet.</div>'}
+      </div>
+    </article>
+  `).join("") : '<div class="empty-state compact-empty">No blog posts yet.</div>';
+  const addFriendButton = profile.can_add_friend ? '<button id="profileAddFriendButton" class="secondary-button" type="button">Add Friend</button>' : "";
+  const alreadyFriend = profile.is_friend ? '<span class="profile-status-pill">Friend Added</span>' : "";
+  els.userProfileShell.innerHTML = `
+    <section class="user-profile-card">
+      <div class="user-profile-hero">
+        <div class="user-profile-avatar">${profileImage}</div>
+        <div>
+          <p class="eyebrow">FoilFolio profile</p>
+          <h2>${escapeHtml(profile.name || "Collector")}</h2>
+          <span>Member since ${escapeHtml(formatDate(profile.member_since || ""))}</span>
+          ${profile.about_me ? `<p>${escapeHtml(profile.about_me)}</p>` : ""}
+          ${contactHtml}
+        </div>
+      </div>
+      <div class="user-profile-stats">
+        <article><span>Cards</span><strong>${integer.format(stats.owned_quantity || 0)}</strong></article>
+        <article><span>Unique</span><strong>${integer.format(stats.unique_cards || 0)}</strong></article>
+        <article><span>Collection value</span><strong>${dollars.format(stats.collection_value || 0)}</strong></article>
+        <article><span>Public decks</span><strong>${integer.format(stats.public_deck_count || decks.length || 0)}</strong></article>
+      </div>
+      <div class="user-profile-actions">
+        ${profile.store_url ? `<a class="primary-button" href="${escapeHtml(profile.store_url)}">View Store</a>` : ""}
+        ${decks.length ? `<a class="secondary-button" href="#profileDecks">Public Decks</a>` : ""}
+        ${addFriendButton}
+        ${alreadyFriend}
+      </div>
+      <div id="profilePageStatus" class="status" aria-live="polite"></div>
+      <div class="user-profile-layout">
+        <div class="user-profile-left">
+          <section class="profile-panel">
+            <div class="panel-head">
+              <h3>Favorite Cards</h3>
+              <span>${integer.format(favorites.length)} shown</span>
+            </div>
+            <div class="deck-detail-list">${favoriteRows}</div>
+          </section>
+          <section id="profileDecks" class="profile-panel">
+            <div class="panel-head">
+              <h3>Public Decks</h3>
+              <span>${integer.format(decks.length)} shown</span>
+            </div>
+            ${deckRows}
+          </section>
+        </div>
+        <div class="user-profile-right">
+          ${profile.is_self ? `
+            <section class="profile-panel">
+              <div class="panel-head">
+                <h3>Friends</h3>
+                <span>${integer.format(friends.length)}</span>
+              </div>
+              ${friendRows}
+            </section>
+          ` : ""}
+          <section class="profile-panel profile-wall-panel">
+            <div class="panel-head">
+              <h3>Wall</h3>
+              <span>${integer.format(wallMessages.length)} messages</span>
+            </div>
+            ${wallForm}
+            <div class="profile-feed-list">${wallRows}</div>
+          </section>
+          <section class="profile-panel profile-post-panel">
+            <div class="panel-head">
+              <h3>Blog Posts</h3>
+              <span>${integer.format(posts.length)} posts</span>
+            </div>
+            ${postForm}
+            <div class="profile-post-list">${postRows}</div>
+          </section>
+        </div>
+      </div>
+    </section>
+  `;
+  wireUserProfileInteractions(profile);
+}
+
+function profileStatusTarget() {
+  return document.querySelector("#profilePageStatus");
+}
+
+async function refreshRenderedUserProfile(result) {
+  if (result?.profile) {
+    renderUserProfile(result.profile);
+    return;
+  }
+  if (state.userProfile?.profile_slug) {
+    await loadUserProfile(state.userProfile.profile_slug);
+  }
+}
+
+function wireUserProfileInteractions(profile) {
+  const slug = profile.profile_slug || "";
+  document.querySelector("#profileAddFriendButton")?.addEventListener("click", async () => {
+    try {
+      const result = await api(`/api/users/profile/${encodeURIComponent(slug)}/friend`, {
+        method: "POST",
+        body: JSON.stringify({}),
+      });
+      await refreshRenderedUserProfile(result);
+      setStatus("Friend added.", "success", profileStatusTarget());
+    } catch (error) {
+      setStatus(error.message, "error", profileStatusTarget());
+    }
+  });
+  document.querySelector("#profileWallForm")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    try {
+      const result = await api(`/api/users/profile/${encodeURIComponent(slug)}/wall`, {
+        method: "POST",
+        body: JSON.stringify(Object.fromEntries(new FormData(form).entries())),
+      });
+      await refreshRenderedUserProfile(result);
+      setStatus("Wall message posted.", "success", profileStatusTarget());
+    } catch (error) {
+      setStatus(error.message, "error", profileStatusTarget());
+    }
+  });
+  document.querySelector("#profilePostForm")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    try {
+      const result = await api(`/api/users/profile/${encodeURIComponent(slug)}/posts`, {
+        method: "POST",
+        body: JSON.stringify(Object.fromEntries(new FormData(form).entries())),
+      });
+      await refreshRenderedUserProfile(result);
+      setStatus("Blog post published.", "success", profileStatusTarget());
+    } catch (error) {
+      setStatus(error.message, "error", profileStatusTarget());
+    }
+  });
+  for (const form of document.querySelectorAll(".profile-comment-form, .profile-reply-form")) {
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const postId = form.dataset.postId;
+      const payload = Object.fromEntries(new FormData(form).entries());
+      if (form.dataset.parentId) {
+        payload.parent_comment_id = form.dataset.parentId;
+      }
+      try {
+        const result = await api(`/api/profile/posts/${encodeURIComponent(postId)}/comments`, {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+        await refreshRenderedUserProfile(result);
+        setStatus("Reply posted.", "success", profileStatusTarget());
+      } catch (error) {
+        setStatus(error.message, "error", profileStatusTarget());
+      }
+    });
+  }
+}
+
 function renderSharedFavorites(payload) {
   const cards = payload.cards || [];
   const decks = payload.decks || [];
@@ -6970,6 +7618,17 @@ async function loadSharedStore(shareId) {
   }
 }
 
+async function loadUserProfile(slug) {
+  showPage("user-profile");
+  els.userProfileShell.innerHTML = '<div class="empty-state">Loading profile...</div>';
+  try {
+    const profile = await api(`/api/users/profile/${encodeURIComponent(slug)}`);
+    renderUserProfile(profile);
+  } catch (error) {
+    els.userProfileShell.innerHTML = `<div class="empty-state">${escapeHtml(error.message)}</div>`;
+  }
+}
+
 async function loadSharedFavorites() {
   showPage("favorites-share");
   els.favoritesShareShell.innerHTML = '<div class="empty-state">Loading shared favorites...</div>';
@@ -7057,11 +7716,13 @@ function wireEvents() {
     event.returnValue = "";
   });
   for (const command of els.navCommands) {
+    if (command.id === "myProfileButton") continue;
     command.addEventListener("click", () => {
       const page = command.dataset.pageTarget || "dashboard";
       activatePage(page, { push: true });
     });
   }
+  els.myProfileButton?.addEventListener("click", openMyProfile);
   window.addEventListener("popstate", () => {
     const routePage = appPageRoute();
     if (routePage) {
@@ -7083,6 +7744,11 @@ function wireEvents() {
     const setCode = setRouteCode();
     if (setCode) {
       loadSetPage(setCode);
+      return;
+    }
+    const profileSlug = userProfileRoute();
+    if (profileSlug) {
+      loadUserProfile(profileSlug);
       return;
     }
     const deckId = deckRouteId();
@@ -7605,6 +8271,52 @@ function wireEvents() {
       closeShareModal();
     }
   });
+  els.closeCardBlogButton?.addEventListener("click", closeCardBlogModal);
+  els.cancelCardBlogButton?.addEventListener("click", closeCardBlogModal);
+  els.cardBlogOverlay?.addEventListener("click", (event) => {
+    if (event.target === els.cardBlogOverlay) {
+      closeCardBlogModal();
+    }
+  });
+  els.cardBlogForm?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const card = state.activeBlogCard;
+    const deck = state.activeBlogDeck;
+    if ((!card && !deck) || !state.user?.profile_slug) return;
+    try {
+      const payload = Object.fromEntries(new FormData(els.cardBlogForm).entries());
+      if (card) {
+        payload.card_id = card.scryfall_id || card.card_id;
+        payload.variant = card.variant || "Normal";
+      }
+      if (deck) {
+        payload.deck_id = deck.id;
+      }
+      const result = await api(`/api/users/profile/${encodeURIComponent(state.user.profile_slug)}/posts`, {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      closeCardBlogModal();
+      setStatus(`Blog post saved for ${card ? cardTitle(card) : deck.name || "deck"}.`, "success");
+      if (state.userProfile?.profile_slug === state.user.profile_slug && result.profile) {
+        renderUserProfile(result.profile);
+      }
+    } catch (error) {
+      setStatus(error.message, "error", els.cardBlogStatus);
+    }
+  });
+  els.closeCardBlogListButton?.addEventListener("click", closeCardBlogListModal);
+  els.dismissCardBlogListButton?.addEventListener("click", closeCardBlogListModal);
+  els.cardBlogListOverlay?.addEventListener("click", (event) => {
+    if (event.target === els.cardBlogListOverlay) {
+      closeCardBlogListModal();
+    }
+  });
+  els.writeCardBlogFromListButton?.addEventListener("click", () => {
+    const card = state.activeBlogListCard;
+    closeCardBlogListModal();
+    if (card) openCardBlogModal(card);
+  });
   els.closeDeckJsonButton.addEventListener("click", closeDeckJsonModal);
   els.dismissDeckJsonButton.addEventListener("click", closeDeckJsonModal);
   els.copyDeckJsonButton.addEventListener("click", copyDeckJson);
@@ -7645,6 +8357,9 @@ function wireEvents() {
     if (event.key === "Escape" && !els.settingsOverlay.hidden) {
       closeSettingsModal();
     }
+    if (event.key === "Escape" && els.profileOverlay && !els.profileOverlay.hidden) {
+      closeProfileModal();
+    }
     if (event.key === "Escape" && els.notificationDetailOverlay && !els.notificationDetailOverlay.hidden) {
       closeNotificationDetailModal();
     }
@@ -7653,6 +8368,12 @@ function wireEvents() {
     }
     if (event.key === "Escape" && !els.shareOverlay.hidden) {
       closeShareModal();
+    }
+    if (event.key === "Escape" && els.cardBlogOverlay && !els.cardBlogOverlay.hidden) {
+      closeCardBlogModal();
+    }
+    if (event.key === "Escape" && els.cardBlogListOverlay && !els.cardBlogListOverlay.hidden) {
+      closeCardBlogListModal();
     }
     if (event.key === "Escape" && !els.deckJsonOverlay.hidden) {
       closeDeckJsonModal();
@@ -7785,6 +8506,36 @@ function wireEvents() {
     saveSettings({ ...(state.settings || defaultSettings()), ...payload });
     setStatus("Settings saved.");
     closeSettingsModal();
+  });
+  els.editProfileButton?.addEventListener("click", openProfileModal);
+  els.closeProfileButton?.addEventListener("click", closeProfileModal);
+  els.cancelProfileButton?.addEventListener("click", closeProfileModal);
+  els.profileOverlay?.addEventListener("click", (event) => {
+    if (event.target === els.profileOverlay) {
+      closeProfileModal();
+    }
+  });
+  els.profileImageInput?.addEventListener("change", async () => {
+    try {
+      const dataUrl = await readProfileImageFile(els.profileImageInput.files?.[0]);
+      els.profileForm.profile_image.value = dataUrl;
+      renderProfileImagePreview(dataUrl);
+      setStatus("", "", els.profileStatus);
+    } catch (error) {
+      els.profileImageInput.value = "";
+      setStatus(error.message, "error", els.profileStatus);
+    }
+  });
+  els.profileForm?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      await saveUserSettings(profilePayloadFromForm());
+      renderSettingsPage();
+      setStatus("Profile saved.", "success", els.settingsPageStatus);
+      closeProfileModal();
+    } catch (error) {
+      setStatus(error.message, "error", els.profileStatus);
+    }
   });
   els.settingsPageForm.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -8219,6 +8970,7 @@ async function boot() {
   const initialWishlistShareId = wishlistRouteId();
   const initialContainerShareId = containerRouteId();
   const initialStoreShareId = storeRouteId();
+  const initialUserProfileSlug = userProfileRoute();
   const initialFavoritesShare = favoritesShareRoute();
   const initialCardDetail = cardDetailRoute();
   const initialVerificationToken = verificationRouteToken();
@@ -8271,6 +9023,8 @@ async function boot() {
     loadEmailVerification(initialVerificationToken);
   } else if (initialPasswordResetToken) {
     loadPasswordReset(initialPasswordResetToken);
+  } else if (initialUserProfileSlug) {
+    loadUserProfile(initialUserProfileSlug);
   } else if (isRootRoute) {
     activatePage(state.user ? "dashboard" : "home", { replace: true, promptLogin: false });
   } else if (initialCardDetail) {
