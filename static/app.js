@@ -67,6 +67,8 @@ const state = {
     issues: [],
     decks: [],
     wishlists: [],
+    busy: false,
+    progress: { visible: false, label: "", current: 0, total: 0 },
   },
   pendingDeckImport: null,
   selectedCards: new Map(),
@@ -254,6 +256,10 @@ const els = {
   importReviewStepSubtitle: document.querySelector("#importReviewStepSubtitle"),
   importRecapRows: document.querySelector("#importRecapRows"),
   importRecapSubtitle: document.querySelector("#importRecapSubtitle"),
+  importWizardProgress: document.querySelector("#importWizardProgress"),
+  importWizardProgressLabel: document.querySelector("#importWizardProgressLabel"),
+  importWizardProgressCount: document.querySelector("#importWizardProgressCount"),
+  importWizardProgressBar: document.querySelector("#importWizardProgressBar"),
   importReviewOverlay: document.querySelector("#importReviewOverlay"),
   importReviewTitle: document.querySelector("#importReviewTitle"),
   importReviewCount: document.querySelector("#importReviewCount"),
@@ -5816,6 +5822,8 @@ function resetImportWizard() {
     issues: [],
     decks: [],
     wishlists: [],
+    busy: false,
+    progress: { visible: false, label: "", current: 0, total: 0 },
   };
   if (els.importWizardFile) els.importWizardFile.value = "";
   if (els.importWizardJsonText) els.importWizardJsonText.value = "";
@@ -5832,6 +5840,34 @@ function setImportWizardStep(step) {
   renderImportWizard();
 }
 
+function setImportProgress(label, current, total) {
+  const safeTotal = Math.max(0, Number(total) || 0);
+  const safeCurrent = Math.min(Math.max(0, Number(current) || 0), safeTotal || Number(current) || 0);
+  state.importWizard.progress = { visible: true, label, current: safeCurrent, total: safeTotal };
+  renderImportProgress();
+}
+
+function clearImportProgress() {
+  state.importWizard.progress = { visible: false, label: "", current: 0, total: 0 };
+  renderImportProgress();
+}
+
+function renderImportProgress() {
+  const progress = state.importWizard.progress || {};
+  if (!els.importWizardProgress) return;
+  els.importWizardProgress.hidden = !progress.visible;
+  const total = Math.max(0, Number(progress.total) || 0);
+  const current = Math.min(Math.max(0, Number(progress.current) || 0), total || Number(progress.current) || 0);
+  const percent = total ? Math.round((current / total) * 100) : 0;
+  if (els.importWizardProgressLabel) els.importWizardProgressLabel.textContent = progress.label || "Working";
+  if (els.importWizardProgressCount) {
+    els.importWizardProgressCount.textContent = total
+      ? `${integer.format(current)} / ${integer.format(total)} (${percent}%)`
+      : "Working...";
+  }
+  if (els.importWizardProgressBar) els.importWizardProgressBar.style.width = `${total ? percent : 12}%`;
+}
+
 function renderImportWizard() {
   const wizard = state.importWizard;
   document.querySelectorAll("[data-import-step]").forEach((panel) => {
@@ -5841,9 +5877,17 @@ function renderImportWizard() {
     item.classList.toggle("is-active", item.dataset.importStepIndicator === wizard.step);
     item.classList.toggle("is-complete", importStepIndex(item.dataset.importStepIndicator) < importStepIndex(wizard.step));
   });
-  if (els.importWizardBackButton) els.importWizardBackButton.disabled = wizard.step === "source";
-  if (els.importWizardNextButton) els.importWizardNextButton.hidden = wizard.step === "recap";
-  if (els.importWizardSaveButton) els.importWizardSaveButton.hidden = wizard.step !== "recap";
+  if (els.importWizardBackButton) els.importWizardBackButton.disabled = wizard.busy || wizard.step === "source";
+  if (els.importWizardResetButton) els.importWizardResetButton.disabled = Boolean(wizard.busy);
+  if (els.importWizardNextButton) {
+    els.importWizardNextButton.hidden = wizard.step === "recap";
+    els.importWizardNextButton.disabled = Boolean(wizard.busy);
+  }
+  if (els.importWizardSaveButton) {
+    els.importWizardSaveButton.hidden = wizard.step !== "recap";
+    els.importWizardSaveButton.disabled = Boolean(wizard.busy);
+  }
+  renderImportProgress();
   if (wizard.step === "map") {
     if (wizard.format === "csv") renderImportMappingStep();
     else renderImportJsonPreviewStep();
@@ -5988,6 +6032,109 @@ function renderImportJsonPreviewStep() {
   });
 }
 
+const IMPORT_MATCH_BATCH_SIZE = 12;
+const IMPORT_SAVE_BATCH_SIZE = 20;
+
+function importWizardAggregateRows(rows) {
+  const grouped = new Map();
+  const output = [];
+  for (const row of rows || []) {
+    const cardId = row.match?.card?.scryfall_id;
+    if (!cardId) {
+      output.push(row);
+      continue;
+    }
+    const entry = row.entry || {};
+    const variant = entry.variant || "Normal";
+    const condition = entry.card_condition || "Near Mint";
+    const key = `${cardId}::${variant}::${condition}`;
+    const quantity = Number(entry.quantity || 0);
+    const paidPrice = Number(entry.paid_price || 0.01) || 0.01;
+    if (!grouped.has(key)) {
+      const clone = JSON.parse(JSON.stringify(row));
+      clone.source_rows = [entry];
+      clone.entry.quantity = quantity;
+      clone.entry.paid_total = paidPrice * quantity;
+      clone.entry.line = String(entry.line || "");
+      grouped.set(key, clone);
+      output.push(clone);
+    } else {
+      const target = grouped.get(key);
+      target.source_rows.push(entry);
+      target.entry.quantity = Number(target.entry.quantity || 0) + quantity;
+      target.entry.paid_total = Number(target.entry.paid_total || 0) + (paidPrice * quantity);
+      if (target.entry.quantity > 0) {
+        target.entry.paid_price = Math.round((target.entry.paid_total / target.entry.quantity) * 10000) / 10000;
+      }
+      target.entry.line = target.source_rows.map((item) => item.line).filter(Boolean).join(", ");
+    }
+  }
+  return output.map((row, index) => ({ ...row, id: `group-${index + 1}` }));
+}
+
+function importWizardEntryCacheKey(entry) {
+  if (entry?.scryfall_id) return `id::${entry.scryfall_id}`;
+  return [
+    "query",
+    (entry?.name || "").trim().toLowerCase(),
+    (entry?.set_code || entry?.set_name || "").trim().toLowerCase(),
+    (entry?.collector_number || "").trim().toLowerCase(),
+  ].join("::");
+}
+
+function importWizardCachedRow(entry, match) {
+  const rowId = `row-${entry.line || Math.random().toString(36).slice(2)}`;
+  return {
+    id: rowId,
+    checked: Boolean(match),
+    entry,
+    match,
+    status: match ? "matched" : "unmatched",
+  };
+}
+
+async function importWizardMatchCsvRows(wizard) {
+  setStatus("Preparing CSV rows...", "", els.importStatus);
+  const prepared = await api("/api/import/csv/entries", {
+    method: "POST",
+    body: JSON.stringify({ text: wizard.text, mapping: wizard.mapping }),
+  });
+  const entries = prepared.entries || [];
+  const total = entries.length;
+  const matchedRows = [];
+  const issues = [...(prepared.issues || [])];
+  const matchCache = new Map();
+  setImportProgress("Matching cards with Scryfall", 0, total);
+  for (let offset = 0; offset < total; offset += IMPORT_MATCH_BATCH_SIZE) {
+    const batch = entries.slice(offset, offset + IMPORT_MATCH_BATCH_SIZE);
+    const uncached = [];
+    for (const entry of batch) {
+      const cacheKey = importWizardEntryCacheKey(entry);
+      if (matchCache.has(cacheKey)) {
+        matchedRows.push(importWizardCachedRow(entry, matchCache.get(cacheKey)));
+      } else {
+        uncached.push(entry);
+      }
+    }
+    setImportProgress("Matching cards with Scryfall", offset, total);
+    if (uncached.length) {
+      const result = await api("/api/import/entries/match", {
+        method: "POST",
+        body: JSON.stringify({ entries: uncached }),
+      });
+      for (const row of result.rows || []) {
+        matchCache.set(importWizardEntryCacheKey(row.entry || {}), row.match || null);
+        matchedRows.push(row);
+      }
+      issues.push(...(result.issues || []));
+    }
+    setImportProgress("Matching cards with Scryfall", Math.min(offset + batch.length, total), total);
+  }
+  wizard.rows = importWizardAggregateRows(matchedRows);
+  wizard.issues = issues;
+  setStatus(`Matched ${integer.format(wizard.rows.filter((row) => row.match?.card).length)} card group${wizard.rows.length === 1 ? "" : "s"}.`, "success", els.importStatus);
+}
+
 async function importWizardMapNext() {
   const wizard = state.importWizard;
   if (wizard.format === "csv") {
@@ -5995,13 +6142,7 @@ async function importWizardMapNext() {
       setStatus("Map at least Card title or Scryfall ID before continuing.", "error", els.importStatus);
       return;
     }
-    setStatus("Matching CSV rows against Scryfall...", "", els.importStatus);
-    const result = await api("/api/import/csv/match", {
-      method: "POST",
-      body: JSON.stringify({ text: wizard.text, mapping: wizard.mapping }),
-    });
-    wizard.rows = result.rows || [];
-    wizard.issues = result.issues || [];
+    await importWizardMatchCsvRows(wizard);
   } else if (wizard.jsonPreview?.kind === "unknown") {
     setStatus("This JSON type cannot be saved yet.", "error", els.importStatus);
     return;
@@ -6012,10 +6153,12 @@ async function importWizardMapNext() {
     wizard.rows = wizard.jsonPreview.cards?.rows || [];
     wizard.issues = wizard.jsonPreview.cards?.issues || [];
     if (!wizard.rows.length) {
+      clearImportProgress();
       setImportWizardStep("recap");
       return;
     }
   }
+  clearImportProgress();
   setImportWizardStep("review");
 }
 
@@ -6175,27 +6318,54 @@ function renderImportWizardRecap() {
 }
 
 async function saveImportWizard() {
+  if (state.importWizard.busy) return;
   const wizard = state.importWizard;
-  const rows = (wizard.rows || []).map((row) => ({
+  const rows = (wizard.rows || [])
+    .filter((row) => row.checked && row.match?.card)
+    .map((row) => ({
     checked: row.checked,
     entry: row.entry,
     card_id: row.match?.card?.scryfall_id || "",
     match: row.match,
   }));
-  const payload = wizard.format === "json"
-    ? { kind: wizard.jsonPreview?.kind, rows, decks: wizard.decks || [], wishlists: wizard.wishlists || [] }
-    : { rows };
-  const endpoint = wizard.format === "json" ? "/api/import/json/commit" : "/api/import/commit";
-  els.importWizardSaveButton.disabled = true;
+  const decks = wizard.format === "json" && ["decks", "full"].includes(wizard.jsonPreview?.kind) ? (wizard.decks || []) : [];
+  const wishlists = wizard.format === "json" && ["wishlists", "full"].includes(wizard.jsonPreview?.kind) ? (wizard.wishlists || []) : [];
+  const totalSteps = rows.length + (decks.length ? 1 : 0) + (wishlists.length ? 1 : 0);
+  let completedSteps = 0;
+  let importedCards = 0;
+  let importedDecks = 0;
+  let importedWishlists = 0;
+  if (!totalSteps) {
+    setStatus("Nothing is selected to save.", "error", els.importStatus);
+    return;
+  }
+  wizard.busy = true;
+  renderImportWizard();
+  setImportProgress("Saving import", 0, totalSteps);
   setStatus("Saving import...", "", els.importStatus);
   try {
-    const result = await api(endpoint, {
-      method: "POST",
-      body: JSON.stringify(payload),
-    });
-    const importedCards = result.imported_rows ?? result.imported?.cards ?? 0;
-    const importedDecks = result.imported?.decks ?? 0;
-    const importedWishlists = result.imported?.wishlists ?? 0;
+    for (let offset = 0; offset < rows.length; offset += IMPORT_SAVE_BATCH_SIZE) {
+      const batch = rows.slice(offset, offset + IMPORT_SAVE_BATCH_SIZE);
+      setImportProgress("Saving cards to collection", completedSteps, totalSteps);
+      const result = await api("/api/import/commit", {
+        method: "POST",
+        body: JSON.stringify({ rows: batch }),
+      });
+      importedCards += result.imported_rows ?? 0;
+      completedSteps += batch.length;
+      setImportProgress("Saving cards to collection", completedSteps, totalSteps);
+    }
+    if (decks.length || wishlists.length) {
+      setImportProgress(decks.length ? "Saving decks" : "Saving wishlists", completedSteps, totalSteps);
+      const result = await api("/api/import/json/commit", {
+        method: "POST",
+        body: JSON.stringify({ kind: "full", rows: [], decks, wishlists }),
+      });
+      importedDecks += result.imported?.decks ?? 0;
+      importedWishlists += result.imported?.wishlists ?? 0;
+      completedSteps += (decks.length ? 1 : 0) + (wishlists.length ? 1 : 0);
+      setImportProgress("Saving import", completedSteps, totalSteps);
+    }
     const savedParts = [`${integer.format(importedCards)} card group${Number(importedCards) === 1 ? "" : "s"}`];
     if (importedDecks) savedParts.push(`${integer.format(importedDecks)} deck${Number(importedDecks) === 1 ? "" : "s"}`);
     if (importedWishlists) savedParts.push(`${integer.format(importedWishlists)} wishlist${Number(importedWishlists) === 1 ? "" : "s"}`);
@@ -6206,22 +6376,36 @@ async function saveImportWizard() {
     await loadDecks().catch(() => {});
     await loadWishlists().catch(() => {});
   } finally {
-    els.importWizardSaveButton.disabled = false;
+    wizard.busy = false;
+    clearImportProgress();
+    renderImportWizard();
   }
 }
 
 async function importWizardNext() {
+  if (state.importWizard.busy) return;
+  state.importWizard.busy = true;
+  renderImportWizard();
   const step = state.importWizard.step;
-  if (step === "source") return importWizardSourceNext();
-  if (step === "map") return importWizardMapNext();
-  if (step === "review") return importWizardReviewNext();
+  try {
+    if (step === "source") return await importWizardSourceNext();
+    if (step === "map") return await importWizardMapNext();
+    if (step === "review") return importWizardReviewNext();
+  } finally {
+    state.importWizard.busy = false;
+    renderImportWizard();
+  }
 }
 
 function importWizardBack() {
   const step = state.importWizard.step;
   if (step === "map") setImportWizardStep("source");
   if (step === "review") setImportWizardStep("map");
-  if (step === "recap") setImportWizardStep(state.importWizard.format === "json" && state.importWizard.jsonPreview?.kind === "decks" ? "map" : "review");
+  if (step === "recap") {
+    const wizard = state.importWizard;
+    const hasCardRows = (wizard.rows || []).length > 0;
+    setImportWizardStep(wizard.format === "json" && !hasCardRows ? "map" : "review");
+  }
 }
 
 async function previewImport(format) {
@@ -8666,12 +8850,18 @@ function wireEvents() {
     openAssignContainerModal().catch((error) => setStatus(error.message, "error", els.favoritesStatus));
   });
   els.importWizardNextButton?.addEventListener("click", () => {
-    importWizardNext().catch((error) => setStatus(error.message, "error", els.importStatus));
+    importWizardNext().catch((error) => {
+      clearImportProgress();
+      setStatus(error.message, "error", els.importStatus);
+    });
   });
   els.importWizardBackButton?.addEventListener("click", importWizardBack);
   els.importWizardResetButton?.addEventListener("click", resetImportWizard);
   els.importWizardSaveButton?.addEventListener("click", () => {
-    saveImportWizard().catch((error) => setStatus(error.message, "error", els.importStatus));
+    saveImportWizard().catch((error) => {
+      clearImportProgress();
+      setStatus(error.message, "error", els.importStatus);
+    });
   });
   els.importWizardFile?.addEventListener("change", () => {
     if (els.importWizardFile.files?.length && els.importWizardJsonText) {

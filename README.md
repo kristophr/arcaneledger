@@ -1,6 +1,6 @@
 # FoilFolio
 
-**Version:** 0.1.4 alpha
+**Version:** 0.1.5 alpha
 
 A self-hosted Magic: The Gathering collection tracker. It uses Scryfall as the catalog and price source, stores data in SQLite, imports portfolio CSV exports, tracks decks, supports read-only share links, and exports your owned cards back to CSV.
 

@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>FoilFolio</title>
-    <link rel="stylesheet" href="/styles.css?v=134">
+    <link rel="stylesheet" href="/styles.css?v=135">
   </head>
   <body>
     <header class="topbar">
@@ -567,6 +567,15 @@
             </div>
             <div id="importRecapRows" class="import-recap-rows"></div>
           </section>
+          <div id="importWizardProgress" class="import-progress" hidden>
+            <div class="import-progress-head">
+              <strong id="importWizardProgressLabel">Working</strong>
+              <span id="importWizardProgressCount">0%</span>
+            </div>
+            <div class="import-progress-track" aria-hidden="true">
+              <span id="importWizardProgressBar"></span>
+            </div>
+          </div>
           <div class="modal-actions import-wizard-actions">
             <button id="importWizardBackButton" class="secondary-button" type="button" disabled>Back</button>
             <button id="importWizardResetButton" class="secondary-button" type="button">Reset</button>
@@ -1842,6 +1851,6 @@
       </section>
     </div>
 
-    <script src="/app.js?v=146"></script>
+    <script src="/app.js?v=147"></script>
   </body>
 </html>

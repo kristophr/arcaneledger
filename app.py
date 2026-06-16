@@ -78,8 +78,8 @@ SESSION_IDLE_MINUTES = int(os.environ.get("SESSION_IDLE_MINUTES", "30") or 30)
 EMAIL_VERIFICATION_MINUTES = int(os.environ.get("EMAIL_VERIFICATION_MINUTES", "30") or 30)
 PASSWORD_RESET_MINUTES = int(os.environ.get("PASSWORD_RESET_MINUTES", str(EMAIL_VERIFICATION_MINUTES)) or EMAIL_VERIFICATION_MINUTES)
 SUPPORTED_SCRYFALL_LANGUAGES = {"en"}
-APP_VERSION = "0.1.4 alpha"
-USER_AGENT = "foilfolio/0.1.4"
+APP_VERSION = "0.1.5 alpha"
+USER_AGENT = "foilfolio/0.1.5"
 PROCESS_STARTED_AT = datetime.now(timezone.utc).replace(microsecond=0)
 COLOR_ORDER = ("W", "U", "B", "R", "G")
 CARD_CONDITIONS = (
@@ -4116,17 +4116,20 @@ def import_match_cache_key(entry):
     )
 
 
-def preview_import_rows(conn, rows, source_format):
+def preview_import_entries(conn, entries):
     preview = []
     issues = []
     lookup_data = lookup_maps(conn)
     scryfall_cache = {}
     scryfall_lookup_count = 0
-    for index, source in enumerate(rows, start=1):
-        entry = import_row_from_source(source, index, source_format)
+    for index, source_entry in enumerate(entries, start=1):
+        entry = dict(source_entry or {})
+        if not entry.get("line"):
+            entry["line"] = index
+        row_id = f"row-{entry['line']}"
         if entry.get("error"):
             issues.append({"line": entry["line"], "name": entry.get("name"), "error": entry["error"]})
-            preview.append({"id": f"row-{index}", "checked": False, "entry": entry, "match": None, "status": "bad"})
+            preview.append({"id": row_id, "checked": False, "entry": entry, "match": None, "status": "bad"})
             continue
         match = local_import_match(conn, entry, lookup_data)
         if not match:
@@ -4158,15 +4161,20 @@ def preview_import_rows(conn, rows, source_format):
         if not match:
             issues.append({"line": entry["line"], "name": entry.get("name"), "error": "No match found."})
         preview.append({
-            "id": f"row-{index}",
+            "id": row_id,
             "checked": bool(match),
             "entry": entry,
             "match": match,
             "status": "matched" if match else "unmatched",
         })
     if scryfall_lookup_count:
-        LOGGER.info("Import preview used %s Scryfall lookup(s) for %s row(s)", scryfall_lookup_count, len(rows))
+        LOGGER.info("Import preview used %s Scryfall lookup(s) for %s row(s)", scryfall_lookup_count, len(entries))
     return {"rows": preview, "issues": issues}
+
+
+def preview_import_rows(conn, rows, source_format):
+    entries = [import_row_from_source(source, index, source_format) for index, source in enumerate(rows, start=1)]
+    return preview_import_entries(conn, entries)
 
 
 def parse_csv_import_text(text):
@@ -4296,6 +4304,27 @@ def import_csv_mapped_preview(conn, payload):
     preview = preview_import_rows(conn, mapped, "csv")
     preview["rows"] = aggregate_import_preview_rows(preview["rows"])
     return preview
+
+
+def import_csv_mapped_entries(payload):
+    text = payload.get("text") or ""
+    mapping = payload.get("mapping") or {}
+    rows = parse_csv_import_text(text)
+    mapped = apply_csv_import_mapping(rows, mapping)
+    entries = [import_row_from_source(source, index, "csv") for index, source in enumerate(mapped, start=1)]
+    invalid = [
+        {"line": entry["line"], "name": entry.get("name"), "error": entry["error"]}
+        for entry in entries
+        if entry.get("error")
+    ]
+    return {"entries": entries, "issues": invalid, "row_count": len(entries)}
+
+
+def import_entries_match_preview(conn, payload):
+    entries = payload.get("entries") or []
+    if not isinstance(entries, list):
+        raise ValueError("Import entries are required.")
+    return preview_import_entries(conn, entries)
 
 
 def looks_like_card_import_row(item):
@@ -10154,9 +10183,15 @@ class Handler(SimpleHTTPRequestHandler):
                 if parsed.path == "/api/import/csv/headers":
                     self.require_user(conn)
                     return self.send_json(csv_import_headers((self.read_json()).get("text") or ""))
+                if parsed.path == "/api/import/csv/entries":
+                    self.require_user(conn)
+                    return self.send_json(import_csv_mapped_entries(self.read_json()))
                 if parsed.path == "/api/import/csv/match":
                     self.require_user(conn)
                     return self.send_json(import_csv_mapped_preview(conn, self.read_json()))
+                if parsed.path == "/api/import/entries/match":
+                    self.require_user(conn)
+                    return self.send_json(import_entries_match_preview(conn, self.read_json()))
                 if parsed.path == "/api/import/json/preview":
                     user = self.require_user(conn)
                     return self.send_json(import_json_wizard_preview(conn, user["id"], self.read_json()))
