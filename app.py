@@ -46,6 +46,9 @@ SCRYFALL_CARD_URL = "https://api.scryfall.com/cards/{set_code}/{collector_number
 SCRYFALL_ID_URL = "https://api.scryfall.com/cards/{card_id}"
 SCRYFALL_QUERY = os.environ.get("SCRYFALL_QUERY", "game:paper")
 SCRYFALL_LANGUAGE = os.environ.get("SCRYFALL_LANGUAGE", "en")
+SCRYFALL_TIMEOUT_SECONDS = max(5, int(os.environ.get("SCRYFALL_TIMEOUT_SECONDS", "15") or 15))
+SCRYFALL_IMPORT_LOOKUP_LIMIT = max(0, int(os.environ.get("SCRYFALL_IMPORT_LOOKUP_LIMIT", "80") or 80))
+SCRYFALL_IMPORT_LOOKUP_DELAY = max(0.0, float(os.environ.get("SCRYFALL_IMPORT_LOOKUP_DELAY", "0.12") or 0.12))
 MAILGUN_API_BASE = os.environ.get("MAILGUN_API_BASE", "https://api.mailgun.net/v3").rstrip("/")
 MAILGUN_API_KEY = os.environ.get("MAILGUN_API_KEY", "")
 MAILGUN_DOMAIN = os.environ.get("MAILGUN_DOMAIN", "")
@@ -589,7 +592,7 @@ def lookup_set_candidates(set_name, product_name):
 
 def request_json(url):
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "application/json"})
-    with urllib.request.urlopen(req, timeout=45) as response:
+    with urllib.request.urlopen(req, timeout=SCRYFALL_TIMEOUT_SECONDS) as response:
         return json.loads(response.read().decode("utf-8"))
 
 
@@ -4045,14 +4048,14 @@ def import_card_summary_from_row(row):
     }
 
 
-def local_import_match(conn, entry):
+def local_import_match(conn, entry, lookup_data=None):
     if entry.get("error"):
         return None
     if entry.get("scryfall_id"):
         row = conn.execute("SELECT * FROM cards WHERE scryfall_id = ?", (entry["scryfall_id"],)).fetchone()
         if row:
             return {"source": "local", "confidence": "exact id", "card": import_card_summary_from_row(row)}
-    by_set_number, by_name_number, by_name = lookup_maps(conn)
+    by_set_number, by_name_number, by_name = lookup_data or lookup_maps(conn)
     card_id = None
     for candidate_set in lookup_set_candidates(entry.get("set_code") or entry.get("set_name"), entry.get("name")):
         for number_key in collector_keys(entry.get("collector_number")):
@@ -4102,21 +4105,56 @@ def scryfall_import_match(entry):
     return None
 
 
+def import_match_cache_key(entry):
+    if entry.get("scryfall_id"):
+        return ("id", str(entry.get("scryfall_id")).strip())
+    return (
+        "query",
+        normalize(entry.get("name")),
+        normalize(entry.get("set_code") or entry.get("set_name")),
+        normalize(entry.get("collector_number")),
+    )
+
+
 def preview_import_rows(conn, rows, source_format):
     preview = []
     issues = []
+    lookup_data = lookup_maps(conn)
+    scryfall_cache = {}
+    scryfall_lookup_count = 0
     for index, source in enumerate(rows, start=1):
         entry = import_row_from_source(source, index, source_format)
         if entry.get("error"):
             issues.append({"line": entry["line"], "name": entry.get("name"), "error": entry["error"]})
             preview.append({"id": f"row-{index}", "checked": False, "entry": entry, "match": None, "status": "bad"})
             continue
-        match = local_import_match(conn, entry)
+        match = local_import_match(conn, entry, lookup_data)
         if not match:
-            try:
-                match = scryfall_import_match(entry)
-            except Exception as exc:
-                issues.append({"line": entry["line"], "name": entry.get("name"), "error": f"Scryfall lookup failed: {exc}"})
+            cache_key = import_match_cache_key(entry)
+            if cache_key in scryfall_cache:
+                match = scryfall_cache[cache_key]
+            elif SCRYFALL_IMPORT_LOOKUP_LIMIT and scryfall_lookup_count >= SCRYFALL_IMPORT_LOOKUP_LIMIT:
+                issues.append({
+                    "line": entry["line"],
+                    "name": entry.get("name"),
+                    "error": f"Scryfall auto-match skipped after {SCRYFALL_IMPORT_LOOKUP_LIMIT} unique lookup(s). Use manual match for this row or raise SCRYFALL_IMPORT_LOOKUP_LIMIT.",
+                })
+            else:
+                try:
+                    if scryfall_lookup_count and SCRYFALL_IMPORT_LOOKUP_DELAY:
+                        time.sleep(SCRYFALL_IMPORT_LOOKUP_DELAY)
+                    scryfall_lookup_count += 1
+                    match = scryfall_import_match(entry)
+                    scryfall_cache[cache_key] = match
+                except urllib.error.HTTPError as exc:
+                    if exc.code == 429:
+                        issues.append({"line": entry["line"], "name": entry.get("name"), "error": "Scryfall rate limit reached. Wait a minute, then manually match or retry the preview."})
+                    else:
+                        issues.append({"line": entry["line"], "name": entry.get("name"), "error": f"Scryfall lookup failed: HTTP {exc.code}"})
+                    scryfall_cache[cache_key] = None
+                except Exception as exc:
+                    issues.append({"line": entry["line"], "name": entry.get("name"), "error": f"Scryfall lookup failed: {exc}"})
+                    scryfall_cache[cache_key] = None
         if not match:
             issues.append({"line": entry["line"], "name": entry.get("name"), "error": "No match found."})
         preview.append({
@@ -4126,6 +4164,8 @@ def preview_import_rows(conn, rows, source_format):
             "match": match,
             "status": "matched" if match else "unmatched",
         })
+    if scryfall_lookup_count:
+        LOGGER.info("Import preview used %s Scryfall lookup(s) for %s row(s)", scryfall_lookup_count, len(rows))
     return {"rows": preview, "issues": issues}
 
 

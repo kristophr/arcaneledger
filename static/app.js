@@ -562,7 +562,10 @@ async function api(path, options = {}) {
   const contentType = response.headers.get("content-type") || "";
   const payload = contentType.includes("application/json") ? await response.json() : await response.text();
   if (!response.ok) {
-    const message = payload && payload.error ? payload.error : `Request failed: ${response.status}`;
+    let message = payload && payload.error ? payload.error : `Request failed: ${response.status}`;
+    if (response.status === 504) {
+      message = "Request timed out. If this happened during import, the file may need too many Scryfall lookups at once. Try again after a minute, or reduce the batch size.";
+    }
     if (response.status === 401) {
       state.user = null;
       updateAuthUi();
