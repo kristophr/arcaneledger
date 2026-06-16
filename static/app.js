@@ -6,6 +6,8 @@ const state = {
   saleCards: [],
   wishlistCards: [],
   wishlists: [],
+  ownedSetCards: [],
+  ownedSets: [],
   catalogSearchAllResults: [],
   catalogSearchResults: [],
   dashboard: null,
@@ -22,6 +24,7 @@ const state = {
   activeCardDetail: null,
   activeSet: null,
   setCards: [],
+  activeOwnedSet: null,
   decks: [],
   activeDeck: null,
   activeWishlist: null,
@@ -71,6 +74,7 @@ const pageRoutes = {
   search: "/search",
   favorites: "/favorites",
   collection: "/collection",
+  sets: "/sets",
   decks: "/decks",
   containers: "/containers",
   "missing-list": "/missing-list",
@@ -240,6 +244,10 @@ const els = {
   cancelEmailWishlistButton: document.querySelector("#cancelEmailWishlistButton"),
   decksGrid: document.querySelector("#decksGrid"),
   decksStatus: document.querySelector("#decksStatus"),
+  setsGrid: document.querySelector("#setsGrid"),
+  setsDetailShell: document.querySelector("#setsDetailShell"),
+  setsOverviewShell: document.querySelector("#setsOverviewShell"),
+  setsStatus: document.querySelector("#setsStatus"),
   assignDeckOverlay: document.querySelector("#assignDeckOverlay"),
   assignDeckForm: document.querySelector("#assignDeckForm"),
   assignDeckCards: document.querySelector("#assignDeckCards"),
@@ -454,13 +462,14 @@ function updateAuthUi() {
   if (els.logoutButton) {
     const icon = els.logoutButton.querySelector("[aria-hidden='true']");
     const label = els.logoutButton.querySelector(".auth-command-label");
-    els.logoutButton.title = loggedIn ? "Log out" : "Log in";
-    els.logoutButton.setAttribute("aria-label", loggedIn ? "Log out" : "Log in");
+    els.logoutButton.hidden = !loggedIn;
+    els.logoutButton.title = "Log out";
+    els.logoutButton.setAttribute("aria-label", "Log out");
     if (icon) {
-      icon.className = loggedIn ? "logout-icon" : "login-icon";
+      icon.className = "logout-icon";
     }
     if (label) {
-      label.textContent = loggedIn ? "Logout" : "Log In";
+      label.textContent = "Logout";
     }
   }
   if (els.settingsAccountEmail) {
@@ -653,7 +662,10 @@ async function logout() {
   state.saleCards = [];
   state.wishlistCards = [];
   state.wishlists = [];
+  state.ownedSetCards = [];
+  state.ownedSets = [];
   state.activeWishlist = null;
+  state.activeOwnedSet = null;
   updateAuthUi();
   activatePage("search", { push: true });
 }
@@ -670,6 +682,12 @@ function valueClass(value) {
 
 function isSpecialVariant(variant) {
   return Boolean(variant && variant.toLowerCase() !== "normal");
+}
+
+function cardHasSpecialVariant(card) {
+  if (Boolean(card.has_special_variant)) return true;
+  if (isSpecialVariant(card.variant)) return true;
+  return variantSummaries(card).some((summary) => isSpecialVariant(summary.variant));
 }
 
 function cardTitle(card) {
@@ -741,6 +759,206 @@ function cardMetadataPillsHtml(card) {
   `;
 }
 
+function variantSummaries(card) {
+  const summaries = Array.isArray(card.variant_summaries) ? card.variant_summaries : [];
+  if (summaries.length) {
+    return summaries
+      .map((summary) => ({
+        variant: summary.variant || "Normal",
+        quantity: Number(summary.quantity || 0),
+        conditions: Array.isArray(summary.conditions) ? summary.conditions : [],
+      }))
+      .filter((summary) => summary.quantity > 0 || summary.conditions.length);
+  }
+  const buckets = Array.isArray(card.condition_inventory) ? card.condition_inventory : [];
+  if (buckets.length) {
+    const variants = new Map();
+    for (const bucket of buckets) {
+      const variant = bucket.variant || card.variant || "Normal";
+      const entry = variants.get(variant) || { variant, quantity: 0, conditions: [] };
+      const quantity = Number(bucket.quantity || 0);
+      entry.quantity += quantity;
+      entry.conditions.push({
+        card_condition: bucket.card_condition || conditionText(card),
+        quantity,
+      });
+      variants.set(variant, entry);
+    }
+    return Array.from(variants.values());
+  }
+  const quantity = Number(card.quantity ?? card.owned_quantity ?? 0);
+  if (quantity <= 0) return [];
+  return [{
+    variant: card.variant || "Normal",
+    quantity,
+    conditions: [{
+      card_condition: conditionText(card),
+      quantity,
+    }],
+  }];
+}
+
+function totalVariantQuantity(card) {
+  const summaries = variantSummaries(card);
+  if (summaries.length) {
+    return summaries.reduce((total, summary) => total + Number(summary.quantity || 0), 0);
+  }
+  return Number(card.quantity ?? card.owned_quantity ?? 0);
+}
+
+function totalVariantMarketValue(card) {
+  const summaries = variantSummaries(card);
+  if (!summaries.length) return Number(card.total_value ?? card.owned_value ?? 0);
+  return summaries.reduce((total, summary) => total + (Number(summary.quantity || 0) * Number(priceForVariant(card, summary.variant || "Normal") || 0)), 0);
+}
+
+function conditionChipsHtml(conditions) {
+  const validConditions = (conditions || []).filter((condition) => Number(condition.quantity || 0) > 0);
+  if (!validConditions.length) return '<span class="variant-condition-chip">None</span>';
+  return validConditions.map((condition) => `
+    <span class="variant-condition-chip">
+      ${escapeHtml(condition.card_condition || "Near Mint")}
+      <small>${integer.format(condition.quantity || 0)}</small>
+    </span>
+  `).join("");
+}
+
+function variantSummaryHtml(card) {
+  const summaries = variantSummaries(card);
+  if (!summaries.length) return "";
+  return `
+    <div class="variant-summary-table" aria-label="Card variants">
+      <div class="variant-summary-header">
+        <span>Variant</span>
+        <span>Conditions</span>
+        <span>Qty</span>
+      </div>
+      ${summaries.map((summary) => `
+        <div class="variant-summary-row ${isSpecialVariant(summary.variant) ? "is-special-variant" : ""}">
+          <strong>${escapeHtml(summary.variant || "Normal")}</strong>
+          <span class="variant-condition-list">${conditionChipsHtml(summary.conditions)}</span>
+          <b>${integer.format(summary.quantity || 0)}</b>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
+function primaryVariantForGroup(cards) {
+  const special = cards.find((card) => isSpecialVariant(card.variant));
+  return special || cards[0];
+}
+
+function groupedCardsForDisplay(cards) {
+  const groups = new Map();
+  for (const card of cards || []) {
+    const key = card.scryfall_id || card.card_id || `${card.name || ""}::${card.collector_number || ""}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(card);
+  }
+  const grouped = [];
+  for (const group of groups.values()) {
+    if (group.length === 1) {
+      const card = { ...group[0] };
+      card.quantity = totalVariantQuantity(card);
+      card.owned_quantity = Number(card.owned_quantity ?? card.quantity ?? 0) || card.quantity;
+      card.has_special_variant = cardHasSpecialVariant(card);
+      grouped.push(card);
+      continue;
+    }
+    const primary = primaryVariantForGroup(group);
+    const summariesByVariant = new Map();
+    const conditionInventory = [];
+    let quantity = 0;
+    let ownedValue = 0;
+    let gainLoss = 0;
+    let containerQuantity = 0;
+    let deckQuantity = 0;
+    let saleQuantity = 0;
+    let unassignedQuantity = 0;
+    const mergedDeckMemberships = [];
+    const containerMembershipsList = [];
+    const variantEntries = [];
+    for (const card of group) {
+      const variant = card.variant || "Normal";
+      const cardSummaries = variantSummaries(card);
+      const summary = cardSummaries.find((item) => (item.variant || "Normal") === variant) || {
+        variant,
+        quantity: Number(card.quantity || 0),
+        conditions: [],
+      };
+      summariesByVariant.set(variant, summary);
+      quantity += Number(card.quantity || 0);
+      ownedValue += Number(card.owned_value || 0);
+      gainLoss += Number(card.gain_loss || 0);
+      containerQuantity += Number(card.container_quantity || 0);
+      deckQuantity += Number(card.deck_quantity || 0);
+      saleQuantity += Number(card.sale_quantity || 0);
+      unassignedQuantity += Number(card.unassigned_quantity ?? card.quantity ?? 0);
+      for (const bucket of card.condition_inventory || []) {
+        conditionInventory.push({ ...bucket, variant: bucket.variant || variant });
+      }
+      variantEntries.push({
+        ...card,
+        variant,
+        quantity: Number(card.quantity || 0),
+        owned_quantity: Number(card.quantity || 0),
+        condition_inventory: (card.condition_inventory || []).map((bucket) => ({ ...bucket, variant: bucket.variant || variant })),
+      });
+      mergedDeckMemberships.push(...deckMemberships(card));
+      containerMembershipsList.push(...containerMemberships(card));
+    }
+    grouped.push({
+      ...primary,
+      quantity,
+      owned_quantity: quantity,
+      owned_value: ownedValue,
+      total_value: ownedValue,
+      gain_loss: gainLoss,
+      container_quantity: containerQuantity,
+      deck_quantity: deckQuantity,
+      sale_quantity: saleQuantity,
+      unassigned_quantity: unassignedQuantity,
+      condition_inventory: conditionInventory,
+      variant_entries: variantEntries,
+      variant_summaries: Array.from(summariesByVariant.values()),
+      deck_memberships: mergedDeckMemberships,
+      container_memberships: containerMembershipsList,
+      has_special_variant: group.some(cardHasSpecialVariant),
+    });
+  }
+  return grouped;
+}
+
+function selectedCardEntries(card) {
+  if (Array.isArray(card.variant_entries) && card.variant_entries.length) {
+    return card.variant_entries;
+  }
+  const summaries = variantSummaries(card).filter((summary) => Number(summary.quantity || 0) > 0);
+  if (!summaries.length || summaries.length === 1 && (summaries[0].variant || "Normal") === (card.variant || "Normal")) {
+    return [card];
+  }
+  return summaries.map((summary) => ({
+    ...card,
+    variant: summary.variant || "Normal",
+    quantity: Number(summary.quantity || 0),
+    unassigned_quantity: Number(summary.quantity || 0),
+    saleable_quantity: Number(summary.quantity || 0),
+    deck_quantity: 0,
+    sale_quantity: 0,
+    sale_price: priceForVariant(card, summary.variant || "Normal"),
+    display_price: priceForVariant(card, summary.variant || "Normal"),
+    condition_inventory: (summary.conditions || []).map((condition) => ({
+      variant: summary.variant || "Normal",
+      card_condition: condition.card_condition || "Near Mint",
+      quantity: Number(condition.quantity || 0),
+      sale_available_quantity: Number(condition.quantity || 0),
+      sale_quantity: 0,
+      sale_price: priceForVariant(card, summary.variant || "Normal"),
+    })),
+  }));
+}
+
 function cardSelectionKey(card) {
   return `${card.scryfall_id}::${card.variant || "Normal"}`;
 }
@@ -782,30 +1000,34 @@ function clearSetMissingSelection() {
 function wireCardSelection(selectWrap, selectCheckbox, card, options = {}) {
   const owned = Number(card.quantity || 0) > 0;
   const selectable = Boolean(options.selectable && owned);
+  const entries = selectedCardEntries(card).filter((entry) => Number(entry.quantity || 0) > 0);
   selectWrap.hidden = !options.selectable;
   selectCheckbox.disabled = !selectable;
-  selectCheckbox.checked = state.selectedCards.has(cardSelectionKey(card));
+  selectCheckbox.checked = entries.length > 0 && entries.every((entry) => state.selectedCards.has(cardSelectionKey(entry)));
   selectCheckbox.addEventListener("change", () => {
-    const key = cardSelectionKey(card);
     if (selectCheckbox.checked) {
-      state.selectedCards.set(key, {
-        card_id: card.scryfall_id,
-        variant: card.variant || "Normal",
-        name: cardTitle(card),
-        quantity: Number(card.quantity || 0),
-        unassigned_quantity: Number(card.unassigned_quantity ?? card.quantity ?? 0),
-        saleable_quantity: Number(card.saleable_quantity ?? card.quantity ?? 0),
-        deck_quantity: Number(card.deck_quantity || 0),
-        display_price: Number(card.display_price || card.market_price || 0),
-        sale_quantity: Number(card.sale_quantity || 0),
-        sale_price: Number(card.sale_price || card.display_price || card.market_price || 0),
-        card_condition: conditionText(card),
-        condition_inventory: Array.isArray(card.condition_inventory) ? card.condition_inventory : [],
-        image_small: card.image_small || "",
-        image_normal: card.image_normal || "",
-      });
+      for (const entry of entries) {
+        state.selectedCards.set(cardSelectionKey(entry), {
+          card_id: entry.scryfall_id,
+          variant: entry.variant || "Normal",
+          name: cardTitle(entry),
+          quantity: Number(entry.quantity || 0),
+          unassigned_quantity: Number(entry.unassigned_quantity ?? entry.quantity ?? 0),
+          saleable_quantity: Number(entry.saleable_quantity ?? entry.quantity ?? 0),
+          deck_quantity: Number(entry.deck_quantity || 0),
+          display_price: Number(entry.display_price || entry.market_price || 0),
+          sale_quantity: Number(entry.sale_quantity || 0),
+          sale_price: Number(entry.sale_price || entry.display_price || entry.market_price || 0),
+          card_condition: conditionText(entry),
+          condition_inventory: Array.isArray(entry.condition_inventory) ? entry.condition_inventory : [],
+          image_small: entry.image_small || "",
+          image_normal: entry.image_normal || "",
+        });
+      }
     } else {
-      state.selectedCards.delete(key);
+      for (const entry of entries) {
+        state.selectedCards.delete(cardSelectionKey(entry));
+      }
     }
     updateBulkBar();
   });
@@ -1171,6 +1393,12 @@ function activatePage(pageName, options = {}) {
       renderCollection();
     });
   }
+  if (page === "sets") {
+    clearSelectedCards();
+    loadOwnedSets().catch((error) => {
+      setStatus(error.message, "error", els.setsStatus);
+    });
+  }
   if (page === "missing-list") {
     clearSelectedCards();
     loadMissingList().catch((error) => {
@@ -1208,6 +1436,7 @@ function activatePage(pageName, options = {}) {
 function activeStatusTarget() {
   const visiblePage = Array.from(els.pages).find((page) => !page.hidden)?.dataset.page || "";
   if (visiblePage === "favorites") return els.favoritesStatus;
+  if (visiblePage === "sets") return els.setsStatus;
   if (visiblePage === "missing-list") return els.missingStatus;
   if (visiblePage === "for-sale") return els.saleStatus;
   if (visiblePage === "wishlist") return els.wishlistStatus;
@@ -1249,8 +1478,18 @@ function sharedRouteId() {
 }
 
 function setRouteCode() {
+  if (window.location.pathname.startsWith("/sets/shared/")) return "";
   const match = window.location.pathname.match(/^\/sets\/([^/]+)\/?$/);
   return match ? decodeURIComponent(match[1]).toLowerCase() : "";
+}
+
+function sharedSetRoute() {
+  const match = window.location.pathname.match(/^\/sets\/shared\/([^/]+)\/([^/]+)\/?$/);
+  if (!match) return null;
+  return {
+    storeShareId: decodeURIComponent(match[1]),
+    setCode: decodeURIComponent(match[2]).toLowerCase(),
+  };
 }
 
 function deckRouteId() {
@@ -1557,6 +1796,20 @@ async function loadCards() {
   renderCollection();
 }
 
+async function loadOwnedSets() {
+  const [cardData, setData] = await Promise.all([
+    api(`/api/cards?${new URLSearchParams({
+      owned: "owned",
+      sort: "set",
+      limit: "5000",
+    }).toString()}`),
+    api("/api/sets"),
+  ]);
+  state.ownedSetCards = cardData.cards || [];
+  state.ownedSets = ownedSetGroups(state.ownedSetCards, setData.sets || []);
+  renderOwnedSets();
+}
+
 async function loadFavorites() {
   const [cardData, deckData] = await Promise.all([
     api(`/api/cards?${favoriteQuery()}`),
@@ -1676,6 +1929,185 @@ function renderCollection() {
     renderCardList(state.cards, els.cardsGrid, options);
   } else {
     renderCards(state.cards, els.cardsGrid, options);
+  }
+}
+
+function setGroupKey(card) {
+  return (card.set_code || card.set || card.set_name || "unknown").toString().trim().toLowerCase() || "unknown";
+}
+
+function ownedSetGroups(cards, completionSets = []) {
+  const completionByCode = new Map((completionSets || []).map((set) => [String(set.set_code || "").toLowerCase(), set]));
+  const groups = new Map();
+  for (const card of groupedCardsForDisplay(cards || [])) {
+    const quantity = Number(card.quantity || 0);
+    if (quantity <= 0) continue;
+    const key = setGroupKey(card);
+    const group = groups.get(key) || {
+      key,
+      set_code: (card.set_code || card.set || key).toString().toLowerCase(),
+      set_name: card.set_name || (card.set_code || key).toString().toUpperCase(),
+      cards: [],
+      unique_count: 0,
+      quantity: 0,
+      value: 0,
+      preview_images: [],
+    };
+    group.cards.push(card);
+    group.unique_count += 1;
+    group.quantity += quantity;
+    group.value += Number(card.owned_value || card.total_value || 0);
+    if (card.image_normal || card.image_small) {
+      group.preview_images.push(card.image_normal || card.image_small);
+    }
+    groups.set(key, group);
+  }
+  return Array.from(groups.values())
+    .map((group) => {
+      const completion = completionByCode.get(String(group.set_code || group.key).toLowerCase()) || {};
+      const totalCards = Number(completion.total_cards || 0);
+      const ownedUnique = Number(completion.owned_cards || group.unique_count || 0);
+      const completionPercent = totalCards > 0 ? (ownedUnique / totalCards) * 100 : null;
+      return {
+        ...group,
+        set_name: completion.set_name || group.set_name,
+        total_cards: totalCards,
+        owned_cards: ownedUnique,
+        completion_percent: completionPercent,
+        preview_images: Array.from(new Set(group.preview_images)).slice(0, 5),
+        cards: group.cards.sort(compareCardsBySetOrder),
+      };
+    })
+    .sort((a, b) => a.set_name.localeCompare(b.set_name));
+}
+
+function setCompletionLabel(set) {
+  const percent = set.completion_percent;
+  return percent !== null && percent !== undefined && Number.isFinite(Number(percent)) ? `${Number(percent).toFixed(1)}%` : "Unknown";
+}
+
+function setCompletionMetaText(set) {
+  const uniqueText = Number(set.total_cards || 0) > 0
+    ? `${integer.format(set.owned_cards || set.unique_count || 0)} / ${integer.format(set.total_cards || 0)} unique`
+    : `${integer.format(set.unique_count || 0)} unique owned`;
+  return `${uniqueText} - ${integer.format(set.quantity || 0)} cards - ${dollars.format(set.value || 0)}`;
+}
+
+function compareCardsBySetOrder(a, b) {
+  const numberA = Number.parseFloat(a.collector_number);
+  const numberB = Number.parseFloat(b.collector_number);
+  if (Number.isFinite(numberA) && Number.isFinite(numberB) && numberA !== numberB) {
+    return numberA - numberB;
+  }
+  return String(a.collector_number || "").localeCompare(String(b.collector_number || ""), undefined, { numeric: true })
+    || cardTitle(a).localeCompare(cardTitle(b));
+}
+
+function renderOwnedSets() {
+  if (!els.setsGrid || !els.setsOverviewShell || !els.setsDetailShell) return;
+  state.activeOwnedSet = null;
+  els.setsOverviewShell.hidden = false;
+  els.setsDetailShell.hidden = true;
+  els.setsDetailShell.innerHTML = "";
+  els.setsGrid.innerHTML = "";
+  const sets = state.ownedSets || [];
+  if (els.setsStatus) {
+    els.setsStatus.textContent = `${integer.format(sets.length)} owned set${sets.length === 1 ? "" : "s"}`;
+  }
+  if (!sets.length) {
+    els.setsGrid.innerHTML = '<div class="empty-state">No owned sets yet.</div>';
+    return;
+  }
+  for (const set of sets) {
+    const item = document.createElement("button");
+    const previewImages = Array.from(new Set(set.preview_images || [])).slice(0, 5);
+    item.className = `deck-card set-card${previewImages.length ? " has-deck-preview" : ""}`;
+    item.type = "button";
+    item.dataset.setKey = set.key;
+    item.setAttribute("aria-label", `Open ${set.set_name}`);
+    item.innerHTML = `
+      ${deckPreviewImagesHtml(previewImages)}
+      <div>
+        <p class="eyebrow">${escapeHtml((set.set_code || "").toUpperCase())}</p>
+        <h3>${escapeHtml(set.set_name)}</h3>
+      </div>
+      <strong>${escapeHtml(setCompletionLabel(set))}</strong>
+      <span>${escapeHtml(setCompletionMetaText(set))}</span>
+      ${Number(set.total_cards || 0) > 0 ? `
+        <div class="set-card-progress" aria-label="${escapeHtml(setCompletionLabel(set))} complete">
+          <span style="width: ${Math.max(0, Math.min(100, Number(set.completion_percent || 0)))}%"></span>
+        </div>
+      ` : ""}
+    `;
+    item.addEventListener("click", () => openOwnedSet(set.key));
+    els.setsGrid.appendChild(item);
+  }
+}
+
+function openOwnedSet(setKey) {
+  const set = (state.ownedSets || []).find((item) => item.key === setKey);
+  if (!set || !els.setsOverviewShell || !els.setsDetailShell) return;
+  state.activeOwnedSet = set;
+  els.setsOverviewShell.hidden = true;
+  els.setsDetailShell.hidden = false;
+  renderOwnedSetDetail(set);
+}
+
+function closeOwnedSetDetail() {
+  state.activeOwnedSet = null;
+  if (els.setsOverviewShell) els.setsOverviewShell.hidden = false;
+  if (els.setsDetailShell) {
+    els.setsDetailShell.hidden = true;
+    els.setsDetailShell.innerHTML = "";
+  }
+}
+
+function renderOwnedSetDetail(set) {
+  if (!els.setsDetailShell) return;
+  els.setsDetailShell.innerHTML = `
+    <div class="section-head set-detail-head">
+      <div>
+        <p class="eyebrow">${escapeHtml((set.set_code || "").toUpperCase())}</p>
+        <h2>${escapeHtml(set.set_name)}</h2>
+        <span>${escapeHtml(setCompletionLabel(set))} complete - ${escapeHtml(setCompletionMetaText(set))}</span>
+      </div>
+      <div class="set-detail-actions">
+        <button id="emailSetButton" class="share-button" type="button" aria-label="Email set" title="Email set"><span class="send-icon" aria-hidden="true"></span></button>
+        <button id="shareSetButton" class="share-button" type="button" aria-label="Share set" title="Share set">&#8599;</button>
+        <button id="addMissingSetWishlistButton" class="share-button set-missing-wishlist-button" type="button" aria-label="Add missing cards to wishlist" title="Add Missing Cards to Wishlist"><span class="wishlist-icon" aria-hidden="true"></span></button>
+        <button id="backToSetsButton" class="secondary-button" type="button">Back to Sets</button>
+      </div>
+    </div>
+    <div id="ownedSetCardsGrid" class="cards-grid set-cards-grid"></div>
+  `;
+  els.setsDetailShell.querySelector("#backToSetsButton").addEventListener("click", closeOwnedSetDetail);
+  els.setsDetailShell.querySelector("#shareSetButton").addEventListener("click", () => openSetShareModal(set));
+  els.setsDetailShell.querySelector("#emailSetButton").addEventListener("click", () => openEmailSetModal(set));
+  els.setsDetailShell.querySelector("#addMissingSetWishlistButton").addEventListener("click", (event) => {
+    addOwnedSetMissingToWishlist(set, event.currentTarget).catch((error) => setStatus(error.message, "error", els.setsStatus));
+  });
+  renderCards(set.cards || [], els.setsDetailShell.querySelector("#ownedSetCardsGrid"), { hideWishlist: true });
+}
+
+async function addOwnedSetMissingToWishlist(set, button) {
+  if (!set?.set_code) return;
+  const confirmed = window.confirm(`Create "${set.set_name} Missing List" wishlist and add every missing card from this set?`);
+  if (!confirmed) return;
+  const originalTitle = button.title;
+  button.disabled = true;
+  button.title = "Creating wishlist...";
+  try {
+    const result = await api(`/api/sets/${encodeURIComponent(set.set_code)}/missing-wishlist`, {
+      method: "POST",
+      body: "{}",
+    });
+    const wishlist = result.wishlist || {};
+    setStatus(`Created ${wishlist.name || "wishlist"} with ${integer.format(result.added || 0)} missing card${Number(result.added || 0) === 1 ? "" : "s"}.`, "success", els.setsStatus);
+    await loadWishlists();
+    await refresh();
+  } finally {
+    button.disabled = false;
+    button.title = originalTitle;
   }
 }
 
@@ -1897,6 +2329,7 @@ function shareUrlForEntity(type, entity) {
   if (type === "card") return shareUrlForCard(entity);
   if (type === "deck") return shareUrlForDeck(entity);
   if (type === "container") return shareUrlForContainer(entity);
+  if (type === "set") return shareUrlForSet(entity);
   return shareUrlForWishlist(entity);
 }
 
@@ -1904,6 +2337,7 @@ function emailEntityLabel(type) {
   if (type === "card") return "Card";
   if (type === "deck") return "Deck";
   if (type === "container") return "Container";
+  if (type === "set") return "Set";
   return "Wishlist";
 }
 
@@ -1912,7 +2346,7 @@ function openEmailShareModal(type, entity) {
   state.emailingWishlist = type === "wishlist" ? entity : null;
   els.emailWishlistForm.reset();
   els.emailWishlistForm.entity_type.value = type;
-  els.emailWishlistForm.entity_id.value = entity.id || entity.scryfall_id || entity.card_id || "";
+  els.emailWishlistForm.entity_id.value = entity.id || entity.set_code || entity.scryfall_id || entity.card_id || "";
   const label = emailEntityLabel(type);
   els.emailWishlistTitle.textContent = `Email ${entity.name || label}`;
   els.emailWishlistStatus.textContent = shareUrlForEntity(type, entity);
@@ -1936,6 +2370,10 @@ function openEmailContainerModal(container) {
 
 function openEmailCardModal(card) {
   openEmailShareModal("card", card);
+}
+
+function openEmailSetModal(set) {
+  openEmailShareModal("set", set);
 }
 
 function closeEmailWishlistModal() {
@@ -1974,6 +2412,7 @@ function renderCatalogSearchResults() {
     const item = document.createElement("article");
     item.className = "catalog-result-card";
     item.classList.toggle("is-owned", owned);
+    item.classList.toggle("is-special", cardHasSpecialVariant(card));
     item.innerHTML = `
       <a class="catalog-result-art" href="${escapeHtml(cardDetailUrl(card))}" title="Open card details">
         <img src="${escapeHtml(card.image_normal || card.image_small || "")}" alt="${escapeHtml(cardTitle(card))}">
@@ -1982,6 +2421,7 @@ function renderCatalogSearchResults() {
         <h3>${escapeHtml(cardTitle(card))}</h3>
         <p>${escapeHtml(card.set_name || "")} #${escapeHtml(card.collector_number || "")} - ${escapeHtml(card.rarity || "unknown")}</p>
         <p>${escapeHtml(card.type_line || "")}</p>
+        ${owned ? variantSummaryHtml(card) : ""}
         <div class="catalog-result-pills">
           <span>${escapeHtml(cardTypeLabel(card))}</span>
           <span>${escapeHtml(cardColorLabel(card))}</span>
@@ -2233,6 +2673,7 @@ function isCardGridTarget(target) {
 }
 
 function renderCards(cards, target = els.cardsGrid, options = {}) {
+  cards = groupedCardsForDisplay(cards);
   target.innerHTML = "";
   if (!cards.length) {
     target.innerHTML = '<div class="empty-state">No cards match the current filters.</div>';
@@ -2242,7 +2683,9 @@ function renderCards(cards, target = els.cardsGrid, options = {}) {
   for (const card of cards) {
     const owned = Number(card.quantity || 0) > 0;
     const catalogOnly = Boolean(card.catalog_only);
+    const summaries = variantSummaries(card);
     const node = els.template.content.firstElementChild.cloneNode(true);
+    const tileBackground = node.querySelector(".card-tile-art-bg");
     const selectWrap = node.querySelector(".select-card-wrap");
     const selectCheckbox = node.querySelector(".select-card-checkbox");
     const link = node.querySelector(".card-art");
@@ -2266,6 +2709,9 @@ function renderCards(cards, target = els.cardsGrid, options = {}) {
     const containerButton = node.querySelector(".container-membership-button");
     const scryfallButton = node.querySelector(".scryfall-button");
     const shareButton = node.querySelector(".share-button");
+    const tileBackgroundImage = cssImageUrl(card.image_normal || card.image_small || "");
+    node.style.setProperty("--card-tile-bg-image", tileBackgroundImage);
+    if (tileBackground) tileBackground.style.backgroundImage = tileBackgroundImage;
 
     link.href = catalogOnly ? (card.scryfall_uri || "#") : cardDetailUrl(card);
     link.target = catalogOnly ? "_blank" : "_self";
@@ -2276,16 +2722,17 @@ function renderCards(cards, target = els.cardsGrid, options = {}) {
     meta.textContent = `${card.set_name} #${card.collector_number} - ${card.rarity || "unknown"}${cardRulesName(card) ? ` - Rules: ${cardRulesName(card)}` : ""}`;
     type.textContent = card.type_line || "";
     quantityWatermark.textContent = integer.format(card.quantity || 0);
-    node.classList.toggle("is-special", isSpecialVariant(card.variant));
+    node.classList.toggle("is-special", cardHasSpecialVariant(card));
     node.classList.toggle("is-missing", !owned);
     ownedValue.textContent = dollars.format(card.owned_value || 0);
     if (price) price.textContent = `Now ${dollars.format(card.display_price || 0)}`;
     delta.textContent = `Delta ${dollars.format(card.gain_loss || 0)}`;
     delta.className = `delta ${valueClass(card.gain_loss || 0)}`;
-    variantPill.textContent = card.variant || "Normal";
-    conditionPill.textContent = conditionText(card);
+    variantPill.textContent = summaries.length > 1 ? `${integer.format(summaries.length)} variants` : (card.variant || "Normal");
+    conditionPill.textContent = summaries.length > 1 ? "Mixed conditions" : conditionText(card);
     typePill.textContent = cardTypeLabel(card);
     colorPill.textContent = cardColorLabel(card);
+    type.insertAdjacentHTML("afterend", variantSummaryHtml(card));
 
     if (options.setMissingSelectable) {
       wireSetMissingSelection(selectWrap, selectCheckbox, card);
@@ -2320,12 +2767,12 @@ function renderCards(cards, target = els.cardsGrid, options = {}) {
         setStatus(error.message, "error", options.statusTarget || els.status);
       }
     });
-    if (options.hideWishlist) {
+    if (options.hideWishlist || options.readonly) {
       wishlistButton.hidden = true;
     } else {
       wireWishlistButton(wishlistButton, card, options);
     }
-    if (catalogOnly) {
+    if (catalogOnly || options.readonly) {
       refreshButton.hidden = true;
       editButton.hidden = true;
       shareButton.hidden = true;
@@ -2347,6 +2794,7 @@ function renderCards(cards, target = els.cardsGrid, options = {}) {
 }
 
 function renderCardList(cards, target = els.cardsGrid, options = {}) {
+  cards = groupedCardsForDisplay(cards);
   target.innerHTML = "";
   if (!cards.length) {
     target.innerHTML = '<div class="empty-state">No cards match the current filters.</div>';
@@ -2356,6 +2804,7 @@ function renderCardList(cards, target = els.cardsGrid, options = {}) {
   for (const card of cards) {
     const owned = Number(card.quantity || 0) > 0;
     const catalogOnly = Boolean(card.catalog_only);
+    const summaries = variantSummaries(card);
     const node = els.listTemplate.content.firstElementChild.cloneNode(true);
     const selectWrap = node.querySelector(".select-card-wrap");
     const selectCheckbox = node.querySelector(".select-card-checkbox");
@@ -2380,7 +2829,7 @@ function renderCardList(cards, target = els.cardsGrid, options = {}) {
     const wishlistButton = node.querySelector(".wishlist-button");
     const deleteButton = node.querySelector(".delete-card-button");
 
-    node.classList.toggle("is-special", isSpecialVariant(card.variant));
+    node.classList.toggle("is-special", cardHasSpecialVariant(card));
     node.classList.toggle("is-missing", !owned);
     link.href = catalogOnly ? (card.scryfall_uri || "#") : cardDetailUrl(card);
     link.target = catalogOnly ? "_blank" : "_self";
@@ -2393,16 +2842,17 @@ function renderCardList(cards, target = els.cardsGrid, options = {}) {
     price.textContent = `Now ${dollars.format(card.display_price || 0)}`;
     ownedValue.textContent = `Value ${dollars.format(card.owned_value || 0)}`;
     quantity.textContent = `Qty ${integer.format(card.quantity || 0)}`;
-    variant.textContent = card.variant || "Normal";
-    conditionPill.textContent = conditionText(card);
+    variant.textContent = summaries.length > 1 ? `${integer.format(summaries.length)} variants` : (card.variant || "Normal");
+    conditionPill.textContent = summaries.length > 1 ? "Mixed conditions" : conditionText(card);
     typePill.textContent = cardTypeLabel(card);
     colorPill.textContent = cardColorLabel(card);
+    type.insertAdjacentHTML("afterend", variantSummaryHtml(card));
 
     wireCardSelection(selectWrap, selectCheckbox, card, options);
     wireDeckMembershipButton(deckButton, card, target === els.cardsGrid);
     wireContainerMembershipButton(containerButton, card, target === els.cardsGrid);
     wireScryfallButton(scryfallButton, card);
-    if (catalogOnly) {
+    if (catalogOnly || options.readonly) {
       deckButton.hidden = true;
       containerButton.hidden = true;
       refreshButton.hidden = true;
@@ -2416,7 +2866,7 @@ function renderCardList(cards, target = els.cardsGrid, options = {}) {
       wireDeleteCardButton(deleteButton, card);
       wireCardDetailNavigation(node, card);
     }
-    if (options.hideWishlist) {
+    if (options.hideWishlist || options.readonly) {
       wishlistButton.hidden = true;
     } else {
       wireWishlistButton(wishlistButton, card, options);
@@ -2492,6 +2942,13 @@ function shareUrlForContainer(container) {
   return new URL(`/containers/${encodeURIComponent(container.share_id)}`, window.location.origin).toString();
 }
 
+function shareUrlForSet(set) {
+  if (!set || !set.set_code) return "";
+  const storeShareId = set.store_share_id || state.user?.store_share_id || "";
+  if (!storeShareId) return "";
+  return new URL(`/sets/shared/${encodeURIComponent(storeShareId)}/${encodeURIComponent(set.set_code)}`, window.location.origin).toString();
+}
+
 function shareUrlForFavorites() {
   return new URL("/favorites/shared", window.location.origin).toString();
 }
@@ -2539,6 +2996,15 @@ function openContainerShareModal(container) {
     return;
   }
   openShareUrl(container.name || "Container", url);
+}
+
+function openSetShareModal(set) {
+  const url = shareUrlForSet(set);
+  if (!url) {
+    setStatus("This set does not have a share link yet.", "error", els.setsStatus);
+    return;
+  }
+  openShareUrl(set.set_name || "Set", url);
 }
 
 function openFavoritesShareModal() {
@@ -4471,6 +4937,10 @@ function escapeAttribute(value) {
   return escapeHtml(value).replaceAll("'", "&#39;");
 }
 
+function cssImageUrl(value) {
+  return `url("${String(value || "").replaceAll("\\", "\\\\").replaceAll('"', "%22")}")`;
+}
+
 function renderSharedCard(card) {
   state.sharedCard = card;
   const specialClass = isSpecialVariant(card.variant) ? " is-special" : "";
@@ -4547,11 +5017,23 @@ function renderMovementHistory(movements) {
   `;
 }
 
-function renderCardPriceChart(points = []) {
-  const cleanPoints = points
-    .map((point) => ({ date: point.date, value: Number(point.value || 0) }))
-    .filter((point) => point.date && point.value > 0);
-  if (!cleanPoints.length) {
+function normalizedPriceSeries(card) {
+  const source = Array.isArray(card.price_histories) && card.price_histories.length
+    ? card.price_histories
+    : [{ variant: card.variant || "Normal", points: card.price_history || [] }];
+  return source
+    .map((series) => ({
+      variant: series.variant || "Normal",
+      points: (series.points || [])
+        .map((point) => ({ date: point.date, value: Number(point.value || 0) }))
+        .filter((point) => point.date && point.value > 0),
+    }))
+    .filter((series) => series.points.length);
+}
+
+function renderCardPriceChart(card) {
+  const seriesList = normalizedPriceSeries(card);
+  if (!seriesList.length) {
     return `
       <div class="card-price-empty">
         <span>No price snapshots yet.</span>
@@ -4561,45 +5043,85 @@ function renderCardPriceChart(points = []) {
   const width = 340;
   const height = 170;
   const pad = 18;
-  const values = cleanPoints.map((point) => point.value);
+  const allDates = Array.from(new Set(seriesList.flatMap((series) => series.points.map((point) => point.date)))).sort();
+  const values = seriesList.flatMap((series) => series.points.map((point) => point.value));
   const minValue = Math.min(...values);
   const maxValue = Math.max(...values);
   const range = Math.max(0.01, maxValue - minValue);
-  const xFor = (index) => {
-    if (cleanPoints.length === 1) return width / 2;
-    return pad + (index / (cleanPoints.length - 1)) * (width - pad * 2);
+  const midValue = minValue + range / 2;
+  const yTicks = [
+    { value: maxValue, y: pad, anchor: "start" },
+    { value: midValue, y: height / 2, anchor: "start" },
+    { value: minValue, y: height - pad, anchor: "start" },
+  ];
+  const firstDate = allDates[0] || "";
+  const lastDate = allDates[allDates.length - 1] || "";
+  const xForDate = (dateValue) => {
+    const index = allDates.indexOf(dateValue);
+    if (allDates.length <= 1 || index < 0) return width / 2;
+    return pad + (index / (allDates.length - 1)) * (width - pad * 2);
   };
   const yFor = (value) => height - pad - ((value - minValue) / range) * (height - pad * 2);
-  const path = cleanPoints
-    .map((point, index) => `${index === 0 ? "M" : "L"} ${xFor(index).toFixed(1)} ${yFor(point.value).toFixed(1)}`)
+  const pathFor = (points) => points
+    .map((point, index) => `${index === 0 ? "M" : "L"} ${xForDate(point.date).toFixed(1)} ${yFor(point.value).toFixed(1)}`)
     .join(" ");
-  const area = `${path} L ${xFor(cleanPoints.length - 1).toFixed(1)} ${height - pad} L ${xFor(0).toFixed(1)} ${height - pad} Z`;
-  const latest = cleanPoints[cleanPoints.length - 1];
-  const first = cleanPoints[0];
+  const normalSeries = seriesList.find((series) => !isSpecialVariant(series.variant)) || seriesList[0];
+  const latest = normalSeries.points[normalSeries.points.length - 1];
+  const first = normalSeries.points[0];
   const delta = latest.value - first.value;
+  const normalSeriesMarkup = [];
+  const specialSeriesMarkup = [];
+  for (const series of seriesList) {
+    const path = pathFor(series.points);
+    const special = isSpecialVariant(series.variant);
+    const area = series.points.length
+      ? `${path} L ${xForDate(series.points[series.points.length - 1].date).toFixed(1)} ${height - pad} L ${xForDate(series.points[0].date).toFixed(1)} ${height - pad} Z`
+      : "";
+    const markup = `
+      <path d="${area}" class="card-price-area ${special ? "is-special" : "is-normal"}"></path>
+      <path d="${path}" class="card-price-line ${special ? "is-special" : "is-normal"}"></path>
+      ${series.points.map((point, index) => `
+        <circle class="${special ? "is-special" : "is-normal"}" cx="${xForDate(point.date).toFixed(1)}" cy="${yFor(point.value).toFixed(1)}" r="${index === series.points.length - 1 ? "4" : "2.5"}">
+          <title>${escapeHtml(series.variant)} ${escapeHtml(formatDate(point.date))}: ${dollars.format(point.value)}</title>
+        </circle>
+      `).join("")}
+    `;
+    if (special) specialSeriesMarkup.push(markup);
+    else normalSeriesMarkup.push(markup);
+  }
   return `
     <div class="card-price-chart-wrap">
       <svg class="card-price-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Market value for the past 3 months">
         <defs>
-          <linearGradient id="cardPriceArea" x1="0" x2="0" y1="0" y2="1">
-            <stop offset="0%" stop-color="currentColor" stop-opacity="0.22"></stop>
-            <stop offset="100%" stop-color="currentColor" stop-opacity="0.03"></stop>
+          <linearGradient id="cardPriceAreaNormal" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" stop-color="var(--chart-normal)" stop-opacity="0.26"></stop>
+            <stop offset="100%" stop-color="var(--chart-normal)" stop-opacity="0.04"></stop>
+          </linearGradient>
+          <linearGradient id="cardPriceAreaSpecial" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" stop-color="var(--chart-special-back)" stop-opacity="0.30"></stop>
+            <stop offset="100%" stop-color="var(--chart-special-back)" stop-opacity="0.05"></stop>
           </linearGradient>
         </defs>
         <line x1="${pad}" y1="${height - pad}" x2="${width - pad}" y2="${height - pad}" class="card-price-axis"></line>
         <line x1="${pad}" y1="${pad}" x2="${width - pad}" y2="${pad}" class="card-price-grid"></line>
         <line x1="${pad}" y1="${height / 2}" x2="${width - pad}" y2="${height / 2}" class="card-price-grid"></line>
-        <path d="${area}" class="card-price-area"></path>
-        <path d="${path}" class="card-price-line"></path>
-        ${cleanPoints.map((point, index) => `
-          <circle cx="${xFor(index).toFixed(1)}" cy="${yFor(point.value).toFixed(1)}" r="${index === cleanPoints.length - 1 ? "4" : "2.5"}">
-            <title>${escapeHtml(formatDate(point.date))}: ${dollars.format(point.value)}</title>
-          </circle>
+        ${yTicks.map((tick) => `
+          <text x="${pad + 3}" y="${tick.y - 4}" class="card-price-scale-label" text-anchor="${tick.anchor}">${escapeHtml(dollars.format(tick.value))}</text>
         `).join("")}
+        ${firstDate ? `<text x="${pad}" y="${height - 2}" class="card-price-date-label" text-anchor="start">${escapeHtml(formatDate(firstDate))}</text>` : ""}
+        ${lastDate && lastDate !== firstDate ? `<text x="${width - pad}" y="${height - 2}" class="card-price-date-label" text-anchor="end">${escapeHtml(formatDate(lastDate))}</text>` : ""}
+        ${specialSeriesMarkup.join("")}
+        ${normalSeriesMarkup.join("")}
       </svg>
       <div class="card-price-chart-meta">
         <strong>${dollars.format(latest.value)}</strong>
-        <span class="${valueClass(delta)}">${delta >= 0 ? "+" : ""}${dollars.format(delta)}</span>
+        <span class="${valueClass(delta)}">${escapeHtml(normalSeries.variant)} ${delta >= 0 ? "+" : ""}${dollars.format(delta)}</span>
+      </div>
+      <div class="card-price-legend">
+        ${seriesList.map((series) => {
+          const latestPoint = series.points[series.points.length - 1];
+          return `<span class="${isSpecialVariant(series.variant) ? "is-special" : "is-normal"}"><i></i>${escapeHtml(series.variant)} ${dollars.format(latestPoint.value)}</span>`;
+        }).join("")}
       </div>
     </div>
   `;
@@ -4701,16 +5223,18 @@ async function openCardSaleSellersModal(card) {
 
 function renderCardDetail(card) {
   state.activeCardDetail = card;
-  const specialClass = isSpecialVariant(card.variant) ? " is-special" : "";
-  const owned = Number(card.quantity || 0) > 0;
+  const specialClass = cardHasSpecialVariant(card) ? " is-special" : "";
+  const ownedQuantity = totalVariantQuantity(card);
+  const owned = ownedQuantity > 0;
   const canManageCollection = Boolean(state.user && !card.readonly);
+  const summaries = variantSummaries(card);
   const hasDecks = deckMemberships(card).length > 0;
   const hasContainers = containerMemberships(card).length > 0;
   const listedForSale = Number(card.sale_quantity || 0) > 0;
   const detailsHtml = owned ? `
           <div>
             <dt>Owned</dt>
-            <dd>${integer.format(card.quantity || 0)}</dd>
+            <dd>${integer.format(ownedQuantity)}</dd>
           </div>
           <div>
             <dt>Average Paid</dt>
@@ -4722,7 +5246,7 @@ function renderCardDetail(card) {
           </div>
           <div>
             <dt>Total Value</dt>
-            <dd>${dollars.format(card.total_value ?? card.owned_value ?? 0)}</dd>
+            <dd>${dollars.format(totalVariantMarketValue(card))}</dd>
           </div>
           <div>
             <dt>Total Delta</dt>
@@ -4744,7 +5268,7 @@ function renderCardDetail(card) {
   `;
   els.cardDetailShell.innerHTML = `
     <div class="card-detail-layout">
-      <article class="shared-card editable-card-detail${specialClass}">
+      <article class="shared-card editable-card-detail${specialClass}" style="--card-detail-bg-image: url('${escapeAttribute(card.image_normal || card.image_small || "")}')">
         <div class="card-detail-media">
           <a class="shared-card-art" href="${escapeHtml(card.scryfall_uri || "#")}" target="_blank" rel="noreferrer" title="Open on Scryfall">
             <img src="${escapeHtml(card.image_normal || card.image_small || "")}" alt="${escapeHtml(cardTitle(card))}">
@@ -4767,11 +5291,12 @@ function renderCardDetail(card) {
           ${cardRulesName(card) ? `<p>Rules: ${escapeHtml(cardRulesName(card))}</p>` : ""}
           <p>${escapeHtml(card.type_line || "")}</p>
           <div class="detail-pill-row">
-            <span>${escapeHtml(card.variant || "Normal")}</span>
-            ${owned ? `<span>${escapeHtml(conditionText(card))}</span>` : ""}
+            <span>${escapeHtml(summaries.length > 1 ? `${integer.format(summaries.length)} variants` : (card.variant || "Normal"))}</span>
+            ${owned ? `<span>${escapeHtml(summaries.length > 1 ? "Mixed conditions" : conditionText(card))}</span>` : ""}
             <span>${escapeHtml(cardTypeLabel(card))}</span>
             <span>${escapeHtml(cardColorLabel(card))}</span>
           </div>
+          ${owned ? variantSummaryHtml(card) : ""}
           <dl class="shared-card-details">
             ${detailsHtml}
           </dl>
@@ -4796,7 +5321,7 @@ function renderCardDetail(card) {
             <h2>Market</h2>
             <span>Past 3 months</span>
           </div>
-          ${renderCardPriceChart(card.price_history || [])}
+          ${renderCardPriceChart(card)}
         </section>
         <section class="card-insight-panel card-meta-panel">
           <div class="panel-head compact-panel-head">
@@ -5095,49 +5620,50 @@ async function loadSharedCard(shareId) {
   }
 }
 
-function renderSetPage(setDetail, cards) {
+function renderSetPage(setDetail, cards, options = {}) {
   state.activeSet = setDetail;
   state.setCards = cards;
   state.selectedSetMissingCards.clear();
   const percent = Math.max(0, Math.min(100, Number(setDetail.completion_percent || 0)));
+  const readonly = Boolean(options.readonly || setDetail.readonly);
   els.setPageShell.innerHTML = `
     <section class="set-hero">
       <div>
-        <p class="eyebrow">Set completion</p>
+        <p class="eyebrow">${readonly ? "Shared set" : "Set completion"}</p>
         <h2>${escapeHtml(setDetail.set_name || setDetail.set_code)}</h2>
-        <span>${integer.format(setDetail.owned_cards || 0)} / ${integer.format(setDetail.total_cards || 0)} unique prints</span>
+        <span>${readonly && setDetail.owner_name ? `${escapeHtml(setDetail.owner_name)} - ` : ""}${integer.format(setDetail.owned_cards || 0)} / ${integer.format(setDetail.total_cards || 0)} unique prints</span>
       </div>
       <div class="set-hero-actions">
         <b>${percent.toFixed(1)}%</b>
-        <button id="addMissingSetButton" class="primary-button" type="button">Add Missing to Missing List</button>
+        ${readonly ? "" : '<button id="addMissingSetButton" class="primary-button" type="button">Add Missing to Missing List</button>'}
       </div>
       <div class="set-progress set-progress-large" aria-label="${percent.toFixed(1)} percent complete">
         <span style="width: ${percent}%"></span>
       </div>
     </section>
     <div id="setPageStatus" class="status" aria-live="polite"></div>
-    <div id="setMissingBulkBar" class="bulk-bar" hidden>
+    <div id="setMissingBulkBar" class="bulk-bar" ${readonly ? "hidden" : "hidden"}>
       <span id="setMissingSelectedCount">0 selected</span>
       <button id="addSelectedMissingButton" class="primary-button" type="button">Add to Missing List</button>
     </div>
     <div id="setCardsGrid" class="cards-grid set-cards-grid"></div>
   `;
   const addMissingButton = els.setPageShell.querySelector("#addMissingSetButton");
-  addMissingButton.addEventListener("click", () => {
+  if (addMissingButton) addMissingButton.addEventListener("click", () => {
     addSetMissingToMissingList(setDetail.set_code, addMissingButton).catch((error) => {
       const status = els.setPageShell.querySelector("#setPageStatus");
       setStatus(error.message, "error", status);
     });
   });
   const addSelectedButton = els.setPageShell.querySelector("#addSelectedMissingButton");
-  addSelectedButton.addEventListener("click", () => {
+  if (addSelectedButton) addSelectedButton.addEventListener("click", () => {
     addSelectedSetMissingToMissingList(addSelectedButton).catch((error) => {
       const status = els.setPageShell.querySelector("#setPageStatus");
       setStatus(error.message, "error", status);
     });
   });
-  renderCards(cards, els.setPageShell.querySelector("#setCardsGrid"), { setMissingSelectable: true });
-  updateSetMissingBar();
+  renderCards(cards, els.setPageShell.querySelector("#setCardsGrid"), readonly ? { readonly: true, hideWishlist: true } : { setMissingSelectable: true });
+  if (!readonly) updateSetMissingBar();
 }
 
 async function addSetMissingToMissingList(setCode, button) {
@@ -5591,6 +6117,18 @@ async function loadSetPage(setCode) {
       }).toString()}`),
     ]);
     renderSetPage(setDetail, cardData.cards || []);
+  } catch (error) {
+    els.setPageShell.innerHTML = `<div class="empty-state">${escapeHtml(error.message)}</div>`;
+  }
+}
+
+async function loadSharedSet(route) {
+  if (!route?.storeShareId || !route?.setCode) return;
+  showPage("set");
+  els.setPageShell.innerHTML = '<div class="empty-state">Loading shared set...</div>';
+  try {
+    const payload = await api(`/api/shared-sets/${encodeURIComponent(route.storeShareId)}/${encodeURIComponent(route.setCode)}`);
+    renderSetPage(payload, payload.cards || [], { readonly: true });
   } catch (error) {
     els.setPageShell.innerHTML = `<div class="empty-state">${escapeHtml(error.message)}</div>`;
   }
@@ -6449,6 +6987,7 @@ function wireEvents() {
       deck: "decks",
       container: "containers",
       wishlist: "wishlists",
+      set: "sets",
     };
     const endpoint = endpoints[type];
     const label = emailEntityLabel(type);
@@ -6472,7 +7011,7 @@ function wireEvents() {
       });
       const recipient = payload.email;
       closeEmailWishlistModal();
-      const statusTarget = type === "deck" ? els.decksStatus : type === "container" ? els.containersStatus : type === "wishlist" ? els.wishlistStatus : els.status;
+      const statusTarget = type === "deck" ? els.decksStatus : type === "container" ? els.containersStatus : type === "wishlist" ? els.wishlistStatus : type === "set" ? els.setsStatus : els.status;
       setStatus(`${label} emailed to ${recipient}.`, "success", statusTarget);
     } catch (error) {
       els.emailWishlistStatus.textContent = error.message;
@@ -6732,6 +7271,7 @@ async function boot() {
   applySettings();
   const initialSharedId = sharedRouteId();
   const initialSetCode = setRouteCode();
+  const initialSharedSet = sharedSetRoute();
   const initialDeckRouteId = deckRouteId();
   const initialDeckEditorId = isPrivateDeckRoute(initialDeckRouteId) ? initialDeckRouteId : "";
   const initialDeckShareId = initialDeckRouteId && !initialDeckEditorId ? initialDeckRouteId : "";
@@ -6743,7 +7283,7 @@ async function boot() {
   const initialVerificationToken = verificationRouteToken();
   const initialPasswordResetToken = passwordResetRouteToken();
   const initialAppPage = appPageRoute();
-  const isAlwaysShareOnlyRoute = Boolean(initialDeckShareId || initialWishlistShareId || initialContainerShareId || initialStoreShareId || initialFavoritesShare);
+  const isAlwaysShareOnlyRoute = Boolean(initialSharedSet || initialDeckShareId || initialWishlistShareId || initialContainerShareId || initialStoreShareId || initialFavoritesShare);
   await loadSession().catch(() => {
     state.user = null;
     updateAuthUi();
@@ -6781,6 +7321,9 @@ async function boot() {
   } else if (initialFavoritesShare) {
     document.body.classList.add("share-only");
     loadSharedFavorites();
+  } else if (initialSharedSet) {
+    document.body.classList.add("share-only");
+    loadSharedSet(initialSharedSet);
   } else if (initialVerificationToken) {
     loadEmailVerification(initialVerificationToken);
   } else if (initialPasswordResetToken) {

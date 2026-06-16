@@ -82,6 +82,7 @@ CARD_CONDITIONS = (
     "Damaged",
 )
 DEFAULT_CARD_CONDITION = "Near Mint"
+CONDITION_ORDER = {condition: index for index, condition in enumerate(CARD_CONDITIONS)}
 CONTAINER_TYPES = ("binder", "box", "other")
 DEFAULT_CONTAINER_TYPE = "other"
 THEMES = {"light", "dark", "retro", "neon", "red", "blue", "black", "green", "pride"}
@@ -1930,6 +1931,7 @@ def user_payload(row):
         "contact_telegram": row["contact_telegram"] if "contact_telegram" in row.keys() else "",
         "contact_discord": row["contact_discord"] if "contact_discord" in row.keys() else "",
         "contact_website": row["contact_website"] if "contact_website" in row.keys() else "",
+        "store_share_id": row["store_share_id"] if "store_share_id" in row.keys() else "",
         "created_at": row["created_at"],
     }
 
@@ -2602,6 +2604,73 @@ def owned_quantities_for_cards(conn, card_ids, user_id=None):
     return {row["card_id"]: row["owned_quantity"] or 0 for row in rows}
 
 
+def variant_summaries_for_cards(conn, card_ids, user_id=None):
+    if not card_ids or user_id is None:
+        return {}
+    unique_ids = list(dict.fromkeys(card_id for card_id in card_ids if card_id))
+    if not unique_ids:
+        return {}
+    placeholders = ",".join("?" for _ in unique_ids)
+    summaries = {}
+    collection_rows = conn.execute(
+        f"""
+        SELECT card_id, COALESCE(NULLIF(variant, ''), 'Normal') AS variant,
+               COALESCE(SUM(quantity), 0) AS quantity
+        FROM collection
+        WHERE user_id = ? AND card_id IN ({placeholders}) AND COALESCE(quantity, 0) > 0
+        GROUP BY card_id, COALESCE(NULLIF(variant, ''), 'Normal')
+        """,
+        [user_id] + unique_ids,
+    ).fetchall()
+    for row in collection_rows:
+        card_id = row["card_id"]
+        variant = row["variant"] or "Normal"
+        summaries.setdefault(card_id, {})[variant] = {
+            "variant": variant,
+            "quantity": int(row["quantity"] or 0),
+            "conditions": [],
+        }
+    purchase_rows = conn.execute(
+        f"""
+        SELECT card_id, COALESCE(NULLIF(variant, ''), 'Normal') AS variant,
+               COALESCE(NULLIF(card_condition, ''), ?) AS card_condition,
+               COALESCE(SUM(quantity), 0) AS quantity
+        FROM card_purchases
+        WHERE user_id = ? AND card_id IN ({placeholders})
+        GROUP BY card_id, COALESCE(NULLIF(variant, ''), 'Normal'), COALESCE(NULLIF(card_condition, ''), ?)
+        HAVING COALESCE(SUM(quantity), 0) > 0
+        """,
+        [DEFAULT_CARD_CONDITION, user_id] + unique_ids + [DEFAULT_CARD_CONDITION],
+    ).fetchall()
+    for row in purchase_rows:
+        card_id = row["card_id"]
+        variant = row["variant"] or "Normal"
+        summary = summaries.setdefault(card_id, {}).setdefault(variant, {
+            "variant": variant,
+            "quantity": 0,
+            "conditions": [],
+        })
+        summary["conditions"].append({
+            "card_condition": card_condition(row["card_condition"]),
+            "quantity": int(row["quantity"] or 0),
+        })
+    for variants in summaries.values():
+        for summary in variants.values():
+            if not summary["conditions"] and summary["quantity"] > 0:
+                summary["conditions"].append({
+                    "card_condition": DEFAULT_CARD_CONDITION,
+                    "quantity": summary["quantity"],
+                })
+            summary["conditions"].sort(key=lambda item: (CONDITION_ORDER.get(item["card_condition"], 99), item["card_condition"]))
+    def sort_key(item):
+        variant = item["variant"] or "Normal"
+        return (0 if variant.lower() == "normal" else 1, variant.lower())
+    return {
+        card_id: sorted(variants.values(), key=sort_key)
+        for card_id, variants in summaries.items()
+    }
+
+
 def wishlist_flags_for_cards(conn, card_ids, user_id=None):
     if not card_ids:
         return {}
@@ -2664,10 +2733,12 @@ def search_scryfall_cards(conn, query, language=None, order=None, user_id=None):
     scryfall_cards = payload.get("data", [])[:24]
     card_ids = [card.get("id") for card in scryfall_cards if card.get("id")]
     owned_quantities = owned_quantities_for_cards(conn, card_ids, user_id)
+    variant_summaries = variant_summaries_for_cards(conn, card_ids, user_id)
     wishlist_flags = wishlist_flags_for_cards(conn, card_ids, user_id)
     cards = []
     for card in scryfall_cards:
         summary = card_summary(card, owned_quantities.get(card.get("id"), 0))
+        summary["variant_summaries"] = variant_summaries.get(card.get("id"), [])
         summary["wishlist"] = wishlist_flags.get(card.get("id"), 0)
         cards.append(summary)
     return {"cards": cards}
@@ -3335,7 +3406,7 @@ def set_completion(conn, user_id, limit=10):
     rows = conn.execute(
         """
         SELECT
-            s.code AS set_code,
+            COALESCE(s.code, c.set_code) AS set_code,
             COALESCE(s.name, c.set_name) AS set_name,
             COALESCE(s.cached_at, '') AS cached_at,
             COUNT(DISTINCT c.scryfall_id) AS total_cards,
@@ -4725,6 +4796,7 @@ def list_cards(conn, query, user_id):
         [user_id, user_id, user_id, user_id, user_id, user_id] + values + [limit],
     ).fetchall()
     cards = rows_to_dicts(rows)
+    variant_summaries = variant_summaries_for_cards(conn, [card.get("scryfall_id") for card in cards], user_id)
     condition_inventory = {}
     card_keys = [(card.get("scryfall_id"), card.get("variant") or "Normal") for card in cards]
     if card_keys:
@@ -4824,6 +4896,7 @@ def list_cards(conn, query, user_id):
     for card in cards:
         key = (card.get("scryfall_id"), card.get("variant") or "Normal")
         card["container_memberships"] = container_memberships.get(key, [])
+        card["variant_summaries"] = variant_summaries.get(card.get("scryfall_id"), [])
     return cards
 
 
@@ -5006,6 +5079,67 @@ def email_wishlist(conn, user, wishlist_id, payload):
     return {"ok": True, "email": recipient, "provider": result.get("provider"), "status": result.get("status")}
 
 
+def set_share_url(store_share_id, set_code):
+    return (
+        f"{verification_base_url()}/sets/shared/"
+        f"{urllib.parse.quote(store_share_id or '')}/"
+        f"{urllib.parse.quote((set_code or '').lower())}"
+    )
+
+
+def set_share_payload(conn, user_id, set_code):
+    detail = set_detail(conn, user_id, set_code)
+    cards = list_cards(conn, urllib.parse.urlencode({
+        "set": set_code,
+        "owned": "all",
+        "sort": "set-owned",
+        "limit": "5000",
+    }), user_id)
+    detail["name"] = detail.get("set_name") or detail.get("set_code") or "Set"
+    detail["cards"] = cards
+    detail["description"] = (
+        f"{detail.get('completion_percent', 0)}% complete "
+        f"({detail.get('owned_cards', 0)} / {detail.get('total_cards', 0)} unique prints)"
+    )
+    return detail
+
+
+def shared_set(conn, store_share_id, set_code):
+    owner = conn.execute(
+        """
+        SELECT id, COALESCE(name, email) AS name, store_share_id
+        FROM users
+        WHERE store_share_id = ?
+        """,
+        (store_share_id,),
+    ).fetchone()
+    if not owner:
+        raise KeyError("Shared set not found")
+    payload = set_share_payload(conn, owner["id"], set_code)
+    payload["readonly"] = True
+    payload["owner_name"] = owner["name"] or "FoilFolio user"
+    payload["store_share_id"] = owner["store_share_id"]
+    return payload
+
+
+def email_set(conn, user, set_code, payload):
+    recipient = validate_email(payload.get("email"))
+    set_code = (set_code or "").strip().lower()
+    set_payload = set_share_payload(conn, user["id"], set_code)
+    store_share_id = user["store_share_id"] if "store_share_id" in user.keys() else ""
+    share_url = set_share_url(store_share_id, set_code)
+    sender_name = user["name"] or user["email"]
+    subject = f"FoilFolio: {sender_name} sharing set: {set_payload['name']}"
+    result = send_email(
+        recipient,
+        subject,
+        text=shared_list_email_text(set_payload, share_url, sender_name, "set"),
+        html=shared_list_email_html(set_payload, share_url, sender_name, "set"),
+        tags=["foilfolio", "set-share"],
+    )
+    return {"ok": True, "email": recipient, "provider": result.get("provider"), "status": result.get("status")}
+
+
 def email_card_colors(card):
     colors = card.get("colors")
     if isinstance(colors, str):
@@ -5027,6 +5161,8 @@ def share_list_quantity(card, entity_type):
         return int(card.get("deck_quantity") or card.get("quantity") or 0)
     if entity_type == "container":
         return int(card.get("stored_quantity") or card.get("quantity") or 0)
+    if entity_type == "set":
+        return int(card.get("quantity") or 0)
     return int(card.get("quantity") or 1)
 
 
@@ -5776,6 +5912,23 @@ def card_price_history(conn, card_id, variant="Normal", days=92):
     return points
 
 
+def card_price_histories(conn, card_id, variants=None, days=92):
+    requested = []
+    for variant in variants or ["Normal"]:
+        variant = variant or "Normal"
+        if variant not in requested:
+            requested.append(variant)
+    if "Normal" not in requested:
+        requested.insert(0, "Normal")
+    return [
+        {
+            "variant": variant,
+            "points": card_price_history(conn, card_id, variant, days),
+        }
+        for variant in requested
+    ]
+
+
 def card_aggregate_stats(conn, card_id):
     row = conn.execute(
         """
@@ -5897,7 +6050,10 @@ def card_detail(conn, user_id, card_id, variant="Normal"):
     if not row:
         scryfall_card = request_json(SCRYFALL_ID_URL.format(card_id=urllib.parse.quote(card_id)))
         card = scryfall_card_detail_payload(scryfall_card, variant, user_id=user_id, conn=conn)
+        card["variant_summaries"] = variant_summaries_for_cards(conn, [card_id], user_id).get(card_id, [])
         card["price_history"] = card_price_history(conn, card_id, variant)
+        variants = [item.get("variant") for item in card.get("variant_summaries") or []] or [variant]
+        card["price_histories"] = card_price_histories(conn, card_id, variants)
         card["aggregate_stats"] = card_aggregate_stats(conn, card_id)
         card["private_notes"] = card_private_notes(conn, user_id, card_id, variant)
         return card
@@ -5905,6 +6061,7 @@ def card_detail(conn, user_id, card_id, variant="Normal"):
     card["purchases"] = purchase_history(conn, user_id, card_id, variant)
     card["movements"] = movement_history(conn, user_id, card_id, variant)
     card["condition_inventory"] = condition_inventory_for_card(conn, user_id, card_id)
+    card["variant_summaries"] = variant_summaries_for_cards(conn, [card_id], user_id).get(card_id, [])
     card["deck_memberships"] = card_deck_memberships(conn, user_id, card_id, variant)
     card["container_memberships"] = card_container_memberships(conn, user_id, card_id, variant)
     sale = conn.execute(
@@ -5922,6 +6079,8 @@ def card_detail(conn, user_id, card_id, variant="Normal"):
     card["sale_quantity"] = int(sale["sale_quantity"] or 0) if sale else 0
     card["sale_price"] = float(sale["sale_price"] or 0) if sale else 0
     card["price_history"] = card_price_history(conn, card_id, variant)
+    variants = [item.get("variant") for item in card.get("variant_summaries") or []] or [variant]
+    card["price_histories"] = card_price_histories(conn, card_id, variants)
     card["aggregate_stats"] = card_aggregate_stats(conn, card_id)
     card["private_notes"] = card_private_notes(conn, user_id, card_id, variant)
     return card
@@ -6410,6 +6569,87 @@ def add_set_missing_to_missing_list(conn, user_id, set_code):
         )
     conn.commit()
     return {"ok": True, "added": added, "tagged": len(rows), "set_code": set_code}
+
+
+def set_missing_wishlist_name(set_name):
+    suffix = " Missing List"
+    name = (set_name or "Set").strip() or "Set"
+    max_base = max(1, 30 - len(suffix))
+    if len(name) + len(suffix) > 30:
+        name = name[:max_base].rstrip()
+    return f"{name}{suffix}"
+
+
+def create_set_missing_wishlist(conn, user_id, set_code):
+    set_code = (set_code or "").strip().lower()
+    if not set_code:
+        raise ValueError("Set code is required.")
+    set_row = conn.execute(
+        """
+        SELECT COALESCE(s.name, MAX(c.set_name), ?) AS set_name
+        FROM cards c
+        LEFT JOIN sets s ON s.code = c.set_code
+        WHERE lower(c.set_code) = ?
+        GROUP BY c.set_code
+        """,
+        (set_code.upper(), set_code),
+    ).fetchone()
+    if not set_row:
+        raise KeyError("Set not found")
+    wishlist_name = set_missing_wishlist_name(set_row["set_name"])
+    if cross_entity_name_exists(conn, user_id, wishlist_name):
+        raise ValueError(f'A wishlist named "{wishlist_name}" already exists.')
+    rows = conn.execute(
+        """
+        SELECT c.scryfall_id
+        FROM cards c
+        WHERE lower(c.set_code) = ?
+          AND NOT EXISTS (
+              SELECT 1
+              FROM collection col
+              WHERE col.user_id = ?
+                AND col.card_id = c.scryfall_id
+                AND COALESCE(col.quantity, 0) > 0
+          )
+        ORDER BY c.collector_number COLLATE NOCASE, c.name COLLATE NOCASE
+        """,
+        (set_code, user_id),
+    ).fetchall()
+    timestamp = now_iso()
+    share_id = new_wishlist_share_id(conn)
+    cursor = conn.execute(
+        "INSERT INTO wishlists (user_id, share_id, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+        (user_id, share_id, wishlist_name, timestamp, timestamp),
+    )
+    wishlist_id = cursor.lastrowid
+    for row in rows:
+        conn.execute(
+            """
+            INSERT INTO wishlist_items (wishlist_id, user_id, card_id, variant, quantity, updated_at)
+            VALUES (?, ?, ?, 'Normal', 1, ?)
+            ON CONFLICT(wishlist_id, card_id, variant) DO UPDATE SET
+                quantity = excluded.quantity,
+                updated_at = excluded.updated_at
+            """,
+            (wishlist_id, user_id, row["scryfall_id"], timestamp),
+        )
+        conn.execute(
+            """
+            INSERT INTO card_meta (user_id, card_id, variant, favorite, missing_list, wishlist, updated_at)
+            VALUES (?, ?, 'Normal', 0, 0, 1, ?)
+            ON CONFLICT(user_id, card_id, variant) DO UPDATE SET
+                wishlist = 1,
+                updated_at = excluded.updated_at
+            """,
+            (user_id, row["scryfall_id"], timestamp),
+        )
+    conn.commit()
+    return {
+        "ok": True,
+        "added": len(rows),
+        "set_code": set_code,
+        "wishlist": wishlist_detail(conn, user_id, wishlist_id),
+    }
 
 
 def update_cards_missing_list(conn, user_id, payload):
@@ -7220,6 +7460,9 @@ class Handler(SimpleHTTPRequestHandler):
                 if match:
                     user = self.require_user(conn)
                     return self.send_json(container_detail(conn, user["id"], int(match.group(1))))
+                if parsed.path == "/api/sets":
+                    user = self.require_user(conn)
+                    return self.send_json({"sets": set_completion(conn, user["id"], 5000)})
                 match = re.match(r"^/api/sets/([^/]+)$", parsed.path)
                 if match:
                     user = self.require_user(conn)
@@ -7242,6 +7485,13 @@ class Handler(SimpleHTTPRequestHandler):
                 match = re.match(r"^/api/shared-containers/([^/]+)$", parsed.path)
                 if match:
                     return self.send_json(shared_container(conn, urllib.parse.unquote(match.group(1))))
+                match = re.match(r"^/api/shared-sets/([^/]+)/([^/]+)$", parsed.path)
+                if match:
+                    return self.send_json(shared_set(
+                        conn,
+                        urllib.parse.unquote(match.group(1)),
+                        urllib.parse.unquote(match.group(2)).lower(),
+                    ))
                 match = re.match(r"^/api/stores/([^/]+)$", parsed.path)
                 if match:
                     return self.send_json(shared_store(conn, urllib.parse.unquote(match.group(1))))
@@ -7293,12 +7543,13 @@ class Handler(SimpleHTTPRequestHandler):
             return self.send_json({"error": str(exc)}, HTTPStatus.INTERNAL_SERVER_ERROR)
         if (
             re.match(r"^/(cards|sets|decks|wishlists|containers)/[^/]+/?$", parsed.path)
+            or re.match(r"^/sets/shared/[^/]+/[^/]+/?$", parsed.path)
             or re.match(r"^/card/[^/]+/[^/]+/?$", parsed.path)
             or re.match(r"^/stores/[^/]+/?$", parsed.path)
             or re.match(r"^/favorites/shared/?$", parsed.path)
             or re.match(r"^/verify-email/[^/]+/?$", parsed.path)
             or re.match(r"^/reset-password/[^/]+/?$", parsed.path)
-            or re.match(r"^/(favorites|collection|decks|containers|missing-list|for-sale|wishlist|search|import)/?$", parsed.path)
+            or re.match(r"^/(favorites|collection|sets|decks|containers|missing-list|for-sale|wishlist|search|import)/?$", parsed.path)
         ):
             self.path = "/index.html"
         return super().do_GET()
@@ -7404,6 +7655,10 @@ class Handler(SimpleHTTPRequestHandler):
                 if match:
                     user = self.require_user(conn)
                     return self.send_json(email_wishlist(conn, user, int(match.group(1)), self.read_json()))
+                match = re.match(r"^/api/sets/([^/]+)/email$", parsed.path)
+                if match:
+                    user = self.require_user(conn)
+                    return self.send_json(email_set(conn, user, urllib.parse.unquote(match.group(1)).lower(), self.read_json()))
                 match = re.match(r"^/api/shared-decks/([^/]+)/favorite$", parsed.path)
                 if match:
                     user = self.require_user(conn)
@@ -7447,6 +7702,10 @@ class Handler(SimpleHTTPRequestHandler):
                 if match:
                     user = self.require_user(conn)
                     return self.send_json(add_set_missing_to_missing_list(conn, user["id"], urllib.parse.unquote(match.group(1)).lower()))
+                match = re.match(r"^/api/sets/([^/]+)/missing-wishlist$", parsed.path)
+                if match:
+                    user = self.require_user(conn)
+                    return self.send_json(create_set_missing_wishlist(conn, user["id"], urllib.parse.unquote(match.group(1)).lower()), HTTPStatus.CREATED)
         except urllib.error.URLError as exc:
             LOGGER.warning("%s %s network error: %s", self.command, self.path, exc)
             return self.send_json({"error": f"Network error: {exc}"}, HTTPStatus.BAD_GATEWAY)

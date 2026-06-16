@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>FoilFolio</title>
-    <link rel="stylesheet" href="/styles.css?v=98">
+    <link rel="stylesheet" href="/styles.css?v=111">
   </head>
   <body>
     <header class="topbar">
@@ -25,6 +25,7 @@
           <button class="nav-command" type="button" data-page-target="search"><span class="catalog-search-icon" aria-hidden="true"></span>Search</button>
           <button class="nav-command" type="button" data-page-target="favorites"><span class="favorites-icon" aria-hidden="true"></span>Favorites</button>
           <button class="nav-command" type="button" data-page-target="collection"><span class="collection-icon" aria-hidden="true"></span>Collection</button>
+          <button class="nav-command" type="button" data-page-target="sets"><span class="sets-icon" aria-hidden="true"></span>Sets</button>
           <button class="nav-command" type="button" data-page-target="decks"><span class="deck-icon" aria-hidden="true"></span>Decks</button>
           <button class="nav-command" type="button" data-page-target="containers"><span class="container-icon box-icon" aria-hidden="true"></span>Containers</button>
           <button class="nav-command" type="button" data-page-target="missing-list"><span class="missing-icon" aria-hidden="true"></span>Missing List</button>
@@ -198,6 +199,20 @@
         </div>
         <div id="status" class="status" aria-live="polite"></div>
         <div id="cardsGrid" class="cards-grid"></div>
+      </section>
+
+      <section class="sets-band app-page" data-page="sets" hidden>
+        <div id="setsOverviewShell" class="sets-overview-shell">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Owned sets</p>
+              <h2>Sets</h2>
+            </div>
+          </div>
+          <div id="setsStatus" class="status" aria-live="polite"></div>
+          <div id="setsGrid" class="decks-grid sets-grid"></div>
+        </div>
+        <div id="setsDetailShell" class="sets-detail-shell" hidden></div>
       </section>
 
       <section class="decks-band app-page" data-page="decks" hidden>
@@ -538,6 +553,7 @@
 
     <template id="cardTemplate">
       <article class="card-row">
+        <div class="card-tile-art-bg" aria-hidden="true"></div>
         <div class="quantity-watermark" aria-hidden="true"></div>
         <header class="collection-card-head">
           <label class="select-card-wrap" title="Select card">
@@ -1481,6 +1497,6 @@
       </section>
     </div>
 
-  <script src="/app.js?v=111"></script>
+    <script src="/app.js?v=122"></script>
   </body>
 </html>
