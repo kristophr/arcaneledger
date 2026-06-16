@@ -4565,7 +4565,7 @@ main {
 
 .wishlist-detail-toolbar {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 10px;
   align-items: center;
   padding: 0 16px 12px;
@@ -4584,6 +4584,17 @@ main {
 
 .wishlist-detail-grid {
   padding: 0 16px 16px;
+}
+
+.wishlist-card-row.is-fulfilled {
+  border-color: color-mix(in srgb, var(--accent-2) 44%, var(--line));
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--accent-2) 10%, transparent), transparent 42%),
+    var(--panel);
+}
+
+.shared-wishlist-market-links {
+  margin-top: 8px;
 }
 
 .assign-wishlist-preview {

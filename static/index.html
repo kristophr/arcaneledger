@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>FoilFolio</title>
-    <link rel="stylesheet" href="/styles.css?v=111">
+    <link rel="stylesheet" href="/styles.css?v=112">
   </head>
   <body>
     <header class="topbar">
@@ -1153,12 +1153,12 @@
             <option value="name">Name</option>
             <option value="price">Card price</option>
           </select>
-          <div class="view-toggle" aria-label="Wishlist view">
+          <div class="view-toggle" aria-label="Wishlist view" hidden>
             <button id="wishlistTileViewButton" class="is-active" type="button">Tiles</button>
             <button id="wishlistListViewButton" type="button">List</button>
           </div>
         </div>
-        <div id="wishlistGrid" class="cards-grid wishlist-detail-grid"></div>
+        <div id="wishlistGrid" class="missing-list-grid wishlist-detail-grid"></div>
         <div class="modal-actions deck-detail-footer">
           <button id="deleteWishlistButton" class="danger-action-button" type="button" aria-label="Delete wishlist" title="Delete wishlist">
             <span class="trash-icon" aria-hidden="true"></span>
@@ -1497,6 +1497,6 @@
       </section>
     </div>
 
-    <script src="/app.js?v=122"></script>
+    <script src="/app.js?v=123"></script>
   </body>
 </html>

@@ -2194,23 +2194,49 @@ function renderFavoriteDecks() {
 }
 
 function renderWishlist() {
-  els.wishlistGrid.className = state.wishlistView === "list" ? "cards-list wishlist-detail-grid" : "cards-grid wishlist-detail-grid";
-  els.wishlistTileViewButton.classList.toggle("is-active", state.wishlistView === "tiles");
-  els.wishlistListViewButton.classList.toggle("is-active", state.wishlistView === "list");
-  const options = {
-    wishlistId: state.activeWishlist?.id,
-    confirmUnwishlist: true,
-    statusTarget: els.wishlistStatus,
-    afterWishlistChange: async () => {
-      await loadWishlist();
-      await loadWishlists();
-      await refresh();
-    },
-  };
-  if (state.wishlistView === "list") {
-    renderCardList(state.wishlistCards, els.wishlistGrid, options);
-  } else {
-    renderCards(state.wishlistCards, els.wishlistGrid, options);
+  els.wishlistGrid.className = "missing-list-grid wishlist-detail-grid";
+  if (els.wishlistTileViewButton) els.wishlistTileViewButton.classList.remove("is-active");
+  if (els.wishlistListViewButton) els.wishlistListViewButton.classList.add("is-active");
+  els.wishlistGrid.innerHTML = "";
+  if (!state.wishlistCards.length) {
+    els.wishlistGrid.innerHTML = '<div class="empty-state">No cards are on this Wishlist yet.</div>';
+    return;
+  }
+  for (const card of state.wishlistCards) {
+    const row = document.createElement("article");
+    row.className = `missing-card-row wishlist-card-row ${card.fulfilled ? "is-fulfilled" : ""}`;
+    row.innerHTML = `
+      <a class="missing-card-art" href="${escapeHtml(cardDetailUrl(card))}">
+        <img src="${escapeHtml(card.image_small || card.image_normal || "")}" alt="${escapeHtml(cardTitle(card))}">
+      </a>
+      <div class="missing-card-main">
+        <div class="missing-card-title-row">
+          <div>
+            <h3>${escapeHtml(cardTitle(card))}</h3>
+            <p>${escapeHtml(card.set_name || "")} #${escapeHtml(card.collector_number || "")}${cardRulesName(card) ? ` - Rules: ${escapeHtml(cardRulesName(card))}` : ""}</p>
+          </div>
+          <div class="missing-card-pills">
+            <span>${escapeHtml(card.rarity || "unknown")}</span>
+            <span>${escapeHtml(cardTypeLabel(card))}</span>
+            <span>${escapeHtml(cardColorLabel(card))}</span>
+            <span>Need ${integer.format(card.wishlist_quantity || 1)}</span>
+            ${card.fulfilled ? "<span>Owned</span>" : ""}
+          </div>
+        </div>
+        <div class="missing-market-links">
+          ${marketplaceLinksHtml(card)}
+        </div>
+      </div>
+      <div class="missing-row-actions">
+        <button class="remove-missing-button" type="button" aria-label="Remove from Wishlist" title="Remove from Wishlist">
+          <span class="remove-list-icon" aria-hidden="true"></span>
+        </button>
+      </div>
+    `;
+    row.querySelector(".remove-missing-button").addEventListener("click", () => {
+      removeFromActiveWishlist(card).catch((error) => setStatus(error.message, "error", els.wishlistStatus));
+    });
+    els.wishlistGrid.appendChild(row);
   }
 }
 
@@ -2264,6 +2290,24 @@ function closeWishlistDetailModal() {
   state.wishlistCards = [];
   els.wishlistGrid.innerHTML = "";
   els.wishlistSearchInput.value = "";
+}
+
+async function removeFromActiveWishlist(card) {
+  if (!state.activeWishlist) return;
+  const confirmed = window.confirm(`Remove ${cardTitle(card)} from "${state.activeWishlist.name || "Wishlist"}"?`);
+  if (!confirmed) return;
+  await api(`/api/cards/${encodeURIComponent(card.scryfall_id)}/wishlist`, {
+    method: "POST",
+    body: JSON.stringify({
+      variant: card.variant || "Normal",
+      wishlist_id: state.activeWishlist.id,
+      wishlist: false,
+    }),
+  });
+  setStatus(`Removed ${cardTitle(card)} from Wishlist.`, "success", els.wishlistStatus);
+  await loadWishlist();
+  await loadWishlists();
+  await refresh();
 }
 
 function openAddWishlistModal() {
@@ -5756,6 +5800,7 @@ function wishlistRowsHtml(cards) {
         <strong>${escapeHtml(cardTitle(card))}</strong>
         <span>${escapeHtml(card.set_name || "")} #${escapeHtml(card.collector_number || "")} - ${escapeHtml(card.variant || "Normal")}</span>
         <div class="deck-card-tags">${cardMetadataPillsHtml(card)}</div>
+        <div class="missing-market-links shared-wishlist-market-links">${marketplaceLinksHtml(card)}</div>
       </div>
       <b>${card.wishlist_quantity ? `Need ${integer.format(card.wishlist_quantity)}` : dollars.format(card.display_price || 0)}${card.fulfilled ? " ✓" : ""}</b>
     </article>
