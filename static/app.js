@@ -74,13 +74,13 @@ const state = {
   selectedCards: new Map(),
   selectedSetMissingCards: new Map(),
   user: null,
-  collectionView: localStorage.getItem("foilfolio.collectionView") || "tiles",
-  favoritesView: localStorage.getItem("foilfolio.favoritesView") || "tiles",
-  favoritesFilter: localStorage.getItem("foilfolio.favoritesFilter") || "all",
+  collectionView: localStorage.getItem("arcaneledger.collectionView") || "tiles",
+  favoritesView: localStorage.getItem("arcaneledger.favoritesView") || "tiles",
+  favoritesFilter: localStorage.getItem("arcaneledger.favoritesFilter") || "all",
   settings: null,
 };
 
-const settingsKey = "foilfolio.settings";
+const settingsKey = "arcaneledger.settings";
 
 const dollars = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -715,7 +715,7 @@ function setAuthMode(mode) {
       : isResetRequest
         ? "Enter your account email and we will send a password reset link."
         : isResetComplete
-          ? "Choose a new strong password for your FoilFolio account."
+          ? "Choose a new strong password for your Arcane Ledger account."
           : "Log in to manage your collection, decks, containers, favorites, and wishlist.";
   els.authForm.password.autocomplete = (isComplete || isResetComplete) ? "new-password" : "current-password";
   if (els.togglePasswordVisibilityButton) {
@@ -765,7 +765,7 @@ async function submitAuthForm() {
       method: "POST",
       body: JSON.stringify({ email: payload.email }),
     });
-    els.authStatus.textContent = result.message || "If that email has a FoilFolio account, a password reset link has been sent.";
+    els.authStatus.textContent = result.message || "If that email has an Arcane Ledger account, a password reset link has been sent.";
     els.authStatus.dataset.tone = "";
     return;
   }
@@ -1406,7 +1406,7 @@ async function deleteCollectionCard(card) {
 
 function setCollectionView(view) {
   state.collectionView = view === "list" ? "list" : "tiles";
-  localStorage.setItem("foilfolio.collectionView", state.collectionView);
+  localStorage.setItem("arcaneledger.collectionView", state.collectionView);
   els.tileViewButton.classList.toggle("is-active", state.collectionView === "tiles");
   els.listViewButton.classList.toggle("is-active", state.collectionView === "list");
   renderCollection();
@@ -1414,7 +1414,7 @@ function setCollectionView(view) {
 
 function setFavoritesView(view) {
   state.favoritesView = view === "list" ? "list" : "tiles";
-  localStorage.setItem("foilfolio.favoritesView", state.favoritesView);
+  localStorage.setItem("arcaneledger.favoritesView", state.favoritesView);
   els.favoriteTileViewButton.classList.toggle("is-active", state.favoritesView === "tiles");
   els.favoriteListViewButton.classList.toggle("is-active", state.favoritesView === "list");
   renderFavorites();
@@ -1422,7 +1422,7 @@ function setFavoritesView(view) {
 
 function setFavoritesFilter(filter) {
   state.favoritesFilter = ["all", "cards", "decks", "store"].includes(filter) ? filter : "all";
-  localStorage.setItem("foilfolio.favoritesFilter", state.favoritesFilter);
+  localStorage.setItem("arcaneledger.favoritesFilter", state.favoritesFilter);
   renderFavorites();
 }
 
@@ -2479,7 +2479,7 @@ function renderFavoriteDecks() {
         <h3><span class="deck-icon" aria-hidden="true"></span><span>${escapeHtml(deck.name || "Deck")}</span></h3>
       </button>
       <strong>${integer.format(deck.card_count || 0)}</strong>
-      <span>${escapeHtml(deck.owner_name || "FoilFolio user")}</span>
+      <span>${escapeHtml(deck.owner_name || "Arcane Ledger user")}</span>
       <div class="wishlist-card-actions">
         <button class="share-button favorite-deck-unfavorite" type="button" aria-label="Remove favorite deck" title="Remove favorite">☆</button>
         <a class="share-button" href="${escapeHtml(deck.deck_url || `/decks/${encodeURIComponent(deck.share_id || "")}`)}" target="_blank" rel="noreferrer" aria-label="Open deck" title="Open deck">&#8599;</a>
@@ -3453,7 +3453,7 @@ async function saveAdminUser(row) {
 async function deleteAdminUser(row, user) {
   const userId = row?.dataset.userId;
   if (!userId) return;
-  const confirmed = window.confirm(`Delete ${user?.email || "this user"} and all of their FoilFolio data? This cannot be undone.`);
+  const confirmed = window.confirm(`Delete ${user?.email || "this user"} and all of their Arcane Ledger data? This cannot be undone.`);
   if (!confirmed) return;
   const result = await api(`/api/admin/users/${encodeURIComponent(userId)}`, {
     method: "DELETE",
@@ -4039,7 +4039,7 @@ function cardBlogPostRowHtml(post) {
         </div>
       </div>
       <p>${escapeHtml(post.body || "")}</p>
-      ${state.user ? `<button class="report-content-button" type="button" data-target-type="profile_post" data-target-id="${escapeHtml(post.id)}" data-target-label="blog post by ${escapeAttribute(post.author?.name || "FoilFolio user")}">Report</button>` : ""}
+      ${state.user ? `<button class="report-content-button" type="button" data-target-type="profile_post" data-target-id="${escapeHtml(post.id)}" data-target-label="blog post by ${escapeAttribute(post.author?.name || "Arcane Ledger user")}">Report</button>` : ""}
     </article>
   `;
 }
@@ -4160,7 +4160,7 @@ function closeCardContainersModal() {
 function closeCardMetaModal() {
   els.cardMetaOverlay.hidden = true;
   document.body.classList.remove("modal-open");
-  els.cardMetaEyebrow.textContent = "FoilFolio meta";
+  els.cardMetaEyebrow.textContent = "Arcane Ledger meta";
   els.cardMetaTitle.textContent = "Card Meta";
   els.cardMetaList.innerHTML = "";
 }
@@ -4246,7 +4246,7 @@ function deckJsonCard(card) {
 
 function deckJsonPayload(deck, includeNotes = false) {
   const payload = {
-    format: includeNotes ? "foilfolio.deck.full" : "foilfolio.deck",
+    format: includeNotes ? "arcaneledger.deck.full" : "arcaneledger.deck",
     version: 1,
     exported_at: new Date().toISOString(),
     name: deck.name || "Deck",
@@ -5947,7 +5947,7 @@ function renderImportMappingStep() {
   els.importMappingTable.innerHTML = `
     <div class="import-mapping-head">
       <span>CSV column</span>
-      <span>FoilFolio field</span>
+      <span>Arcane Ledger field</span>
       <span>Required</span>
     </div>
     ${(wizard.fields || []).map((field) => `
@@ -6890,7 +6890,7 @@ function renderSharedCard(card) {
         </div>
       </div>
       <div class="shared-card-copy">
-        <p class="eyebrow">Shared from FoilFolio</p>
+        <p class="eyebrow">Shared from Arcane Ledger</p>
         <h2>${escapeHtml(cardTitle(card))}</h2>
         <div class="card-divider"></div>
         <p>${escapeHtml(card.set_name)} #${escapeHtml(card.collector_number)} - ${escapeHtml(card.rarity || "unknown")}</p>
@@ -6973,11 +6973,11 @@ function renderCardComments(card) {
       ${comments.length ? comments.map((comment) => `
         <article class="card-comment-row">
           <div class="card-comment-meta">
-            <a href="${escapeHtml(comment.author?.profile_url || "#")}" class="card-comment-author">${escapeHtml(comment.author?.name || "FoilFolio user")}</a>
+            <a href="${escapeHtml(comment.author?.profile_url || "#")}" class="card-comment-author">${escapeHtml(comment.author?.name || "Arcane Ledger user")}</a>
             <span>${escapeHtml(formatDate(comment.created_at))}</span>
           </div>
           <p>${escapeHtml(comment.body || "")}</p>
-          ${state.user ? `<button class="report-content-button" type="button" data-target-type="card_comment" data-target-id="${escapeHtml(comment.id)}" data-target-label="card comment by ${escapeAttribute(comment.author?.name || "FoilFolio user")}">Report</button>` : ""}
+          ${state.user ? `<button class="report-content-button" type="button" data-target-type="card_comment" data-target-id="${escapeHtml(comment.id)}" data-target-label="card comment by ${escapeAttribute(comment.author?.name || "Arcane Ledger user")}">Report</button>` : ""}
           <button class="comment-upvote-button ${comment.user_upvoted ? "is-active" : ""}" type="button" data-comment-id="${escapeHtml(comment.id)}" ${comment.can_upvote ? "" : "disabled"} title="${comment.can_upvote ? "Upvote this comment" : "You cannot upvote your own comment"}" aria-label="Upvote comment">
             <span aria-hidden="true">▲</span>
             <b>${integer.format(comment.upvote_count || 0)}</b>
@@ -7265,7 +7265,7 @@ function renderCardAggregateStats(stats = {}) {
   `;
 }
 
-function openCardMetaOverlay(title, eyebrow = "FoilFolio meta") {
+function openCardMetaOverlay(title, eyebrow = "Arcane Ledger meta") {
   els.cardMetaEyebrow.textContent = eyebrow;
   els.cardMetaTitle.textContent = title;
   els.cardMetaOverlay.hidden = false;
@@ -7286,7 +7286,7 @@ async function openCardDeckReferencesModal(card) {
       <a class="card-meta-drilldown-row" href="${escapeHtml(deck.deck_url || `/decks/${encodeURIComponent(deck.share_id || "")}`)}" target="_blank" rel="noreferrer">
         <span>
           <strong>${escapeHtml(deck.name || "Deck")}</strong>
-          <span>${escapeHtml(deck.owner_name || "FoilFolio user")} - ${integer.format(deck.deck_quantity || 0)} in deck</span>
+          <span>${escapeHtml(deck.owner_name || "Arcane Ledger user")} - ${integer.format(deck.deck_quantity || 0)} in deck</span>
         </span>
         <b>&#8599;</b>
       </a>
@@ -7432,7 +7432,7 @@ function renderCardDetail(card) {
         </section>
         <section class="card-insight-panel card-meta-panel">
           <div class="panel-head compact-panel-head">
-            <h2>FoilFolio Meta</h2>
+            <h2>Arcane Ledger Meta</h2>
             <span>All users</span>
           </div>
           ${renderCardAggregateStats(card.aggregate_stats || {})}
@@ -8121,7 +8121,7 @@ function renderSharedStore(store) {
     <section class="shared-deck-card">
       <div class="shared-deck-head">
         <div>
-          <p class="eyebrow">FoilFolio store</p>
+          <p class="eyebrow">Arcane Ledger store</p>
           <h2>${escapeHtml(store.seller_name || "Seller")}</h2>
           <span>${integer.format(store.card_count || cards.length)} listing${Number(store.card_count || cards.length) === 1 ? "" : "s"} - ${integer.format(store.sale_quantity || 0)} card${Number(store.sale_quantity || 0) === 1 ? "" : "s"} for sale</span>
           ${contactHtml}
@@ -8168,7 +8168,7 @@ function profileCommentRows(comments, parentId = null) {
         </div>
       </div>
       <p>${escapeHtml(comment.body || "")}</p>
-      ${state.user ? `<button class="report-content-button" type="button" data-target-type="profile_comment" data-target-id="${escapeHtml(comment.id)}" data-target-label="blog comment by ${escapeAttribute(comment.author?.name || "FoilFolio user")}">Report</button>` : ""}
+      ${state.user ? `<button class="report-content-button" type="button" data-target-type="profile_comment" data-target-id="${escapeHtml(comment.id)}" data-target-label="blog comment by ${escapeAttribute(comment.author?.name || "Arcane Ledger user")}">Report</button>` : ""}
       ${state.user ? `
         <form class="profile-reply-form" data-post-id="${escapeHtml(comment.post_id)}" data-parent-id="${escapeHtml(comment.id)}">
           <input name="body" type="text" maxlength="1000" placeholder="Reply">
@@ -8284,7 +8284,7 @@ function renderUserProfile(profile) {
       <div class="user-profile-hero">
         <div class="user-profile-avatar">${profileImage}</div>
         <div>
-          <p class="eyebrow">FoilFolio profile</p>
+          <p class="eyebrow">Arcane Ledger profile</p>
           <h2>${escapeHtml(profile.name || "Collector")}</h2>
           <span>Member since ${escapeHtml(formatDate(profile.member_since || ""))}</span>
           ${profile.about_me ? `<p>${escapeHtml(profile.about_me)}</p>` : ""}
@@ -8443,7 +8443,7 @@ function renderSharedFavorites(payload) {
           <span class="deck-icon" aria-hidden="true"></span>
           <div>
             <strong>${escapeHtml(deck.name || "Deck")}</strong>
-            <span>${escapeHtml(deck.owner_name || "FoilFolio user")} - ${integer.format(deck.card_count || 0)} cards</span>
+            <span>${escapeHtml(deck.owner_name || "Arcane Ledger user")} - ${integer.format(deck.card_count || 0)} cards</span>
           </div>
           <a class="share-button" href="${escapeHtml(deck.deck_url || `/decks/${encodeURIComponent(deck.share_id || "")}`)}" target="_blank" rel="noreferrer" aria-label="Open deck" title="Open deck">&#8599;</a>
         </article>
@@ -9520,7 +9520,7 @@ function wireEvents() {
     }
   });
   els.clearDatabaseButton.addEventListener("click", async () => {
-    const confirmed = window.confirm("Clear your FoilFolio database? This removes your collection, decks, containers, lists, sale listings, and card history, but keeps your account.");
+    const confirmed = window.confirm("Clear your Arcane Ledger database? This removes your collection, decks, containers, lists, sale listings, and card history, but keeps your account.");
     if (!confirmed) return;
     try {
       await api("/api/user/clear-data", { method: "POST", body: JSON.stringify({}) });
@@ -9538,7 +9538,7 @@ function wireEvents() {
     }
   });
   els.deleteProfileButton.addEventListener("click", async () => {
-    const confirmed = window.confirm("Delete your FoilFolio profile and all of your data? This cannot be undone.");
+    const confirmed = window.confirm("Delete your Arcane Ledger profile and all of your data? This cannot be undone.");
     if (!confirmed) return;
     const typed = window.prompt('Type "delete" to confirm profile deletion.');
     if ((typed || "").toLowerCase() !== "delete") return;

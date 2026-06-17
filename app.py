@@ -53,7 +53,7 @@ MAILGUN_API_BASE = os.environ.get("MAILGUN_API_BASE", "https://api.mailgun.net/v
 MAILGUN_API_KEY = os.environ.get("MAILGUN_API_KEY", "")
 MAILGUN_DOMAIN = os.environ.get("MAILGUN_DOMAIN", "")
 MAILGUN_FROM_EMAIL = os.environ.get("MAILGUN_FROM_EMAIL", "")
-MAILGUN_FROM_NAME = os.environ.get("MAILGUN_FROM_NAME", "FoilFolio")
+MAILGUN_FROM_NAME = os.environ.get("MAILGUN_FROM_NAME", "Arcane Ledger")
 MAIL_DRIVER = os.environ.get("MAIL_DRIVER", "")
 MAIL_ENCRYPTION = os.environ.get("MAIL_ENCRYPTION", "").strip().lower()
 SMTP_HOST = os.environ.get("SMTP_HOST") or os.environ.get("MAIL_HOST", "")
@@ -72,7 +72,7 @@ SMTP_STARTTLS = (
     if "SMTP_STARTTLS" in os.environ
     else MAIL_ENCRYPTION in {"tls", "starttls"} or not SMTP_SECURE
 )
-SESSION_COOKIE = "foilfolio_session"
+SESSION_COOKIE = "arcaneledger_session"
 SESSION_DAYS = int(os.environ.get("SESSION_DAYS", "30"))
 SESSION_IDLE_MINUTES = int(os.environ.get("SESSION_IDLE_MINUTES", "30") or 30)
 EMAIL_VERIFICATION_MINUTES = int(os.environ.get("EMAIL_VERIFICATION_MINUTES", "30") or 30)
@@ -104,7 +104,7 @@ DISALLOWED_DISPLAY_NAME_WORDS = {
 
 
 def configure_logging():
-    logger = logging.getLogger("foilfolio")
+    logger = logging.getLogger("arcaneledger")
     if logger.handlers:
         return logger
     level = getattr(logging, LOG_LEVEL, logging.INFO)
@@ -860,7 +860,7 @@ def smtp_diagnostics():
 
 
 def encode_multipart_form(fields):
-    boundary = f"----foilfolio-{secrets.token_hex(16)}"
+    boundary = f"----arcaneledger-{secrets.token_hex(16)}"
     parts = []
     for name, value in fields:
         parts.append(f"--{boundary}\r\n".encode("utf-8"))
@@ -2598,14 +2598,14 @@ def request_registration_email(conn, payload):
     url = verification_url(token)
     send_email(
         email,
-        "Verify your FoilFolio account",
-        f"Welcome to FoilFolio.\n\nVerify your email and finish creating your account:\n{url}\n\nThis link expires in {EMAIL_VERIFICATION_MINUTES} minutes.",
+        "Verify your Arcane Ledger account",
+        f"Welcome to Arcane Ledger.\n\nVerify your email and finish creating your account:\n{url}\n\nThis link expires in {EMAIL_VERIFICATION_MINUTES} minutes.",
         html=f"""
-        <p>Welcome to FoilFolio.</p>
+        <p>Welcome to Arcane Ledger.</p>
         <p><a href="{url}">Verify your email and finish creating your account</a>.</p>
         <p>This link expires in {EMAIL_VERIFICATION_MINUTES} minutes.</p>
         """,
-        tags=["foilfolio", "account-verification"],
+        tags=["arcaneledger", "account-verification"],
     )
     conn.commit()
     return {"ok": True, "email": email, "message": "Check your email for a verification link."}
@@ -2682,7 +2682,7 @@ def request_password_reset(conn, payload):
     timestamp = now_iso()
     cleanup_password_resets(conn)
     user = conn.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
-    message = "If that email has a FoilFolio account, a password reset link has been sent."
+    message = "If that email has an Arcane Ledger account, a password reset link has been sent."
     if not user:
         conn.commit()
         return {"ok": True, "message": message}
@@ -2700,14 +2700,14 @@ def request_password_reset(conn, payload):
     safe_url = html_lib.escape(url)
     send_email(
         email,
-        "Reset your FoilFolio password",
-        f"Reset your FoilFolio password:\n{url}\n\nThis link expires in {PASSWORD_RESET_MINUTES} minutes. If you did not request this, you can ignore this email.",
+        "Reset your Arcane Ledger password",
+        f"Reset your Arcane Ledger password:\n{url}\n\nThis link expires in {PASSWORD_RESET_MINUTES} minutes. If you did not request this, you can ignore this email.",
         html=f"""
-        <p>Reset your FoilFolio password.</p>
+        <p>Reset your Arcane Ledger password.</p>
         <p><a href="{safe_url}">Choose a new password</a>.</p>
         <p>This link expires in {PASSWORD_RESET_MINUTES} minutes. If you did not request this, you can ignore this email.</p>
         """,
-        tags=["foilfolio", "password-reset"],
+        tags=["arcaneledger", "password-reset"],
     )
     conn.commit()
     return {"ok": True, "message": message}
@@ -4202,7 +4202,7 @@ def parse_json_import_text(text):
     if isinstance(payload, dict) and isinstance(payload.get("cards"), list):
         payload = payload["cards"]
     if not isinstance(payload, list):
-        raise ValueError("JSON import only accepts a FoilFolio export array.")
+        raise ValueError("JSON import only accepts an Arcane Ledger export array.")
     return payload
 
 
@@ -4423,7 +4423,7 @@ def import_json_wizard_preview(conn, user_id, payload):
         source = json_import_source_for_kind(parsed, kind)
         preview = preview_wishlist_import(conn, user_id, source)
         return {"ok": True, "kind": "wishlists", "label": f"{len(preview['wishlists'])} wishlist(s) found", "wishlists": preview, "can_commit": not any(wishlist.get("needs_rename") for wishlist in preview.get("wishlists", []))}
-    return {"ok": True, "kind": "unknown", "label": "Unknown JSON import", "can_commit": False, "issues": ["FoilFolio could not determine whether this JSON contains cards, decks, wishlists, or a full export."]}
+    return {"ok": True, "kind": "unknown", "label": "Unknown JSON import", "can_commit": False, "issues": ["Arcane Ledger could not determine whether this JSON contains cards, decks, wishlists, or a full export."]}
 
 
 def commit_import_wizard_json(conn, user_id, payload):
@@ -5040,7 +5040,7 @@ def deck_export_payload(conn, user_id):
             "cards": [deck_export_card(card) for card in detail.get("cards") or []],
         })
     return {
-        "format": "foilfolio.decks",
+        "format": "arcaneledger.decks",
         "version": 1,
         "exported_at": now_iso(),
         "deck_count": len(decks),
@@ -5165,7 +5165,7 @@ def normalize_import_deck_source(payload):
             elif isinstance(parsed, dict):
                 source = [parsed.get("deck") if isinstance(parsed.get("deck"), dict) else parsed]
             else:
-                raise ValueError("Deck JSON must be an object, an array, or a FoilFolio decks export.")
+                raise ValueError("Deck JSON must be an object, an array, or an Arcane Ledger decks export.")
     decks = []
     for index, deck_source in enumerate(source or [], start=1):
         if not isinstance(deck_source, dict):
@@ -5595,7 +5595,7 @@ def shared_deck(conn, share_id, viewer_user_id=None):
         """
         SELECT d.id, d.user_id, d.name, d.share_id,
                COALESCE(d.is_private, 0) AS is_private,
-               COALESCE(u.name, u.email, 'FoilFolio user') AS owner_name
+               COALESCE(u.name, u.email, 'Arcane Ledger user') AS owner_name
         FROM decks d
         LEFT JOIN users u ON u.id = d.user_id
         WHERE d.share_id = ?
@@ -5834,7 +5834,7 @@ def list_public_decks(conn, viewer_user_id=None):
         SELECT d.id, d.share_id, d.user_id, d.name,
                COALESCE(d.description, '') AS description,
                COALESCE(d.external_notes, '') AS external_notes,
-               COALESCE(u.name, u.email, 'FoilFolio user') AS owner_name,
+               COALESCE(u.name, u.email, 'Arcane Ledger user') AS owner_name,
                d.created_at, d.updated_at,
                COALESCE(SUM(dc.quantity), 0) AS card_count,
                COUNT(dc.card_id) AS unique_card_count,
@@ -5899,7 +5899,7 @@ def update_favorite_deck(conn, user_id, share_id, payload):
                 share_id,
                 deck.get("name") or "Deck",
                 deck_share_url(deck),
-                deck.get("owner_name") or "FoilFolio user",
+                deck.get("owner_name") or "Arcane Ledger user",
                 int(deck.get("card_count") or 0),
                 timestamp,
                 timestamp,
@@ -5916,13 +5916,13 @@ def email_shared_deck(conn, user, share_id, payload):
     deck = shared_deck_for_viewer(conn, share_id, user["id"])
     share_url = deck_share_url(deck)
     sender_name = user["name"] or user["email"]
-    subject = f"FoilFolio: {sender_name} sharing deck: {deck['name']}"
+    subject = f"Arcane Ledger: {sender_name} sharing deck: {deck['name']}"
     result = send_email(
         recipient,
         subject,
         text=shared_list_email_text(deck, share_url, sender_name, "deck"),
         html=shared_list_email_html(deck, share_url, sender_name, "deck"),
-        tags=["foilfolio", "deck-share"],
+        tags=["arcaneledger", "deck-share"],
     )
     return {"ok": True, "email": recipient, "provider": result.get("provider"), "status": result.get("status")}
 
@@ -6635,7 +6635,7 @@ def wishlist_email_html(wishlist, share_url, sender_name):
         <td colspan="4" style="padding:14px 8px;color:#586661;">This wishlist does not have any cards yet.</td>
       </tr>
     """
-    safe_sender = html_lib.escape(sender_name or "A FoilFolio user")
+    safe_sender = html_lib.escape(sender_name or "An Arcane Ledger user")
     safe_name = html_lib.escape(wishlist.get("name") or "Wishlist")
     safe_url = html_lib.escape(share_url)
     return f"""
@@ -6644,7 +6644,7 @@ def wishlist_email_html(wishlist, share_url, sender_name):
       <body style="margin:0;background:#f4f7f5;color:#111816;font-family:Arial,Helvetica,sans-serif;">
         <div style="max-width:760px;margin:0 auto;padding:24px;">
           <h1 style="margin:0 0 8px;font-size:28px;line-height:1.1;">{safe_name}</h1>
-          <p style="margin:0 0 16px;color:#586661;">{safe_sender} shared this FoilFolio wishlist with you.</p>
+          <p style="margin:0 0 16px;color:#586661;">{safe_sender} shared this Arcane Ledger wishlist with you.</p>
           <p style="margin:0 0 20px;">
             <a href="{safe_url}" style="display:inline-block;background:#111816;color:#ffffff;text-decoration:none;padding:10px 14px;border-radius:8px;font-weight:700;">Open wishlist</a>
           </p>
@@ -6670,7 +6670,7 @@ def wishlist_email_html(wishlist, share_url, sender_name):
 
 def wishlist_email_text(wishlist, share_url, sender_name):
     lines = [
-        f"{sender_name or 'A FoilFolio user'} shared this FoilFolio wishlist with you: {wishlist.get('name') or 'Wishlist'}",
+        f"{sender_name or 'An Arcane Ledger user'} shared this Arcane Ledger wishlist with you: {wishlist.get('name') or 'Wishlist'}",
         share_url,
         "",
         "Cards:",
@@ -6691,13 +6691,13 @@ def email_wishlist(conn, user, wishlist_id, payload):
     wishlist = wishlist_detail(conn, user["id"], wishlist_id)
     share_url = wishlist_share_url(wishlist)
     sender_name = user["name"] or user["email"]
-    subject = f"FoilFolio: {sender_name} sharing wishlist: {wishlist['name']}"
+    subject = f"Arcane Ledger: {sender_name} sharing wishlist: {wishlist['name']}"
     result = send_email(
         recipient,
         subject,
         text=wishlist_email_text(wishlist, share_url, sender_name),
         html=wishlist_email_html(wishlist, share_url, sender_name),
-        tags=["foilfolio", "wishlist-share"],
+        tags=["arcaneledger", "wishlist-share"],
     )
     return {"ok": True, "email": recipient, "provider": result.get("provider"), "status": result.get("status")}
 
@@ -6740,7 +6740,7 @@ def shared_set(conn, store_share_id, set_code):
         raise KeyError("Shared set not found")
     payload = set_share_payload(conn, owner["id"], set_code)
     payload["readonly"] = True
-    payload["owner_name"] = owner["name"] or "FoilFolio user"
+    payload["owner_name"] = owner["name"] or "Arcane Ledger user"
     payload["store_share_id"] = owner["store_share_id"]
     return payload
 
@@ -6752,13 +6752,13 @@ def email_set(conn, user, set_code, payload):
     store_share_id = user["store_share_id"] if "store_share_id" in user.keys() else ""
     share_url = set_share_url(store_share_id, set_code)
     sender_name = user["name"] or user["email"]
-    subject = f"FoilFolio: {sender_name} sharing set: {set_payload['name']}"
+    subject = f"Arcane Ledger: {sender_name} sharing set: {set_payload['name']}"
     result = send_email(
         recipient,
         subject,
         text=shared_list_email_text(set_payload, share_url, sender_name, "set"),
         html=shared_list_email_html(set_payload, share_url, sender_name, "set"),
-        tags=["foilfolio", "set-share"],
+        tags=["arcaneledger", "set-share"],
     )
     return {"ok": True, "email": recipient, "provider": result.get("provider"), "status": result.get("status")}
 
@@ -6821,7 +6821,7 @@ def shared_list_email_html(payload, share_url, sender_name, entity_type):
         <td colspan="5" style="padding:14px 8px;color:#586661;">This {entity_type} does not have any cards yet.</td>
       </tr>
     """
-    safe_sender = html_lib.escape(sender_name or "A FoilFolio user")
+    safe_sender = html_lib.escape(sender_name or "An Arcane Ledger user")
     safe_name = html_lib.escape(payload.get("name") or label)
     safe_url = html_lib.escape(share_url)
     safe_entity = html_lib.escape(entity_type)
@@ -6837,7 +6837,7 @@ def shared_list_email_html(payload, share_url, sender_name, entity_type):
       <body style="margin:0;background:#f4f7f5;color:#111816;font-family:Arial,Helvetica,sans-serif;">
         <div style="max-width:820px;margin:0 auto;padding:24px;">
           <h1 style="margin:0 0 8px;font-size:28px;line-height:1.1;">{safe_name}</h1>
-          <p style="margin:0 0 16px;color:#586661;">{safe_sender} shared this FoilFolio {safe_entity} with you.</p>
+          <p style="margin:0 0 16px;color:#586661;">{safe_sender} shared this Arcane Ledger {safe_entity} with you.</p>
           {public_notes_html}
           <p style="margin:0 0 20px;">
             <a href="{safe_url}" style="display:inline-block;background:#111816;color:#ffffff;text-decoration:none;padding:10px 14px;border-radius:8px;font-weight:700;">Open {safe_entity}</a>
@@ -6865,7 +6865,7 @@ def shared_list_email_html(payload, share_url, sender_name, entity_type):
 
 def shared_list_email_text(payload, share_url, sender_name, entity_type):
     lines = [
-        f"{sender_name or 'A FoilFolio user'} shared this FoilFolio {entity_type} with you: {payload.get('name') or entity_type.title()}",
+        f"{sender_name or 'An Arcane Ledger user'} shared this Arcane Ledger {entity_type} with you: {payload.get('name') or entity_type.title()}",
         share_url,
         "",
     ]
@@ -6891,13 +6891,13 @@ def email_deck(conn, user, deck_id, payload):
     deck = deck_detail(conn, user["id"], deck_id)
     share_url = deck_share_url(deck)
     sender_name = user["name"] or user["email"]
-    subject = f"FoilFolio: {sender_name} sharing deck: {deck['name']}"
+    subject = f"Arcane Ledger: {sender_name} sharing deck: {deck['name']}"
     result = send_email(
         recipient,
         subject,
         text=shared_list_email_text(deck, share_url, sender_name, "deck"),
         html=shared_list_email_html(deck, share_url, sender_name, "deck"),
-        tags=["foilfolio", "deck-share"],
+        tags=["arcaneledger", "deck-share"],
     )
     return {"ok": True, "email": recipient, "provider": result.get("provider"), "status": result.get("status")}
 
@@ -6907,13 +6907,13 @@ def email_container(conn, user, container_id, payload):
     container = container_detail(conn, user["id"], container_id)
     share_url = container_share_url(container)
     sender_name = user["name"] or user["email"]
-    subject = f"FoilFolio: {sender_name} sharing container: {container['name']}"
+    subject = f"Arcane Ledger: {sender_name} sharing container: {container['name']}"
     result = send_email(
         recipient,
         subject,
         text=shared_list_email_text(container, share_url, sender_name, "container"),
         html=shared_list_email_html(container, share_url, sender_name, "container"),
-        tags=["foilfolio", "container-share"],
+        tags=["arcaneledger", "container-share"],
     )
     return {"ok": True, "email": recipient, "provider": result.get("provider"), "status": result.get("status")}
 
@@ -8040,7 +8040,7 @@ def card_public_url(card):
 
 def card_email_html(card, share_url, sender_name):
     title = html_lib.escape(card_email_title(card))
-    safe_sender = html_lib.escape(sender_name or "A FoilFolio user")
+    safe_sender = html_lib.escape(sender_name or "An Arcane Ledger user")
     safe_url = html_lib.escape(share_url)
     set_text = html_lib.escape(" ".join(part for part in [
         card.get("set_name") or "",
@@ -8058,7 +8058,7 @@ def card_email_html(card, share_url, sender_name):
       <body style="margin:0;background:#f4f7f5;color:#111816;font-family:Arial,Helvetica,sans-serif;">
         <div style="max-width:680px;margin:0 auto;padding:24px;">
           <h1 style="margin:0 0 8px;font-size:28px;line-height:1.1;">{title}</h1>
-          <p style="margin:0 0 16px;color:#586661;">{safe_sender} shared this FoilFolio card with you.</p>
+          <p style="margin:0 0 16px;color:#586661;">{safe_sender} shared this Arcane Ledger card with you.</p>
           <p style="margin:0 0 20px;">
             <a href="{safe_url}" style="display:inline-block;background:#111816;color:#ffffff;text-decoration:none;padding:10px 14px;border-radius:8px;font-weight:700;">Open card</a>
           </p>
@@ -8085,7 +8085,7 @@ def card_email_text(card, share_url, sender_name):
         card.get("variant") or "",
     ] if part).strip()
     return "\n".join([
-        f"{sender_name or 'A FoilFolio user'} shared this FoilFolio card with you: {card_email_title(card)}",
+        f"{sender_name or 'An Arcane Ledger user'} shared this Arcane Ledger card with you: {card_email_title(card)}",
         share_url,
         "",
         f"Set: {set_text}",
@@ -8101,13 +8101,13 @@ def email_card(conn, user, card_id, payload):
     recipient = validate_email(payload.get("email"))
     share_url = card_public_url(card)
     sender_name = user["name"] or user["email"]
-    subject = f"FoilFolio: {sender_name} sharing card: {card_email_title(card)}"
+    subject = f"Arcane Ledger: {sender_name} sharing card: {card_email_title(card)}"
     result = send_email(
         recipient,
         subject,
         text=card_email_text(card, share_url, sender_name),
         html=card_email_html(card, share_url, sender_name),
-        tags=["foilfolio", "card-share"],
+        tags=["arcaneledger", "card-share"],
     )
     return {"ok": True, "email": recipient, "provider": result.get("provider"), "status": result.get("status")}
 
@@ -10006,7 +10006,7 @@ class Handler(SimpleHTTPRequestHandler):
                     data = json.dumps(deck_export_payload(conn, user["id"]), indent=2).encode("utf-8")
                     self.send_response(HTTPStatus.OK)
                     self.send_header("Content-Type", "application/json; charset=utf-8")
-                    self.send_header("Content-Disposition", "attachment; filename=foilfolio-decks.json")
+                    self.send_header("Content-Disposition", "attachment; filename=arcaneledger-decks.json")
                     self.send_header("Content-Length", str(len(data)))
                     self.end_headers()
                     self.wfile.write(data)
@@ -10016,7 +10016,7 @@ class Handler(SimpleHTTPRequestHandler):
                     data = export_decks_csv(conn, user["id"]).encode("utf-8")
                     self.send_response(HTTPStatus.OK)
                     self.send_header("Content-Type", "text/csv; charset=utf-8")
-                    self.send_header("Content-Disposition", "attachment; filename=foilfolio-decks.csv")
+                    self.send_header("Content-Disposition", "attachment; filename=arcaneledger-decks.csv")
                     self.send_header("Content-Length", str(len(data)))
                     self.end_headers()
                     self.wfile.write(data)
@@ -10098,7 +10098,7 @@ class Handler(SimpleHTTPRequestHandler):
                     data = export_csv(conn, user["id"]).encode("utf-8")
                     self.send_response(HTTPStatus.OK)
                     self.send_header("Content-Type", "text/csv; charset=utf-8")
-                    self.send_header("Content-Disposition", "attachment; filename=foilfolio-collection.csv")
+                    self.send_header("Content-Disposition", "attachment; filename=arcaneledger-collection.csv")
                     self.send_header("Content-Length", str(len(data)))
                     self.end_headers()
                     self.wfile.write(data)
@@ -10108,7 +10108,7 @@ class Handler(SimpleHTTPRequestHandler):
                     data = json.dumps(export_json(conn, user["id"]), indent=2).encode("utf-8")
                     self.send_response(HTTPStatus.OK)
                     self.send_header("Content-Type", "application/json; charset=utf-8")
-                    self.send_header("Content-Disposition", "attachment; filename=foilfolio-collection.json")
+                    self.send_header("Content-Disposition", "attachment; filename=arcaneledger-collection.json")
                     self.send_header("Content-Length", str(len(data)))
                     self.end_headers()
                     self.wfile.write(data)
@@ -10463,8 +10463,8 @@ def serve(host="127.0.0.1", port=8000):
         init_db(conn)
     server = ThreadingHTTPServer((host, port), Handler)
     display_host = "127.0.0.1" if host in ("0.0.0.0", "::") else host
-    LOGGER.info("FoilFolio starting at http://%s:%s with database %s", display_host, port, DB_PATH)
-    print(f"FoilFolio running at http://{display_host}:{port}")
+    LOGGER.info("Arcane Ledger starting at http://%s:%s with database %s", display_host, port, DB_PATH)
+    print(f"Arcane Ledger running at http://{display_host}:{port}")
     server.serve_forever()
 
 
@@ -10519,12 +10519,12 @@ def main(argv):
             if len(argv) < 3:
                 print("Usage: python3 app.py email-test recipient@example.com [subject]")
                 return 2
-            subject = argv[3] if len(argv) > 3 else "FoilFolio Mailgun test"
+            subject = argv[3] if len(argv) > 3 else "Arcane Ledger Mailgun test"
             result = send_email(
                 argv[2],
                 subject,
-                "FoilFolio Mailgun is configured correctly.",
-                tags=["foilfolio", "test"],
+                "Arcane Ledger Mailgun is configured correctly.",
+                tags=["arcaneledger", "test"],
             )
             print(json.dumps(result, indent=2))
             return 0
