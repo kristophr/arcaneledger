@@ -15,6 +15,8 @@ const state = {
   adminLogs: null,
   adminServer: null,
   adminReports: [],
+  adminEmailTemplates: [],
+  editingAdminEmailTemplateId: null,
   userProfile: null,
   activeBlogCard: null,
   activeBlogDeck: null,
@@ -182,6 +184,15 @@ const els = {
   adminLogs: document.querySelector("#adminLogs"),
   adminLogMeta: document.querySelector("#adminLogMeta"),
   adminLogLineCount: document.querySelector("#adminLogLineCount"),
+  adminEmailTemplateCount: document.querySelector("#adminEmailTemplateCount"),
+  adminEmailTemplatesList: document.querySelector("#adminEmailTemplatesList"),
+  addAdminEmailTemplateButton: document.querySelector("#addAdminEmailTemplateButton"),
+  adminEmailTemplateOverlay: document.querySelector("#adminEmailTemplateOverlay"),
+  adminEmailTemplateModalTitle: document.querySelector("#adminEmailTemplateModalTitle"),
+  adminEmailTemplateBody: document.querySelector("#adminEmailTemplateBody"),
+  closeAdminEmailTemplateButton: document.querySelector("#closeAdminEmailTemplateButton"),
+  cancelAdminEmailTemplateButton: document.querySelector("#cancelAdminEmailTemplateButton"),
+  saveAdminEmailTemplateButton: document.querySelector("#saveAdminEmailTemplateButton"),
   refreshAdminButton: document.querySelector("#refreshAdminButton"),
   refreshAdminLogsButton: document.querySelector("#refreshAdminLogsButton"),
   reportOverlay: document.querySelector("#reportOverlay"),
@@ -838,6 +849,8 @@ async function logout() {
   state.adminLogs = null;
   state.adminServer = null;
   state.adminReports = [];
+  state.adminEmailTemplates = [];
+  state.editingAdminEmailTemplateId = null;
   state.ownedSetCards = [];
   state.ownedSets = [];
   state.activeWishlist = null;
@@ -3289,6 +3302,7 @@ async function loadAdmin() {
   renderAdminServer();
   renderAdminReports();
   renderAdminLogs();
+  renderAdminEmailTemplates();
 }
 
 async function loadAdminLogs(render = true) {
@@ -3410,6 +3424,103 @@ function renderAdminReports() {
   els.adminReportsList.querySelectorAll(".admin-report-remove-button").forEach((button) => {
     button.addEventListener("click", () => resolveAdminReport(button, "remove").catch((error) => setStatus(error.message, "error", els.adminStatus)));
   });
+}
+
+function adminEmailTriggerOptions(selectedValue = "user_created") {
+  const triggers = [
+    { value: "user_created", label: "User created" },
+  ];
+  return triggers.map((trigger) => (
+    `<option value="${escapeHtml(trigger.value)}" ${selectedValue === trigger.value ? "selected" : ""}>${escapeHtml(trigger.label)}</option>`
+  )).join("");
+}
+
+function newAdminEmailTemplate() {
+  const nextIndex = (state.adminEmailTemplates || []).length + 1;
+  return {
+    id: `draft-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    name: `Template ${nextIndex}`,
+    trigger: "user_created",
+    body: "Welcome %displayname%,\n\nThanks for creating your Arcane Ledger account on %date%.",
+  };
+}
+
+function renderAdminEmailTemplates() {
+  if (!els.adminEmailTemplatesList) return;
+  const templates = state.adminEmailTemplates || [];
+  if (els.adminEmailTemplateCount) {
+    els.adminEmailTemplateCount.textContent = `${integer.format(templates.length)} template${templates.length === 1 ? "" : "s"}`;
+  }
+  if (!templates.length) {
+    els.adminEmailTemplatesList.innerHTML = '<div class="empty-state">No email templates yet.</div>';
+    return;
+  }
+  els.adminEmailTemplatesList.innerHTML = templates.map((template) => `
+    <article class="admin-email-template-row" data-template-id="${escapeHtml(template.id)}">
+      <label>
+        <span>Name</span>
+        <input class="admin-email-template-name" type="text" value="${escapeHtml(template.name || "")}" maxlength="80" placeholder="Template name">
+      </label>
+      <label>
+        <span>Trigger</span>
+        <select class="admin-email-template-trigger">${adminEmailTriggerOptions(template.trigger || "user_created")}</select>
+      </label>
+      <button class="secondary-button compact-button admin-edit-email-template-button" type="button">Edit Template</button>
+    </article>
+  `).join("");
+  els.adminEmailTemplatesList.querySelectorAll(".admin-email-template-name").forEach((input) => {
+    input.addEventListener("input", () => updateAdminEmailTemplateFromRow(input.closest(".admin-email-template-row")));
+  });
+  els.adminEmailTemplatesList.querySelectorAll(".admin-email-template-trigger").forEach((select) => {
+    select.addEventListener("change", () => updateAdminEmailTemplateFromRow(select.closest(".admin-email-template-row")));
+  });
+  els.adminEmailTemplatesList.querySelectorAll(".admin-edit-email-template-button").forEach((button) => {
+    button.addEventListener("click", () => openAdminEmailTemplateModal(button.closest(".admin-email-template-row")?.dataset.templateId));
+  });
+}
+
+function updateAdminEmailTemplateFromRow(row) {
+  const templateId = row?.dataset.templateId;
+  const template = (state.adminEmailTemplates || []).find((item) => item.id === templateId);
+  if (!template) return;
+  template.name = row.querySelector(".admin-email-template-name")?.value.trim() || "";
+  template.trigger = row.querySelector(".admin-email-template-trigger")?.value || "user_created";
+}
+
+function addAdminEmailTemplate() {
+  if (!isAdminUser()) return;
+  state.adminEmailTemplates = [...(state.adminEmailTemplates || []), newAdminEmailTemplate()];
+  renderAdminEmailTemplates();
+}
+
+function openAdminEmailTemplateModal(templateId) {
+  if (!isAdminUser()) return;
+  const template = (state.adminEmailTemplates || []).find((item) => item.id === templateId);
+  if (!template || !els.adminEmailTemplateOverlay) return;
+  state.editingAdminEmailTemplateId = template.id;
+  if (els.adminEmailTemplateModalTitle) {
+    els.adminEmailTemplateModalTitle.textContent = `Edit ${template.name || "Template"}`;
+  }
+  if (els.adminEmailTemplateBody) {
+    els.adminEmailTemplateBody.value = template.body || "";
+  }
+  els.adminEmailTemplateOverlay.hidden = false;
+  els.adminEmailTemplateBody?.focus();
+}
+
+function closeAdminEmailTemplateModal() {
+  if (!els.adminEmailTemplateOverlay) return;
+  els.adminEmailTemplateOverlay.hidden = true;
+  state.editingAdminEmailTemplateId = null;
+}
+
+function saveAdminEmailTemplateBody() {
+  const template = (state.adminEmailTemplates || []).find((item) => item.id === state.editingAdminEmailTemplateId);
+  if (!template) return;
+  template.body = els.adminEmailTemplateBody?.value || "";
+  closeAdminEmailTemplateModal();
+  renderAdminEmailTemplates();
+  setStatus("Template draft saved in this admin session.", "success", els.adminStatus);
 }
 
 async function resolveAdminReport(button, action) {
@@ -8801,6 +8912,15 @@ function wireEvents() {
   });
   els.adminLogLineCount?.addEventListener("change", () => {
     loadAdminLogs().catch((error) => setStatus(error.message, "error", els.adminStatus));
+  });
+  els.addAdminEmailTemplateButton?.addEventListener("click", addAdminEmailTemplate);
+  els.closeAdminEmailTemplateButton?.addEventListener("click", closeAdminEmailTemplateModal);
+  els.cancelAdminEmailTemplateButton?.addEventListener("click", closeAdminEmailTemplateModal);
+  els.saveAdminEmailTemplateButton?.addEventListener("click", saveAdminEmailTemplateBody);
+  els.adminEmailTemplateOverlay?.addEventListener("click", (event) => {
+    if (event.target === els.adminEmailTemplateOverlay) {
+      closeAdminEmailTemplateModal();
+    }
   });
   els.closeAddPurchaseButton.addEventListener("click", closeAddPurchaseModal);
   els.cancelAddPurchaseButton.addEventListener("click", closeAddPurchaseModal);

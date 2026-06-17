@@ -2262,9 +2262,103 @@ body:not(.is-authenticated) .nav-bottom {
 }
 
 .admin-users-list,
-.admin-reports-list {
+.admin-reports-list,
+.admin-email-template-list {
   display: grid;
   gap: 10px;
+}
+
+.admin-email-panel {
+  min-height: 260px;
+}
+
+.admin-email-panel .panel-head {
+  align-items: start;
+}
+
+.admin-email-panel .panel-head span {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.admin-email-template-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(150px, 0.7fr) max-content;
+  gap: 10px;
+  align-items: end;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--panel);
+}
+
+.admin-email-template-row label,
+.admin-template-editor-field {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.admin-email-template-row label span,
+.admin-template-editor-field span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.admin-email-template-row input,
+.admin-email-template-row select,
+.admin-template-editor-field textarea {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: var(--ink);
+  background: var(--field-bg);
+}
+
+.admin-email-template-row input,
+.admin-email-template-row select {
+  min-height: 36px;
+  padding: 0 9px;
+}
+
+.admin-email-template-modal {
+  width: min(760px, calc(100vw - 28px));
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 18px;
+  background: var(--panel);
+  box-shadow: 0 22px 80px rgba(0, 0, 0, 0.28);
+}
+
+.admin-template-variable-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 14px 0;
+}
+
+.admin-template-variable-row span {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 6px 10px;
+  color: var(--ink);
+  background: color-mix(in srgb, var(--panel) 84%, var(--accent) 10%);
+  font: 0.78rem/1.2 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.admin-template-editor-field textarea {
+  min-height: 360px;
+  padding: 12px;
+  resize: vertical;
+  font: 0.92rem/1.5 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
 .admin-user-row {
@@ -6983,6 +7077,14 @@ body:not(.is-authenticated) .nav-bottom {
     grid-template-columns: minmax(0, 1fr) 130px 104px;
   }
 
+  .admin-email-template-row {
+    grid-template-columns: minmax(0, 1fr) minmax(150px, 0.7fr);
+  }
+
+  .admin-email-template-row .admin-edit-email-template-button {
+    justify-self: start;
+  }
+
   .admin-report-row {
     grid-template-columns: 1fr;
   }
@@ -7122,6 +7224,10 @@ body:not(.is-authenticated) .nav-bottom {
   }
 
   .admin-user-row {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-email-template-row {
     grid-template-columns: 1fr;
   }
 
