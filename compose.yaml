@@ -4,6 +4,8 @@ services:
       context: .
     container_name: arcaneledger
     restart: unless-stopped
+    env_file:
+      - .env
     ports:
       - "${HOST_PORT:-8000}:8000"
     environment:
@@ -11,40 +13,6 @@ services:
       PORT: "8000"
       DATA_DIR: /app/data
       DEFAULT_IMPORT: /imports/export.csv
-      APP_BASE_URL: ${APP_BASE_URL:-}
-      SESSION_IDLE_MINUTES: ${SESSION_IDLE_MINUTES:-30}
-      EMAIL_VERIFICATION_MINUTES: ${EMAIL_VERIFICATION_MINUTES:-30}
-      SCRYFALL_QUERY: game:paper
-      SCRYFALL_LANGUAGE: en
-      SCRYFALL_TIMEOUT_SECONDS: ${SCRYFALL_TIMEOUT_SECONDS:-15}
-      SCRYFALL_IMPORT_LOOKUP_LIMIT: ${SCRYFALL_IMPORT_LOOKUP_LIMIT:-80}
-      SCRYFALL_IMPORT_LOOKUP_DELAY: ${SCRYFALL_IMPORT_LOOKUP_DELAY:-0.12}
-      SMTP_HOST: ${SMTP_HOST:-}
-      SMTP_PORT: ${SMTP_PORT:-587}
-      SMTP_USER: ${SMTP_USER:-}
-      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
-      SMTP_FROM: ${SMTP_FROM:-}
-      SMTP_FROM_NAME: ${SMTP_FROM_NAME:-Arcane Ledger}
-      SMTP_AUTH_METHOD: ${SMTP_AUTH_METHOD:-}
-      SMTP_SECURE: ${SMTP_SECURE:-false}
-      SMTP_STARTTLS: ${SMTP_STARTTLS:-true}
-      MAIL_DRIVER: ${MAIL_DRIVER:-}
-      MAIL_HOST: ${MAIL_HOST:-}
-      MAIL_PORT: ${MAIL_PORT:-587}
-      MAIL_ENCRYPTION: ${MAIL_ENCRYPTION:-}
-      MAIL_USERNAME: ${MAIL_USERNAME:-}
-      MAIL_PASSWORD: ${MAIL_PASSWORD:-}
-      MAIL_FROM_ADDRESS: ${MAIL_FROM_ADDRESS:-}
-      MAIL_FROM_NAME: ${MAIL_FROM_NAME:-Arcane Ledger}
-      MAIL_AUTH_METHOD: ${MAIL_AUTH_METHOD:-}
-      MAILGUN_API_BASE: ${MAILGUN_API_BASE:-https://api.mailgun.net/v3}
-      MAILGUN_API_KEY: ${MAILGUN_API_KEY:-}
-      MAILGUN_DOMAIN: ${MAILGUN_DOMAIN:-}
-      MAILGUN_FROM_EMAIL: ${MAILGUN_FROM_EMAIL:-}
-      MAILGUN_FROM_NAME: ${MAILGUN_FROM_NAME:-Arcane Ledger}
-      LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      LOG_MAX_BYTES: ${LOG_MAX_BYTES:-2097152}
-      LOG_BACKUP_COUNT: ${LOG_BACKUP_COUNT:-5}
     volumes:
       - ./data:/app/data
       - ./imports:/imports:ro
