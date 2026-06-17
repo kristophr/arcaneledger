@@ -1,8 +1,8 @@
-# FoilFolio
+# Arcane Ledger
 
 **Version:** 0.1.6 alpha
 
-A self-hosted Magic: The Gathering collection tracker. It uses Scryfall as the catalog and price source, stores data in SQLite, imports portfolio CSV exports, tracks decks, supports read-only share links, and exports your owned cards back to CSV.
+A Magic: The Gathering collection tracker. It uses Scryfall as the catalog and price source, stores data in SQLite, imports portfolio CSV exports, tracks decks, supports read-only share links, and exports your owned cards back to CSV.
 
 ## Run With Docker Compose
 
@@ -36,7 +36,7 @@ The app still listens on `8000` inside the container; `HOST_PORT` only changes t
 Set the public URL used for email verification links:
 
 ```env
-APP_BASE_URL=https://foilfolio.example.com
+APP_BASE_URL=https://arcaneledger.example.com
 ```
 
 Security defaults can also be adjusted in `.env`:
@@ -72,26 +72,26 @@ For a one-time catalog sync plus CSV import:
 ```bash
 mkdir -p imports
 cp "/Users/kristophr/Downloads/export(1).csv" imports/export.csv
-docker compose run --rm foilfolio python app.py seed /imports/export.csv
+docker compose run --rm arcaneledger python app.py seed /imports/export.csv
 docker compose up -d --build
 ```
 
 To sync current Scryfall prices later:
 
 ```bash
-docker compose exec foilfolio python app.py sync
+docker compose exec arcaneledger python app.py sync
 ```
 
 To replace the collection from a new CSV export:
 
 ```bash
 cp "/path/to/new-export.csv" imports/export.csv
-docker compose exec foilfolio python app.py import /imports/export.csv
+docker compose exec arcaneledger python app.py import /imports/export.csv
 ```
 
 ## Email
 
-FoilFolio has email plumbing ready for future account confirmation and share-by-email features. SMTP is recommended for Mailgun if you already have working Mailgun SMTP credentials. Copy the example env file, then fill in your values:
+Arcane Ledger has email plumbing ready for future account confirmation and share-by-email features. SMTP is recommended for Mailgun if you already have working Mailgun SMTP credentials. Copy the example env file, then fill in your values:
 
 ```bash
 cp .env.example .env
@@ -104,15 +104,15 @@ SMTP_HOST=smtp.mailgun.org
 SMTP_PORT=587
 SMTP_USER=postmaster@yourdomain.com
 SMTP_PASSWORD=your-smtp-password
-SMTP_FROM=foilfolio@yourdomain.com
-SMTP_FROM_NAME=FoilFolio
+SMTP_FROM=arcaneledger@yourdomain.com
+SMTP_FROM_NAME=Arcane Ledger
 SMTP_SECURE=false
 SMTP_STARTTLS=true
 ```
 
-`SMTP_SECURE=false` means FoilFolio uses a normal SMTP connection first; with `SMTP_STARTTLS=true` it upgrades to TLS on port `587`.
+`SMTP_SECURE=false` means Arcane Ledger uses a normal SMTP connection first; with `SMTP_STARTTLS=true` it upgrades to TLS on port `587`.
 
-FoilFolio also accepts Laravel-style SMTP names if you already have those:
+Arcane Ledger also accepts Laravel-style SMTP names if you already have those:
 
 ```text
 MAIL_DRIVER=smtp
@@ -122,7 +122,7 @@ MAIL_ENCRYPTION=tls
 MAIL_USERNAME=postmaster@yourdomain.com
 MAIL_PASSWORD=your-mailgun-smtp-password
 MAIL_FROM_ADDRESS=noreply@yourdomain.com
-MAIL_FROM_NAME=FoilFolio
+MAIL_FROM_NAME=Arcane Ledger
 ```
 
 If both `SMTP_*` and `MAIL_*` are present, `SMTP_*` values win.
@@ -133,35 +133,35 @@ The older Mailgun HTTP API settings are still supported as a fallback:
 MAILGUN_API_KEY=key-your-mailgun-api-key
 MAILGUN_DOMAIN=mg.yourdomain.com
 MAILGUN_FROM_EMAIL=noreply@yourdomain.com
-MAILGUN_FROM_NAME=FoilFolio
+MAILGUN_FROM_NAME=Arcane Ledger
 ```
 
 For EU Mailgun API accounts, set `MAILGUN_API_BASE=https://api.eu.mailgun.net/v3`.
 
-Do not commit `.env`; it is ignored by Git. Docker Compose reads `.env` for variable substitution, and `compose.yaml` explicitly passes only the app settings FoilFolio needs.
+Do not commit `.env`; it is ignored by Git. Docker Compose reads `.env` for variable substitution, and `compose.yaml` explicitly passes only the app settings Arcane Ledger needs.
 
 To check whether the app sees the email settings:
 
 ```bash
-docker compose run --rm foilfolio python app.py email-status
+docker compose run --rm arcaneledger python app.py email-status
 ```
 
 To test the SMTP connection without sending an email:
 
 ```bash
-docker compose run --rm foilfolio python app.py email-diagnose
+docker compose run --rm arcaneledger python app.py email-diagnose
 ```
 
 For a detailed redacted SMTP trace:
 
 ```bash
-docker compose run --rm foilfolio python app.py email-trace
+docker compose run --rm arcaneledger python app.py email-trace
 ```
 
 For a detailed redacted Mailgun API trace:
 
 ```bash
-docker compose run --rm foilfolio python app.py email-mailgun-trace
+docker compose run --rm arcaneledger python app.py email-mailgun-trace
 ```
 
 If a provider behaves badly with one SMTP auth mechanism, you can force one:
@@ -181,33 +181,33 @@ Supported values are `LOGIN` and `PLAIN`. Leave it blank for Python's default SM
 To send a smoke-test email after credentials are ready:
 
 ```bash
-docker compose run --rm foilfolio python app.py email-test you@example.com
+docker compose run --rm arcaneledger python app.py email-test you@example.com
 ```
 
 ## Debug Logs
 
-FoilFolio writes server startup messages, requests, network warnings, and unexpected server errors to a rotating log file:
+Arcane Ledger writes server startup messages, requests, network warnings, and unexpected server errors to a rotating log file:
 
 ```text
-data/logs/foilfolio.log
+data/logs/arcaneledger.log
 ```
 
 From Docker, check the configured log path and status:
 
 ```bash
-docker compose run --rm foilfolio python app.py log-status
+docker compose run --rm arcaneledger python app.py log-status
 ```
 
 To show the last 200 log lines:
 
 ```bash
-docker compose run --rm foilfolio python app.py logs
+docker compose run --rm arcaneledger python app.py logs
 ```
 
 Or ask for a specific number of lines:
 
 ```bash
-docker compose run --rm foilfolio python app.py logs 500
+docker compose run --rm arcaneledger python app.py logs 500
 ```
 
 The same log tail is also available to a logged-in user at:
@@ -257,7 +257,7 @@ Docker Compose mounts that same folder to `/app/data`, so the database persists 
 
 The app initializes and migrates its SQLite schema on startup, so new tables and columns are created automatically when you update the code and restart the container.
 
-By default FoilFolio syncs all paper Magic prints from Scryfall with:
+By default Arcane Ledger syncs all paper Magic prints from Scryfall with:
 
 ```text
 SCRYFALL_QUERY=game:paper
