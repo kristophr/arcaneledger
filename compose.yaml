@@ -1,8 +1,8 @@
 services:
-  foilfolio:
+  arcaneledger:
     build:
       context: .
-    container_name: foilfolio
+    container_name: arcaneledger
     restart: unless-stopped
     ports:
       - "${HOST_PORT:-8000}:8000"
@@ -24,7 +24,7 @@ services:
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       SMTP_FROM: ${SMTP_FROM:-}
-      SMTP_FROM_NAME: ${SMTP_FROM_NAME:-FoilFolio}
+      SMTP_FROM_NAME: ${SMTP_FROM_NAME:-Arcane Ledger}
       SMTP_AUTH_METHOD: ${SMTP_AUTH_METHOD:-}
       SMTP_SECURE: ${SMTP_SECURE:-false}
       SMTP_STARTTLS: ${SMTP_STARTTLS:-true}
@@ -35,13 +35,13 @@ services:
       MAIL_USERNAME: ${MAIL_USERNAME:-}
       MAIL_PASSWORD: ${MAIL_PASSWORD:-}
       MAIL_FROM_ADDRESS: ${MAIL_FROM_ADDRESS:-}
-      MAIL_FROM_NAME: ${MAIL_FROM_NAME:-FoilFolio}
+      MAIL_FROM_NAME: ${MAIL_FROM_NAME:-Arcane Ledger}
       MAIL_AUTH_METHOD: ${MAIL_AUTH_METHOD:-}
       MAILGUN_API_BASE: ${MAILGUN_API_BASE:-https://api.mailgun.net/v3}
       MAILGUN_API_KEY: ${MAILGUN_API_KEY:-}
       MAILGUN_DOMAIN: ${MAILGUN_DOMAIN:-}
       MAILGUN_FROM_EMAIL: ${MAILGUN_FROM_EMAIL:-}
-      MAILGUN_FROM_NAME: ${MAILGUN_FROM_NAME:-FoilFolio}
+      MAILGUN_FROM_NAME: ${MAILGUN_FROM_NAME:-Arcane Ledger}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       LOG_MAX_BYTES: ${LOG_MAX_BYTES:-2097152}
       LOG_BACKUP_COUNT: ${LOG_BACKUP_COUNT:-5}
