@@ -21,6 +21,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import date, datetime, timedelta, timezone
+from email.utils import formataddr, parseaddr
 from email.message import EmailMessage
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -622,12 +623,43 @@ def request_json(url):
         return json.loads(response.read().decode("utf-8"))
 
 
+EMAIL_RE = re.compile(r"^[^@\s<>:]+@[^@\s<>:]+\.[^@\s<>:]+$")
+
+
+def app_base_domain():
+    raw = (APP_BASE_URL or "").strip()
+    if raw:
+        try:
+            parsed = urllib.parse.urlparse(raw if "://" in raw else f"https://{raw}")
+            host = parsed.hostname or ""
+        except ValueError:
+            host = raw.replace("https://", "").replace("http://", "").split("/", 1)[0].split(":", 1)[0]
+        if host:
+            return host.strip().lower()
+    return (MAILGUN_DOMAIN or "").strip().lower()
+
+
+def default_from_email():
+    domain = app_base_domain()
+    return f"admin@{domain}" if domain else ""
+
+
+def sender_email(raw_email, fallback=True):
+    raw = (raw_email or "").strip()
+    if not raw and fallback:
+        raw = default_from_email()
+    parsed_name, parsed_email = parseaddr(raw)
+    del parsed_name
+    email = (parsed_email or raw).strip()
+    return email if EMAIL_RE.match(email) else ""
+
+
 def mailgun_configured():
-    return bool(MAILGUN_API_KEY and MAILGUN_DOMAIN and MAILGUN_FROM_EMAIL)
+    return bool(MAILGUN_API_KEY and MAILGUN_DOMAIN and sender_email(MAILGUN_FROM_EMAIL))
 
 
 def smtp_configured():
-    return bool(SMTP_HOST and SMTP_USER and SMTP_PASSWORD and SMTP_FROM)
+    return bool(SMTP_HOST and SMTP_USER and SMTP_PASSWORD and sender_email(SMTP_FROM, fallback=False))
 
 
 def email_status():
@@ -640,7 +672,7 @@ def email_status():
     mailgun_required = {
         "MAILGUN_API_KEY": MAILGUN_API_KEY,
         "MAILGUN_DOMAIN": MAILGUN_DOMAIN,
-        "MAILGUN_FROM_EMAIL": MAILGUN_FROM_EMAIL,
+        "MAILGUN_FROM_EMAIL": sender_email(MAILGUN_FROM_EMAIL),
     }
     return {
         "provider": "smtp" if smtp_configured() else "mailgun",
@@ -660,7 +692,7 @@ def email_status():
             "configured": mailgun_configured(),
             "api_base": MAILGUN_API_BASE,
             "domain": MAILGUN_DOMAIN,
-            "from_email": MAILGUN_FROM_EMAIL,
+            "from_email": sender_email(MAILGUN_FROM_EMAIL),
             "from_name": MAILGUN_FROM_NAME,
             "missing": [name for name, value in mailgun_required.items() if not value],
         },
@@ -668,15 +700,19 @@ def email_status():
 
 
 def formatted_sender(email, name=""):
-    clean_email = (email or "").strip()
-    clean_name = (name or "").strip()
+    raw_email = (email or "").strip()
+    parsed_name, parsed_email = parseaddr(raw_email)
+    clean_email = sender_email(raw_email, fallback=False)
+    if not clean_email:
+        raise ValueError("From address must be a valid email address, like admin@example.com.")
+    clean_name = (name or parsed_name or "").strip()
     if clean_name:
-        return f"{clean_name} <{clean_email}>"
+        return formataddr((clean_name, clean_email))
     return clean_email
 
 
 def mailgun_sender(from_email=None):
-    return formatted_sender(from_email or MAILGUN_FROM_EMAIL, MAILGUN_FROM_NAME)
+    return formatted_sender(from_email or MAILGUN_FROM_EMAIL or default_from_email(), MAILGUN_FROM_NAME)
 
 
 def mailgun_auth_header():
@@ -689,7 +725,8 @@ def mailgun_trace():
         "configured": mailgun_configured(),
         "api_base": MAILGUN_API_BASE,
         "domain": MAILGUN_DOMAIN,
-        "from_email": MAILGUN_FROM_EMAIL,
+        "from_email": sender_email(MAILGUN_FROM_EMAIL),
+        "configured_from_email": MAILGUN_FROM_EMAIL,
         "from_name": MAILGUN_FROM_NAME,
         "api_key_present": bool(MAILGUN_API_KEY),
         "api_key_length": len(MAILGUN_API_KEY or ""),
@@ -2658,7 +2695,7 @@ def send_admin_email_template_test(conn, admin_user, payload):
     variables = admin_email_template_variables(admin_user)
     name = str(payload.get("name") or "Template").strip()[:80] or "Template"
     from_email = render_email_template_text(payload.get("from_email") or "", variables).strip()
-    if from_email and "@" not in from_email:
+    if from_email and not sender_email(from_email, fallback=False):
         raise ValueError("Template From must be a valid email address.")
     body = render_email_template_text(payload.get("body") or "", variables).strip()
     if not body:

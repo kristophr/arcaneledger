@@ -631,7 +631,7 @@ function hostFromBaseUrl(value) {
   const raw = String(value || "").trim();
   if (!raw) return "";
   try {
-    return new URL(raw).host;
+    return new URL(raw).hostname;
   } catch {
     return raw.replace(/^https?:\/\//i, "").replace(/\/.*$/, "");
   }
