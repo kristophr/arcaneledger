@@ -30,6 +30,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 STATIC_DIR = ROOT / "static"
+CHANGELOG_PATH = ROOT / "CHANGELOG.md"
 
 
 def load_env_file(path=ROOT / ".env"):
@@ -99,8 +100,8 @@ SESSION_IDLE_MINUTES = int(os.environ.get("SESSION_IDLE_MINUTES", "30") or 30)
 EMAIL_VERIFICATION_MINUTES = int(os.environ.get("EMAIL_VERIFICATION_MINUTES", "30") or 30)
 PASSWORD_RESET_MINUTES = int(os.environ.get("PASSWORD_RESET_MINUTES", str(EMAIL_VERIFICATION_MINUTES)) or EMAIL_VERIFICATION_MINUTES)
 SUPPORTED_SCRYFALL_LANGUAGES = {"en"}
-APP_VERSION = "0.1.6 alpha"
-USER_AGENT = "arcaneledger/0.1.6"
+APP_VERSION = "0.1.7 beta"
+USER_AGENT = "arcaneledger/0.1.7"
 PROCESS_STARTED_AT = datetime.now(timezone.utc).replace(microsecond=0)
 COLOR_ORDER = ("W", "U", "B", "R", "G")
 CARD_CONDITIONS = (
@@ -116,7 +117,11 @@ CONTAINER_TYPES = ("binder", "box", "other")
 DEFAULT_CONTAINER_TYPE = "other"
 THEMES = {"light", "dark", "retro", "neon", "red", "blue", "black", "green", "pride"}
 USER_ROLES = {"admin", "paid", "normal"}
-ADMIN_EMAILS = {"kristophr@live.com", "beanis323@gmail.com"}
+ADMIN_EMAILS = {
+    email.strip().lower()
+    for email in re.split(r"[,;\s]+", os.environ.get("ADMIN_EMAILS", ""))
+    if email.strip()
+}
 DISALLOWED_DISPLAY_NAME_WORDS = {
     "fuck", "shit", "bitch", "cunt", "asshole", "whore", "slut",
     "nigger", "nigga", "fag", "faggot", "retard", "kike", "spic",
@@ -1335,6 +1340,7 @@ def init_db(conn):
             card_condition TEXT NOT NULL DEFAULT 'Near Mint',
             purchase_date TEXT NOT NULL,
             total_price REAL NOT NULL DEFAULT 0.01,
+            graded INTEGER NOT NULL DEFAULT 0,
             store_name TEXT NOT NULL DEFAULT '',
             store_location TEXT NOT NULL DEFAULT '',
             created_at TEXT NOT NULL,
@@ -1561,6 +1567,7 @@ def init_db(conn):
             share_id TEXT UNIQUE,
             name TEXT NOT NULL,
             storage_type TEXT NOT NULL DEFAULT 'other',
+            capacity INTEGER NOT NULL DEFAULT 0,
             location TEXT NOT NULL DEFAULT '',
             notes TEXT NOT NULL DEFAULT '',
             created_at TEXT NOT NULL,
@@ -1727,6 +1734,8 @@ def migrate_purchases_schema(conn):
     columns = {col["name"] for col in conn.execute("PRAGMA table_info(card_purchases)").fetchall()}
     if "card_condition" not in columns:
         conn.execute("ALTER TABLE card_purchases ADD COLUMN card_condition TEXT NOT NULL DEFAULT 'Near Mint'")
+    if "graded" not in columns:
+        conn.execute("ALTER TABLE card_purchases ADD COLUMN graded INTEGER NOT NULL DEFAULT 0")
     if "store_name" not in columns:
         conn.execute("ALTER TABLE card_purchases ADD COLUMN store_name TEXT NOT NULL DEFAULT ''")
     if "store_location" not in columns:
@@ -1743,13 +1752,14 @@ def migrate_purchases_schema(conn):
     )
     conn.execute(
         """
-        INSERT INTO card_purchases (card_id, variant, quantity, card_condition, purchase_date, total_price, store_name, store_location, created_at)
+        INSERT INTO card_purchases (card_id, variant, quantity, card_condition, purchase_date, total_price, graded, store_name, store_location, created_at)
         SELECT col.card_id,
                COALESCE(NULLIF(col.variant, ''), 'Normal'),
                col.quantity,
                COALESCE(NULLIF(col.card_condition, ''), ?),
                COALESCE(NULLIF(col.acquired_date, ''), ?),
                MAX(col.quantity * COALESCE(col.paid_price, 0.01), 0.01),
+               COALESCE(col.graded, 0),
                '',
                '',
                COALESCE(NULLIF(col.updated_at, ''), ?)
@@ -1794,6 +1804,8 @@ def migrate_containers_schema(conn):
         conn.execute("ALTER TABLE containers ADD COLUMN share_id TEXT")
     if "storage_type" not in columns:
         conn.execute("ALTER TABLE containers ADD COLUMN storage_type TEXT NOT NULL DEFAULT 'other'")
+    if "capacity" not in columns:
+        conn.execute("ALTER TABLE containers ADD COLUMN capacity INTEGER NOT NULL DEFAULT 0")
     placeholders = ", ".join("?" for _ in CONTAINER_TYPES)
     conn.execute(
         f"""
@@ -1804,6 +1816,13 @@ def migrate_containers_schema(conn):
            OR storage_type NOT IN ({placeholders})
         """,
         (DEFAULT_CONTAINER_TYPE, *CONTAINER_TYPES),
+    )
+    conn.execute(
+        """
+        UPDATE containers
+        SET capacity = 0
+        WHERE capacity IS NULL OR capacity < 0
+        """
     )
 
 
@@ -2593,10 +2612,29 @@ def verification_base_url():
     return APP_BASE_URL or "http://127.0.0.1:8000"
 
 
-def public_app_config():
+def public_app_config(conn):
     return {
         "app_base_url": APP_BASE_URL,
+        "app_version": APP_VERSION,
+        "email_configured": smtp_configured() or mailgun_configured(),
+        "server_claimed": app_has_users(conn),
     }
+
+
+def changelog_payload():
+    if CHANGELOG_PATH.exists():
+        text = CHANGELOG_PATH.read_text(encoding="utf-8").strip()
+    else:
+        text = f"# Changelog\n\n## {APP_VERSION}\n\n- Release notes have not been written yet."
+    return {"version": APP_VERSION, "changelog": text}
+
+
+def app_has_users(conn=None):
+    if conn is not None:
+        return bool(conn.execute("SELECT 1 FROM users LIMIT 1").fetchone())
+    with connect() as local_conn:
+        init_db(local_conn)
+        return app_has_users(local_conn)
 
 
 def render_email_template_text(value, variables):
@@ -2653,6 +2691,37 @@ def start_registration(conn, payload):
     email = validate_email(payload.get("email"))
     password = validate_password(payload.get("password"))
     return complete_registration(conn, {"email": email, "password": password, "name": email.split("@", 1)[0], "legacy_direct": True})
+
+
+def claim_server(conn, payload):
+    if app_has_users(conn):
+        raise ValueError("This server has already been claimed. Please log in or create an account.")
+    email = validate_email(payload.get("email"))
+    name = validate_display_name(payload.get("name") or email.split("@", 1)[0])
+    password = validate_password(payload.get("password"))
+    timestamp = now_iso()
+    conn.execute(
+        """
+        INSERT INTO users (id, name, email, password_hash, language, theme, email_verified, store_share_id, profile_slug, role, is_banned, created_at, updated_at)
+        VALUES (1, ?, ?, ?, ?, ?, 1, ?, ?, 'admin', 0, ?, ?)
+        """,
+        (
+            name,
+            email,
+            hash_password(password),
+            scryfall_language(payload.get("language")),
+            clean_theme(payload.get("theme")),
+            new_store_share_id(conn),
+            unique_profile_slug(conn, name),
+            timestamp,
+            timestamp,
+        ),
+    )
+    adopt_legacy_data(conn, 1)
+    token, expires_at = create_session(conn, 1)
+    conn.commit()
+    user = conn.execute("SELECT * FROM users WHERE id = 1").fetchone()
+    return {"ok": True, "user": user_payload(user), "session_token": token, "expires_at": expires_at}
 
 
 def request_registration_email(conn, payload):
@@ -3695,6 +3764,18 @@ def search_scryfall_cards(conn, query, language=None, order=None, user_id=None):
     return {"cards": cards}
 
 
+def scryfall_card_by_id(conn, card_id, user_id=None):
+    card_id = (card_id or "").strip()
+    if not card_id:
+        raise ValueError("Choose a Scryfall card first.")
+    card = request_json(SCRYFALL_ID_URL.format(card_id=urllib.parse.quote(card_id)))
+    owned_quantity = owned_quantities_for_cards(conn, [card.get("id")], user_id).get(card.get("id"), 0)
+    summary = card_summary(card, owned_quantity)
+    summary["variant_summaries"] = variant_summaries_for_cards(conn, [card.get("id")], user_id).get(card.get("id"), [])
+    summary["wishlist"] = wishlist_flags_for_cards(conn, [card.get("id")], user_id).get(card.get("id"), 0)
+    return {"card": summary}
+
+
 def variant_price_from_row(card, variant):
     variant_text = (variant or "").lower()
     if "etched" in variant_text and card["current_usd_etched"]:
@@ -3722,7 +3803,7 @@ def validate_selected_card(card, payload):
             raise ValueError("Selected Scryfall card changed before save. Please search and choose the card again.")
 
 
-def record_card_purchase(conn, user_id, card_id, variant, quantity, condition, purchase_date, total_price, store_name="", store_location=""):
+def record_card_purchase(conn, user_id, card_id, variant, quantity, condition, purchase_date, total_price, store_name="", store_location="", graded=0):
     quantity = max(1, int(quantity or 1))
     total_price = money(total_price, fallback=0.01)
     if total_price <= 0:
@@ -3731,8 +3812,8 @@ def record_card_purchase(conn, user_id, card_id, variant, quantity, condition, p
     store_location = clean_purchase_detail(store_location, "Store location")
     conn.execute(
         """
-        INSERT INTO card_purchases (user_id, card_id, variant, quantity, card_condition, purchase_date, total_price, store_name, store_location, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO card_purchases (user_id, card_id, variant, quantity, card_condition, purchase_date, total_price, graded, store_name, store_location, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             user_id,
@@ -3742,6 +3823,7 @@ def record_card_purchase(conn, user_id, card_id, variant, quantity, condition, p
             card_condition(condition),
             purchase_date or today_iso(),
             total_price,
+            bool_int(graded),
             store_name,
             store_location,
             now_iso(),
@@ -3755,7 +3837,8 @@ def rollup_collection_from_purchases(conn, user_id, card_id, variant):
         """
         SELECT COALESCE(SUM(quantity), 0) AS quantity,
                COALESCE(SUM(total_price), 0) AS total_paid,
-               MIN(purchase_date) AS first_purchase
+               MIN(purchase_date) AS first_purchase,
+               MAX(COALESCE(graded, 0)) AS graded
         FROM card_purchases
         WHERE user_id = ? AND card_id = ? AND variant = ?
         """,
@@ -3784,7 +3867,7 @@ def rollup_collection_from_purchases(conn, user_id, card_id, variant):
         (user_id, card_id, variant),
     ).fetchone()
     share_id = (existing["share_id"] if existing and existing["share_id"] else new_share_id(conn))
-    graded = int(existing["graded"] or 0) if existing else 0
+    graded = int(aggregate["graded"] or 0)
     notes = existing["notes"] if existing else ""
     average_paid = money(aggregate["total_paid"], fallback=0.01) / quantity
     conn.execute(
@@ -3830,15 +3913,6 @@ def add_card_to_collection(conn, user_id, payload):
     card_id = payload.get("scryfall_id") or payload.get("card_id")
     if not card_id:
         raise ValueError("Choose a Scryfall card first.")
-    quantity = max(1, int(money(payload.get("quantity"), fallback=1)))
-    paid_price = money(payload.get("paid_price"), fallback=0.01)
-    if paid_price <= 0:
-        paid_price = 0.01
-    purchase_unit_price = paid_price
-    purchase_date = payload.get("acquired_date") or today_iso()
-    acquired_date = purchase_date
-    variant = payload.get("variant") or "Normal"
-    purchase_condition = card_condition(payload.get("card_condition"))
 
     url = SCRYFALL_ID_URL.format(card_id=urllib.parse.quote(card_id))
     synced_at = now_iso()
@@ -3848,61 +3922,78 @@ def add_card_to_collection(conn, user_id, payload):
     if not payload.get("skip_set_cache"):
         cache_set_catalog(conn, scryfall_card.get("set"))
 
-    existing = conn.execute(
-        """
-        SELECT quantity, paid_price, acquired_date, card_condition, graded, notes, share_id
-        FROM collection
-        WHERE user_id = ? AND card_id = ? AND variant = ?
-        """,
-        (user_id, card_id, variant),
-    ).fetchone()
-    if existing:
-        new_quantity = existing["quantity"] + quantity
-        paid_price = (
-            (existing["quantity"] * existing["paid_price"]) + (quantity * paid_price)
-        ) / new_quantity
-        if existing["acquired_date"] and acquired_date:
-            acquired_date = min(existing["acquired_date"], acquired_date)
-        else:
-            acquired_date = existing["acquired_date"] or acquired_date
-        card_condition_value = card_condition(existing["card_condition"])
-        graded = int(existing["graded"] or 0)
-        notes = existing["notes"] or ""
-        share_id = existing["share_id"] or new_share_id(conn)
-    else:
-        new_quantity = quantity
-        card_condition_value = card_condition(payload.get("card_condition"))
-        graded = bool_int(payload.get("graded"))
-        notes = ""
-        share_id = new_share_id(conn)
+    purchase_rows = payload.get("purchases")
+    if not isinstance(purchase_rows, list):
+        purchase_rows = [{
+            "variant": payload.get("variant") or "Normal",
+            "quantity": payload.get("quantity") or 1,
+            "paid_price": payload.get("paid_price") or 0.01,
+            "acquired_date": payload.get("acquired_date") or today_iso(),
+            "card_condition": payload.get("card_condition") or DEFAULT_CARD_CONDITION,
+            "graded": payload.get("graded") or 0,
+        }]
 
-    conn.execute(
-        """
-        INSERT INTO collection (user_id, card_id, share_id, quantity, acquired_date, paid_price, variant, card_condition, graded, notes, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(user_id, card_id, variant) DO UPDATE SET
-            share_id = COALESCE(collection.share_id, excluded.share_id),
-            quantity = excluded.quantity,
-            acquired_date = excluded.acquired_date,
-            paid_price = excluded.paid_price,
-            card_condition = excluded.card_condition,
-            graded = excluded.graded,
-            notes = excluded.notes,
-            updated_at = excluded.updated_at
-        """,
-        (user_id, card_id, share_id, new_quantity, acquired_date, paid_price, variant, card_condition_value, graded, notes, now_iso()),
-    )
+    global_store_name = payload.get("store_name") or ""
+    global_store_location = payload.get("store_location") or ""
+    normalized_rows = []
+    for row in purchase_rows:
+        if not isinstance(row, dict):
+            continue
+        quantity = int(money(row.get("quantity"), fallback=0))
+        if quantity <= 0:
+            continue
+        paid_price = money(row.get("paid_price"), fallback=0.01)
+        if paid_price <= 0:
+            raise ValueError("Price paid per card must be greater than $0.00.")
+        purchase_date = row.get("acquired_date") or row.get("purchase_date") or today_iso()
+        normalized_rows.append({
+            "variant": row.get("variant") or "Normal",
+            "quantity": quantity,
+            "paid_price": paid_price,
+            "purchase_date": purchase_date,
+            "card_condition": card_condition(row.get("card_condition")),
+            "graded": bool_int(row.get("graded")),
+            "store_name": row.get("store_name") or global_store_name,
+            "store_location": row.get("store_location") or global_store_location,
+        })
+    if not normalized_rows:
+        raise ValueError("No quantity detected.")
+
     card = conn.execute("SELECT * FROM cards WHERE scryfall_id = ?", (card_id,)).fetchone()
-    record_card_purchase(conn, user_id, card_id, variant, quantity, purchase_condition, purchase_date, quantity * purchase_unit_price)
-    collection_row = rollup_collection_from_purchases(conn, user_id, card_id, variant)
+    variants = []
+    total_added = 0
+    for row in normalized_rows:
+        record_card_purchase(
+            conn,
+            user_id,
+            card_id,
+            row["variant"],
+            row["quantity"],
+            row["card_condition"],
+            row["purchase_date"],
+            row["quantity"] * row["paid_price"],
+            row["store_name"],
+            row["store_location"],
+            row["graded"],
+        )
+        if row["variant"] not in variants:
+            variants.append(row["variant"])
+        total_added += row["quantity"]
+    collection_rows = []
+    for variant in variants:
+        collection_row = rollup_collection_from_purchases(conn, user_id, card_id, variant)
+        if collection_row:
+            collection_rows.append(dict(collection_row))
     conn.execute("DELETE FROM wishlist_cards WHERE user_id = ? AND card_id = ?", (user_id, card_id))
     conn.commit()
     return {
         "ok": True,
         "card": dict(card),
-        "quantity": collection_row["quantity"] if collection_row else new_quantity,
-        "variant": variant,
-        "current_value": variant_price_from_row(card, variant),
+        "quantity": sum(int(row.get("quantity") or 0) for row in collection_rows),
+        "quantity_added": total_added,
+        "variant": variants[0] if variants else "Normal",
+        "variants": variants,
+        "current_value": variant_price_from_row(card, variants[0] if variants else "Normal"),
     }
 
 
@@ -5037,7 +5128,7 @@ def deck_cards(conn, user_id, deck_id):
                col.acquired_date,
                col.share_id,
                ({price_expr}) AS display_price,
-               COALESCE(col.quantity, 0) * ({price_expr}) AS owned_value
+               COALESCE(cc.quantity, 0) * ({price_expr}) AS container_value
         FROM deck_cards dc
         JOIN cards c ON c.scryfall_id = dc.card_id
         LEFT JOIN collection col ON col.user_id = ? AND col.card_id = dc.card_id AND col.variant = dc.variant
@@ -5709,6 +5800,10 @@ def store_share_url(store_share_id):
     return f"{verification_base_url()}/stores/{urllib.parse.quote(store_share_id)}"
 
 
+def favorites_share_url(store_share_id):
+    return f"{verification_base_url()}/favorites/{urllib.parse.quote(store_share_id)}"
+
+
 def public_display_name(user_row, fallback_prefix="Seller"):
     name = (user_row["name"] if user_row and "name" in user_row.keys() else "") or ""
     share_id = (user_row["store_share_id"] if user_row and "store_share_id" in user_row.keys() else "") or ""
@@ -5827,6 +5922,128 @@ def list_favorite_store_listings(conn, user_id):
         listings.append(listing)
     conn.commit()
     return listings
+
+
+def shared_favorites(conn, store_share_id):
+    owner = conn.execute(
+        """
+        SELECT id, name, email, store_share_id
+        FROM users
+        WHERE store_share_id = ?
+        """,
+        (store_share_id,),
+    ).fetchone()
+    if not owner:
+        raise KeyError("Shared favorites not found.")
+    return {
+        "cards": list_cards(conn, "owned=owned&favorite=1&sort=value&limit=5000", owner["id"]),
+        "decks": list_favorite_decks(conn, owner["id"]),
+        "store": list_favorite_store_listings(conn, owner["id"]),
+        "readonly": True,
+        "owner_name": public_display_name(owner, "Collector"),
+        "share_id": owner["store_share_id"],
+        "share_url": favorites_share_url(owner["store_share_id"]),
+    }
+
+
+def favorites_email_text(payload, share_url, sender_name):
+    lines = [
+        f"{sender_name or 'An Arcane Ledger user'} shared Arcane Ledger favorites with you.",
+        share_url,
+        "",
+        "Favorite cards:",
+    ]
+    for card in payload.get("cards") or []:
+        set_text = " ".join(part for part in [
+            card.get("set_name") or "",
+            f"#{card.get('collector_number')}" if card.get("collector_number") else "",
+            card.get("variant") or "",
+        ] if part).strip()
+        lines.append(f"- {card_email_title(card)} ({set_text})")
+    if not (payload.get("cards") or []):
+        lines.append("- No favorite cards.")
+    lines.extend(["", "Favorite decks:"])
+    for deck in payload.get("decks") or []:
+        lines.append(f"- {deck.get('name') or 'Deck'} by {deck.get('owner_name') or 'Arcane Ledger user'}")
+    if not (payload.get("decks") or []):
+        lines.append("- No favorite decks.")
+    lines.extend(["", "Favorite store listings:"])
+    for listing in payload.get("store") or []:
+        lines.append(f"- {card_email_title(listing)} from {listing.get('seller_name') or 'Seller'}")
+    if not (payload.get("store") or []):
+        lines.append("- No favorite store listings.")
+    return "\n".join(lines)
+
+
+def favorites_email_html(payload, share_url, sender_name):
+    safe_sender = html_lib.escape(sender_name or "An Arcane Ledger user")
+    safe_url = html_lib.escape(share_url)
+
+    def list_items(items, formatter, empty_text):
+        if not items:
+            return f"<li style=\"padding:6px 0;color:#586661;\">{html_lib.escape(empty_text)}</li>"
+        return "\n".join(f"<li style=\"padding:6px 0;\">{formatter(item)}</li>" for item in items)
+
+    card_items = list_items(
+        payload.get("cards") or [],
+        lambda card: f"<strong>{html_lib.escape(card_email_title(card))}</strong> <span style=\"color:#586661;\">{html_lib.escape(card.get('set_name') or '')}</span>",
+        "No favorite cards.",
+    )
+    deck_items = list_items(
+        payload.get("decks") or [],
+        lambda deck: f"<strong>{html_lib.escape(deck.get('name') or 'Deck')}</strong> <span style=\"color:#586661;\">by {html_lib.escape(deck.get('owner_name') or 'Arcane Ledger user')}</span>",
+        "No favorite decks.",
+    )
+    store_items = list_items(
+        payload.get("store") or [],
+        lambda listing: f"<strong>{html_lib.escape(card_email_title(listing))}</strong> <span style=\"color:#586661;\">from {html_lib.escape(listing.get('seller_name') or 'Seller')}</span>",
+        "No favorite store listings.",
+    )
+    return f"""
+    <!doctype html>
+    <html>
+      <body style="margin:0;background:#f4f7f5;color:#111816;font-family:Arial,Helvetica,sans-serif;">
+        <div style="max-width:760px;margin:0 auto;padding:24px;">
+          <h1 style="margin:0 0 8px;font-size:28px;line-height:1.1;">Shared Favorites</h1>
+          <p style="margin:0 0 16px;color:#586661;">{safe_sender} shared Arcane Ledger favorites with you.</p>
+          <p style="margin:0 0 20px;">
+            <a href="{safe_url}" style="display:inline-block;background:#111816;color:#ffffff;text-decoration:none;padding:10px 14px;border-radius:8px;font-weight:700;">Open favorites</a>
+          </p>
+          <p style="margin:0 0 16px;color:#303936;word-break:break-all;">{safe_url}</p>
+          <section style="background:#ffffff;border:1px solid #d7dedb;border-radius:8px;padding:16px;margin-bottom:14px;">
+            <h2 style="margin:0 0 8px;font-size:18px;">Cards</h2>
+            <ul style="margin:0;padding-left:20px;">{card_items}</ul>
+          </section>
+          <section style="background:#ffffff;border:1px solid #d7dedb;border-radius:8px;padding:16px;margin-bottom:14px;">
+            <h2 style="margin:0 0 8px;font-size:18px;">Decks</h2>
+            <ul style="margin:0;padding-left:20px;">{deck_items}</ul>
+          </section>
+          <section style="background:#ffffff;border:1px solid #d7dedb;border-radius:8px;padding:16px;">
+            <h2 style="margin:0 0 8px;font-size:18px;">Store</h2>
+            <ul style="margin:0;padding-left:20px;">{store_items}</ul>
+          </section>
+        </div>
+      </body>
+    </html>
+    """
+
+
+def email_favorites(conn, user, store_share_id, payload):
+    recipient = validate_email(payload.get("email"))
+    if not store_share_id or store_share_id != (user["store_share_id"] if "store_share_id" in user.keys() else ""):
+        raise ValueError("You can only email your own favorites list.")
+    favorites = shared_favorites(conn, store_share_id)
+    share_url = favorites_share_url(store_share_id)
+    sender_name = user["name"] or user["email"]
+    subject = f"Arcane Ledger: {sender_name} sharing favorites"
+    result = send_email(
+        recipient,
+        subject,
+        text=favorites_email_text(favorites, share_url, sender_name),
+        html=favorites_email_html(favorites, share_url, sender_name),
+        tags=["arcaneledger", "favorites-share"],
+    )
+    return {"ok": True, "email": recipient, "provider": result.get("provider"), "status": result.get("status")}
 
 
 def update_favorite_store_listing(conn, user_id, payload):
@@ -6170,21 +6387,73 @@ def owned_quantity(conn, user_id, card_id, variant):
 
 
 def list_containers(conn, user_id):
+    price_expr = (
+        "CASE "
+        "WHEN lower(coalesce(cc.variant, '')) LIKE '%etched%' AND c.current_usd_etched > 0 THEN c.current_usd_etched "
+        "WHEN lower(coalesce(cc.variant, '')) LIKE '%foil%' AND c.current_usd_foil > 0 THEN c.current_usd_foil "
+        "WHEN c.current_usd > 0 THEN c.current_usd "
+        "WHEN c.current_usd_foil > 0 THEN c.current_usd_foil "
+        "WHEN c.current_usd_etched > 0 THEN c.current_usd_etched "
+        "ELSE 0 END"
+    )
     rows = conn.execute(
-        """
-        SELECT c.id, c.share_id, c.name, COALESCE(c.storage_type, 'other') AS storage_type,
-               c.location, c.notes, c.created_at, c.updated_at,
+        f"""
+        SELECT ct.id, ct.share_id, ct.name, COALESCE(ct.storage_type, 'other') AS storage_type,
+               COALESCE(ct.capacity, 0) AS capacity,
+               ct.location, ct.notes, ct.created_at, ct.updated_at,
                COUNT(cc.card_id) AS card_count,
-               COALESCE(SUM(cc.quantity), 0) AS stored_quantity
-        FROM containers c
-        LEFT JOIN container_cards cc ON cc.container_id = c.id
-        WHERE c.user_id = ?
-        GROUP BY c.id
-        ORDER BY c.updated_at DESC, c.name COLLATE NOCASE
+               COALESCE(SUM(cc.quantity), 0) AS stored_quantity,
+               COALESCE(SUM(cc.quantity * ({price_expr})), 0) AS container_value
+        FROM containers ct
+        LEFT JOIN container_cards cc ON cc.container_id = ct.id
+        LEFT JOIN cards c ON c.scryfall_id = cc.card_id
+        WHERE ct.user_id = ?
+        GROUP BY ct.id
+        ORDER BY ct.updated_at DESC, ct.name COLLATE NOCASE
         """,
         (user_id,),
     ).fetchall()
-    return rows_to_dicts(rows)
+    containers = rows_to_dicts(rows)
+    for container in containers:
+        capacity = int(container.get("capacity") or 0)
+        stored = int(container.get("stored_quantity") or 0)
+        container["remaining_capacity"] = max(0, capacity - stored) if capacity > 0 else None
+        container["fill_percent"] = round(min(100, (stored / capacity) * 100), 1) if capacity > 0 else None
+    return containers
+
+
+def container_storage_stats(conn, user_id, container_id):
+    price_expr = (
+        "CASE "
+        "WHEN lower(coalesce(cc.variant, '')) LIKE '%etched%' AND c.current_usd_etched > 0 THEN c.current_usd_etched "
+        "WHEN lower(coalesce(cc.variant, '')) LIKE '%foil%' AND c.current_usd_foil > 0 THEN c.current_usd_foil "
+        "WHEN c.current_usd > 0 THEN c.current_usd "
+        "WHEN c.current_usd_foil > 0 THEN c.current_usd_foil "
+        "WHEN c.current_usd_etched > 0 THEN c.current_usd_etched "
+        "ELSE 0 END"
+    )
+    row = conn.execute(
+        f"""
+        SELECT COALESCE(ct.capacity, 0) AS capacity,
+               COALESCE(SUM(cc.quantity), 0) AS stored_quantity,
+               COUNT(cc.card_id) AS card_count,
+               COALESCE(SUM(cc.quantity * ({price_expr})), 0) AS container_value
+        FROM containers ct
+        LEFT JOIN container_cards cc ON cc.container_id = ct.id
+        LEFT JOIN cards c ON c.scryfall_id = cc.card_id
+        WHERE ct.id = ? AND ct.user_id = ?
+        GROUP BY ct.id
+        """,
+        (container_id, user_id),
+    ).fetchone()
+    if not row:
+        return {"capacity": 0, "stored_quantity": 0, "card_count": 0, "container_value": 0, "remaining_capacity": None, "fill_percent": None}
+    stats = dict(row)
+    capacity = int(stats.get("capacity") or 0)
+    stored = int(stats.get("stored_quantity") or 0)
+    stats["remaining_capacity"] = max(0, capacity - stored) if capacity > 0 else None
+    stats["fill_percent"] = round(min(100, (stored / capacity) * 100), 1) if capacity > 0 else None
+    return stats
 
 
 def clean_limited_text(payload, key, label, limit, required=False):
@@ -6201,11 +6470,24 @@ def clean_container_type(value):
     return storage_type if storage_type in CONTAINER_TYPES else DEFAULT_CONTAINER_TYPE
 
 
+def clean_container_capacity(value):
+    try:
+        capacity = int(value)
+    except (TypeError, ValueError):
+        capacity = 0
+    if capacity < 1:
+        raise ValueError("Container capacity must be at least 1 card.")
+    if capacity > 100000:
+        raise ValueError("Container capacity must be 100,000 cards or fewer.")
+    return capacity
+
+
 def create_container(conn, user_id, payload):
     name = validate_user_content_name(payload.get("name"), "Container name", 30)
     if name_exists(conn, "containers", name, user_id):
         raise ValueError("Container name must be unique across your decks, containers, and wishlists.")
     storage_type = clean_container_type(payload.get("storage_type"))
+    capacity = clean_container_capacity(payload.get("capacity"))
     location = clean_limited_text(payload, "location", "Container location", 30)
     notes = (payload.get("notes") or "").strip()
     if len(notes) > 500:
@@ -6214,10 +6496,10 @@ def create_container(conn, user_id, payload):
     share_id = new_container_share_id(conn)
     cursor = conn.execute(
         """
-        INSERT INTO containers (user_id, share_id, name, storage_type, location, notes, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO containers (user_id, share_id, name, storage_type, capacity, location, notes, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (user_id, share_id, name, storage_type, location, notes, timestamp, timestamp),
+        (user_id, share_id, name, storage_type, capacity, location, notes, timestamp, timestamp),
     )
     conn.commit()
     return {
@@ -6227,12 +6509,16 @@ def create_container(conn, user_id, payload):
             "share_id": share_id,
             "name": name,
             "storage_type": storage_type,
+            "capacity": capacity,
             "location": location,
             "notes": notes,
             "created_at": timestamp,
             "updated_at": timestamp,
             "card_count": 0,
             "stored_quantity": 0,
+            "container_value": 0,
+            "remaining_capacity": capacity,
+            "fill_percent": 0,
         },
     }
 
@@ -6245,6 +6531,18 @@ def update_container(conn, user_id, container_id, payload):
     if name_exists(conn, "containers", name, user_id, exclude_id=container_id):
         raise ValueError("Container name must be unique across your decks, containers, and wishlists.")
     storage_type = clean_container_type(payload.get("storage_type"))
+    capacity = clean_container_capacity(payload.get("capacity"))
+    stored = conn.execute(
+        """
+        SELECT COALESCE(SUM(quantity), 0) AS stored_quantity
+        FROM container_cards
+        WHERE container_id = ?
+        """,
+        (container_id,),
+    ).fetchone()
+    stored_quantity = int(stored["stored_quantity"] or 0) if stored else 0
+    if capacity < stored_quantity:
+        raise ValueError(f"Container capacity cannot be lower than the {stored_quantity} cards currently stored.")
     location = clean_limited_text(payload, "location", "Container location", 30)
     notes = (payload.get("notes") or "").strip()
     if len(notes) > 500:
@@ -6253,10 +6551,10 @@ def update_container(conn, user_id, container_id, payload):
     conn.execute(
         """
         UPDATE containers
-        SET name = ?, storage_type = ?, location = ?, notes = ?, updated_at = ?
+        SET name = ?, storage_type = ?, capacity = ?, location = ?, notes = ?, updated_at = ?
         WHERE id = ? AND user_id = ?
         """,
-        (name, storage_type, location, notes, timestamp, container_id, user_id),
+        (name, storage_type, capacity, location, notes, timestamp, container_id, user_id),
     )
     conn.commit()
     container = container_detail(conn, user_id, container_id)
@@ -6291,6 +6589,7 @@ def container_detail(conn, user_id, container_id):
     container = conn.execute(
         """
         SELECT c.id, c.share_id, c.name, COALESCE(c.storage_type, 'other') AS storage_type,
+               COALESCE(c.capacity, 0) AS capacity,
                c.location, c.notes, c.created_at, c.updated_at,
                COUNT(cc.card_id) AS card_count,
                COALESCE(SUM(cc.quantity), 0) AS stored_quantity
@@ -6304,6 +6603,7 @@ def container_detail(conn, user_id, container_id):
     if not container:
         raise KeyError("Container not found")
     payload = dict(container)
+    payload.update(container_storage_stats(conn, user_id, container_id))
     payload["cards"] = container_cards(conn, user_id, container_id)
     return payload
 
@@ -6323,7 +6623,17 @@ def container_share_url(container):
 
 
 def add_cards_to_container(conn, user_id, container_id, payload):
-    container = conn.execute("SELECT id FROM containers WHERE id = ? AND user_id = ?", (container_id, user_id)).fetchone()
+    container = conn.execute(
+        """
+        SELECT ct.id, ct.name, COALESCE(ct.capacity, 0) AS capacity,
+               COALESCE(SUM(cc.quantity), 0) AS stored_quantity
+        FROM containers ct
+        LEFT JOIN container_cards cc ON cc.container_id = ct.id
+        WHERE ct.id = ? AND ct.user_id = ?
+        GROUP BY ct.id
+        """,
+        (container_id, user_id),
+    ).fetchone()
     if not container:
         raise KeyError("Container not found")
     cards = payload.get("cards") or []
@@ -6332,6 +6642,8 @@ def add_cards_to_container(conn, user_id, container_id, payload):
 
     timestamp = now_iso()
     added = 0
+    capacity = int(container["capacity"] or 0)
+    remaining_capacity = capacity - int(container["stored_quantity"] or 0) if capacity > 0 else None
     for item in cards:
         card_id = item.get("card_id") or item.get("scryfall_id")
         variant = item.get("variant") or "Normal"
@@ -6355,6 +6667,8 @@ def add_cards_to_container(conn, user_id, container_id, payload):
         if current_here + quantity > max_here:
             available = max(0, max_here - current_here)
             raise ValueError(f"Only {available} unassigned copy/copies are available for this card.")
+        if remaining_capacity is not None and quantity > remaining_capacity:
+            raise ValueError(f"{container['name']} only has space for {max(0, remaining_capacity)} more card/copy.")
         conn.execute(
             """
             INSERT INTO container_cards (container_id, card_id, variant, quantity, updated_at)
@@ -6366,9 +6680,120 @@ def add_cards_to_container(conn, user_id, container_id, payload):
             (container_id, card_id, variant, quantity, timestamp),
         )
         added += quantity
+        if remaining_capacity is not None:
+            remaining_capacity -= quantity
     conn.execute("UPDATE containers SET updated_at = ? WHERE id = ?", (timestamp, container_id))
     conn.commit()
     return {"ok": True, "added": added, "container_id": container_id}
+
+
+def update_card_container_allocations(conn, user_id, card_id, payload):
+    card_id = (card_id or payload.get("card_id") or payload.get("scryfall_id") or "").strip()
+    variant = payload.get("variant") or "Normal"
+    if not card_id:
+        raise ValueError("Card is required.")
+    owned = owned_quantity(conn, user_id, card_id, variant)
+    if owned <= 0:
+        raise ValueError("Only owned cards can be stored in containers.")
+    containers = rows_to_dicts(conn.execute(
+        "SELECT id FROM containers WHERE user_id = ?",
+        (user_id,),
+    ).fetchall())
+    if not containers:
+        raise ValueError("Create a container first.")
+    valid_container_ids = {int(container["id"]) for container in containers}
+    allocations = payload.get("allocations") or []
+    if not isinstance(allocations, list):
+        raise ValueError("Container allocations are required.")
+    normalized = []
+    total = 0
+    for allocation in allocations:
+        if not isinstance(allocation, dict):
+            continue
+        container_id = int(allocation.get("container_id") or 0)
+        quantity = max(0, int(allocation.get("quantity") or 0))
+        if container_id not in valid_container_ids:
+            raise ValueError("One of those containers was not found.")
+        normalized.append({"container_id": container_id, "quantity": quantity})
+        total += quantity
+    if total > owned:
+        raise ValueError(f"Only {owned} total copy/copies are owned for this variant.")
+
+    container_limits = {
+        int(row["id"]): {
+            "name": row["name"],
+            "capacity": int(row["capacity"] or 0),
+            "stored_other": int(row["stored_other"] or 0),
+        }
+        for row in conn.execute(
+            """
+            SELECT ct.id, ct.name, COALESCE(ct.capacity, 0) AS capacity,
+                   COALESCE(SUM(
+                     CASE
+                       WHEN cc.card_id = ? AND cc.variant = ? THEN 0
+                       ELSE cc.quantity
+                     END
+                   ), 0) AS stored_other
+            FROM containers ct
+            LEFT JOIN container_cards cc ON cc.container_id = ct.id
+            WHERE ct.user_id = ?
+            GROUP BY ct.id
+            """,
+            (card_id, variant, user_id),
+        ).fetchall()
+    }
+    for item in normalized:
+        limit = container_limits.get(item["container_id"])
+        if not limit or limit["capacity"] <= 0:
+            continue
+        available_space = max(0, limit["capacity"] - limit["stored_other"])
+        if item["quantity"] > available_space:
+            raise ValueError(f"{limit['name']} only has space for {available_space} more card/copy.")
+
+    previous_rows = conn.execute(
+        """
+        SELECT cc.container_id
+        FROM container_cards cc
+        JOIN containers c ON c.id = cc.container_id
+        WHERE c.user_id = ? AND cc.card_id = ? AND cc.variant = ?
+        """,
+        (user_id, card_id, variant),
+    ).fetchall()
+    touched = {int(row["container_id"]) for row in previous_rows}
+    touched.update(item["container_id"] for item in normalized)
+    timestamp = now_iso()
+    conn.execute(
+        """
+        DELETE FROM container_cards
+        WHERE card_id = ?
+          AND variant = ?
+          AND container_id IN (SELECT id FROM containers WHERE user_id = ?)
+        """,
+        (card_id, variant, user_id),
+    )
+    for item in normalized:
+        if item["quantity"] <= 0:
+            continue
+        conn.execute(
+            """
+            INSERT INTO container_cards (container_id, card_id, variant, quantity, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (item["container_id"], card_id, variant, item["quantity"], timestamp),
+        )
+    if touched:
+        placeholders = ", ".join("?" for _ in touched)
+        conn.execute(
+            f"UPDATE containers SET updated_at = ? WHERE user_id = ? AND id IN ({placeholders})",
+            (timestamp, user_id, *sorted(touched)),
+        )
+    conn.commit()
+    return {
+        "ok": True,
+        "stored": total,
+        "unassigned": max(0, owned - total),
+        "containers": list_containers(conn, user_id),
+    }
 
 
 def remove_card_from_container(conn, user_id, container_id, payload):
@@ -8190,6 +8615,7 @@ def purchase_history(conn, user_id, card_id, variant):
         """
         SELECT purchase_date,
                card_condition,
+               COALESCE(graded, 0) AS graded,
                store_name,
                store_location,
                SUM(quantity) AS quantity,
@@ -8198,7 +8624,7 @@ def purchase_history(conn, user_id, card_id, variant):
                MIN(created_at) AS created_at
         FROM card_purchases
         WHERE user_id = ? AND card_id = ? AND variant = ?
-        GROUP BY purchase_date, card_condition, store_name, store_location
+        GROUP BY purchase_date, card_condition, COALESCE(graded, 0), store_name, store_location
         ORDER BY purchase_date DESC, created_at DESC
         """,
         (user_id, card_id, variant or "Normal"),
@@ -8213,6 +8639,7 @@ def movement_history(conn, user_id, card_id, variant):
                id AS movement_id,
                purchase_date AS movement_date,
                card_condition,
+               COALESCE(graded, 0) AS graded,
                quantity,
                total_price AS total_amount,
                ROUND(total_price / quantity, 2) AS price_each,
@@ -9962,7 +10389,9 @@ class Handler(SimpleHTTPRequestHandler):
                 if parsed.path == "/api/health":
                     return self.send_json({"ok": True, "status": "healthy"})
                 if parsed.path == "/api/config":
-                    return self.send_json(public_app_config())
+                    return self.send_json(public_app_config(conn))
+                if parsed.path == "/api/changelog":
+                    return self.send_json(changelog_payload())
                 if parsed.path == "/api/auth/session":
                     user = self.current_user(conn)
                     return self.send_json({"authenticated": bool(user), "user": user_payload(user)})
@@ -10150,14 +10579,9 @@ class Handler(SimpleHTTPRequestHandler):
                         urllib.parse.unquote(match.group(1)),
                         user["id"] if user else None,
                     ))
-                if parsed.path == "/api/shared-favorites":
-                    user = self.require_user(conn)
-                    return self.send_json({
-                        "cards": list_cards(conn, "owned=owned&favorite=1&sort=value&limit=5000", user["id"]),
-                        "decks": list_favorite_decks(conn, user["id"]),
-                        "store": list_favorite_store_listings(conn, user["id"]),
-                        "readonly": True,
-                    })
+                match = re.match(r"^/api/shared-favorites/([^/]+)$", parsed.path)
+                if match:
+                    return self.send_json(shared_favorites(conn, urllib.parse.unquote(match.group(1))))
                 if parsed.path == "/api/scryfall/search":
                     params = urllib.parse.parse_qs(parsed.query)
                     user = self.current_user(conn)
@@ -10168,6 +10592,10 @@ class Handler(SimpleHTTPRequestHandler):
                         params.get("order", [None])[0],
                         user["id"] if user else None,
                     ))
+                match = re.match(r"^/api/scryfall/cards/([^/]+)$", parsed.path)
+                if match:
+                    user = self.current_user(conn)
+                    return self.send_json(scryfall_card_by_id(conn, urllib.parse.unquote(match.group(1)), user["id"] if user else None))
                 if parsed.path == "/api/export.csv":
                     user = self.require_user(conn)
                     data = export_csv(conn, user["id"]).encode("utf-8")
@@ -10205,7 +10633,7 @@ class Handler(SimpleHTTPRequestHandler):
             or re.match(r"^/card/[^/]+/[^/]+/?$", parsed.path)
             or re.match(r"^/stores/[^/]+/?$", parsed.path)
             or re.match(r"^/user/[^/]+/?$", parsed.path)
-            or re.match(r"^/favorites/shared/?$", parsed.path)
+            or re.match(r"^/favorites/[^/]+/?$", parsed.path)
             or re.match(r"^/verify-email/[^/]+/?$", parsed.path)
             or re.match(r"^/reset-password/[^/]+/?$", parsed.path)
             or re.match(r"^/(dashboard|favorites|collection|sets|decks|browse-decks|containers|missing-list|for-sale|store-front|wishlist|notifications|admin|settings|search|import)/?$", parsed.path)
@@ -10220,6 +10648,10 @@ class Handler(SimpleHTTPRequestHandler):
                 init_db(conn)
                 if parsed.path == "/api/auth/register-start":
                     return self.send_json(request_registration_email(conn, self.read_json()))
+                if parsed.path == "/api/auth/claim-server":
+                    result = claim_server(conn, self.read_json())
+                    token = result.pop("session_token")
+                    return self.send_json(result, HTTPStatus.CREATED, cookie=cookie_header(token, result.get("expires_at")))
                 if parsed.path == "/api/auth/register-complete":
                     result = complete_registration(conn, self.read_json())
                     token = result.pop("session_token")
@@ -10350,6 +10782,10 @@ class Handler(SimpleHTTPRequestHandler):
                 if match:
                     user = self.require_user(conn)
                     return self.send_json(email_wishlist(conn, user, int(match.group(1)), self.read_json()))
+                match = re.match(r"^/api/favorites/([^/]+)/email$", parsed.path)
+                if match:
+                    user = self.require_user(conn)
+                    return self.send_json(email_favorites(conn, user, urllib.parse.unquote(match.group(1)), self.read_json()))
                 match = re.match(r"^/api/sets/([^/]+)/email$", parsed.path)
                 if match:
                     user = self.require_user(conn)
@@ -10384,6 +10820,10 @@ class Handler(SimpleHTTPRequestHandler):
                 if match:
                     user = self.require_user(conn)
                     return self.send_json(add_cards_to_container(conn, user["id"], int(match.group(1)), self.read_json()))
+                match = re.match(r"^/api/cards/([^/]+)/containers$", parsed.path)
+                if match:
+                    user = self.require_user(conn)
+                    return self.send_json(update_card_container_allocations(conn, user["id"], urllib.parse.unquote(match.group(1)), self.read_json()))
                 match = re.match(r"^/api/cards/([^/]+)/collection$", parsed.path)
                 if match:
                     user = self.require_user(conn)

@@ -1,6 +1,6 @@
 # Arcane Ledger
 
-**Version:** 0.1.6 alpha
+**Version:** 0.1.7 beta
 
 A Magic: The Gathering collection tracker. It uses Scryfall as the catalog and price source, stores data in SQLite, imports portfolio CSV exports, tracks decks, supports read-only share links, and exports your owned cards back to CSV.
 
@@ -45,6 +45,14 @@ Security defaults can also be adjusted in `.env`:
 SESSION_IDLE_MINUTES=30
 EMAIL_VERIFICATION_MINUTES=30
 PASSWORD_RESET_MINUTES=30
+```
+
+On a fresh server with no users, the home page shows `Claim Server`. The first account created through that flow becomes user `1` and gets the `admin` role. After the server is claimed, the normal login/create-account flow is used. If email is configured, new accounts verify by email; if not, accounts can be created directly with email and password.
+
+Optional fallback admin emails can be configured with a comma-separated list:
+
+```env
+ADMIN_EMAILS=admin@example.com,friend@example.com
 ```
 
 To run it in the background:

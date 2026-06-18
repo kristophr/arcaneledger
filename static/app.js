@@ -56,6 +56,7 @@ const state = {
   activeContainer: null,
   editingContainer: null,
   activeSaleCard: null,
+  assignContainerCard: null,
   importRows: [],
   importIssues: [],
   importWizard: {
@@ -98,6 +99,10 @@ const compactDollars = new Intl.NumberFormat("en-US", {
 });
 
 const integer = new Intl.NumberFormat("en-US");
+function formatPercent(value) {
+  const percent = Number(value || 0);
+  return `${Number.isFinite(percent) ? percent.toFixed(1) : "0.0"}%`;
+}
 const cardConditions = ["Near Mint", "Lightly Played", "Moderately Played", "Heavily Played", "Damaged"];
 const disallowedNameWords = new Set([
   "fuck", "shit", "bitch", "cunt", "asshole", "whore", "slut",
@@ -235,6 +240,7 @@ const els = {
   favoriteListViewButton: document.querySelector("#favoriteListViewButton"),
   favoriteFilterButtons: document.querySelectorAll("[data-favorites-filter]"),
   shareFavoritesButton: document.querySelector("#shareFavoritesButton"),
+  emailFavoritesButton: document.querySelector("#emailFavoritesButton"),
   collectionBulkBar: document.querySelector("#collectionBulkBar"),
   favoritesBulkBar: document.querySelector("#favoritesBulkBar"),
   selectedCardsCount: document.querySelector("#selectedCardsCount"),
@@ -295,9 +301,16 @@ const els = {
   addSearchForm: document.querySelector("#addSearchForm"),
   addSearchInput: document.querySelector("#addSearchInput"),
   addSearchButton: document.querySelector("#addSearchButton"),
+  addAdvancedToggle: document.querySelector("#addAdvancedToggle"),
+  addAdvancedFilters: document.querySelector("#addAdvancedFilters"),
+  addSetCodeInput: document.querySelector("#addSetCodeInput"),
+  addColorInput: document.querySelector("#addColorInput"),
+  addTypeInput: document.querySelector("#addTypeInput"),
   addSearchStatus: document.querySelector("#addSearchStatus"),
   addSearchResults: document.querySelector("#addSearchResults"),
   addCardForm: document.querySelector("#addCardForm"),
+  addPurchaseMatrix: document.querySelector("#addPurchaseMatrix"),
+  addPurchaseRows: document.querySelector("#addPurchaseRows"),
   selectedAddCard: document.querySelector("#selectedAddCard"),
   closeAddCardButton: document.querySelector("#closeAddCardButton"),
   cancelAddCardButton: document.querySelector("#cancelAddCardButton"),
@@ -309,6 +322,12 @@ const els = {
   cancelSettingsButton: document.querySelector("#cancelSettingsButton"),
   settingsPageForm: document.querySelector("#settingsPageForm"),
   settingsAccountEmail: document.querySelector("#settingsAccountEmail"),
+  settingsAppVersion: document.querySelector("#settingsAppVersion"),
+  openChangelogButton: document.querySelector("#openChangelogButton"),
+  changelogOverlay: document.querySelector("#changelogOverlay"),
+  changelogText: document.querySelector("#changelogText"),
+  closeChangelogButton: document.querySelector("#closeChangelogButton"),
+  dismissChangelogButton: document.querySelector("#dismissChangelogButton"),
   settingsPageStatus: document.querySelector("#settingsPageStatus"),
   notificationDetailOverlay: document.querySelector("#notificationDetailOverlay"),
   notificationSubjectInput: document.querySelector("#notificationSubjectInput"),
@@ -435,6 +454,7 @@ const els = {
   containerDetailOverlay: document.querySelector("#containerDetailOverlay"),
   containerDetailTitle: document.querySelector("#containerDetailTitle"),
   containerDetailMeta: document.querySelector("#containerDetailMeta"),
+  containerDetailStats: document.querySelector("#containerDetailStats"),
   containerDetailCards: document.querySelector("#containerDetailCards"),
   editContainerButton: document.querySelector("#editContainerButton"),
   shareContainerButton: document.querySelector("#shareContainerButton"),
@@ -634,8 +654,12 @@ function updateAuthUi() {
     command.hidden = (!loggedIn && protectedPage(target)) || (target === "admin" && !isAdminUser());
   }
   if (els.accountButton) {
-    els.accountButton.textContent = loggedIn ? (state.user.name || state.user.email) : "Log In";
-    els.accountButton.title = loggedIn ? `Account settings - ${state.user.email}` : "Log in";
+    els.accountButton.textContent = loggedIn ? (state.user.name || state.user.email) : state.appConfig?.server_claimed === false ? "Claim Server" : "Login / Create Account";
+    els.accountButton.title = loggedIn
+      ? `Account settings - ${state.user.email}`
+      : state.appConfig?.server_claimed === false
+        ? "Claim this Arcane Ledger server"
+        : "Log in or create an account";
   }
   if (els.addCardButton) {
     els.addCardButton.hidden = !loggedIn;
@@ -703,53 +727,67 @@ function authMode() {
 }
 
 function setAuthMode(mode) {
-  const nextMode = ["register", "complete", "reset-request", "reset-complete"].includes(mode) ? mode : "login";
+  const nextMode = ["claim", "register", "register-direct", "complete", "reset-request", "reset-complete"].includes(mode) ? mode : "login";
   els.authForm.mode.value = nextMode;
+  const isClaim = nextMode === "claim";
   const isLogin = nextMode === "login";
   const isRegister = nextMode === "register";
+  const isRegisterDirect = nextMode === "register-direct";
   const isComplete = nextMode === "complete";
   const isResetRequest = nextMode === "reset-request";
   const isResetComplete = nextMode === "reset-complete";
-  els.authTitle.textContent = isComplete
+  els.authTitle.textContent = isClaim
+    ? "Claim Server"
+    : isComplete
     ? "Finish Account"
-    : isRegister
+    : (isRegister || isRegisterDirect)
       ? "Create Account"
       : isResetRequest
         ? "Reset Password"
         : isResetComplete
           ? "Choose New Password"
           : "Log In";
-  els.submitAuthButton.textContent = isComplete
+  els.submitAuthButton.textContent = isClaim
+    ? "Claim Server"
+    : isComplete
     ? "Create Account"
     : isRegister
       ? "Send Verification Email"
+      : isRegisterDirect
+        ? "Create Account"
       : isResetRequest
         ? "Send Reset Email"
         : isResetComplete
           ? "Update Password"
           : "Log In";
   els.toggleAuthModeButton.textContent = isLogin ? "Create Account" : "Use Existing Account";
-  els.toggleAuthModeButton.hidden = isComplete || isResetComplete;
-  els.forgotPasswordButton.hidden = !isLogin;
-  els.authNameField.hidden = !isComplete;
-  els.authNameField.toggleAttribute("hidden", !isComplete);
-  els.authNameField.style.display = isComplete ? "" : "none";
-  els.authPasswordField.hidden = isRegister || isResetRequest;
-  els.authPasswordField.toggleAttribute("hidden", isRegister || isResetRequest);
-  els.authPasswordField.style.display = (isRegister || isResetRequest) ? "none" : "";
+  els.toggleAuthModeButton.hidden = isClaim || isComplete || isResetComplete;
+  els.forgotPasswordButton.hidden = !isLogin || state.appConfig?.email_configured === false;
+  const showName = isComplete;
+  els.authNameField.hidden = !showName;
+  els.authNameField.toggleAttribute("hidden", !showName);
+  els.authNameField.style.display = showName ? "" : "none";
+  const hidePassword = isRegister || isResetRequest;
+  els.authPasswordField.hidden = hidePassword;
+  els.authPasswordField.toggleAttribute("hidden", hidePassword);
+  els.authPasswordField.style.display = hidePassword ? "none" : "";
   els.authForm.email.readOnly = isComplete || isResetComplete;
   els.authForm.email.required = true;
-  els.authForm.name.required = isComplete;
-  els.authForm.name.disabled = !isComplete;
-  if (!isComplete) {
+  els.authForm.name.required = showName;
+  els.authForm.name.disabled = !showName;
+  if (!showName) {
     els.authForm.name.value = "";
   }
-  els.authForm.password.required = !(isRegister || isResetRequest);
-  els.authForm.password.disabled = isRegister || isResetRequest;
-  els.authHint.textContent = isComplete
+  els.authForm.password.required = !hidePassword;
+  els.authForm.password.disabled = hidePassword;
+  els.authHint.textContent = isClaim
+    ? "This is the one shot to claim this server and become the server admin."
+    : isComplete
     ? "Email verified. Add a display name and a strong password to finish creating your account."
     : isRegister
       ? "Enter your email and we will send a verification link before you create a password. Use this again to resend a verification email."
+      : isRegisterDirect
+        ? "Email is not configured, so create your account with an email address and strong password."
       : isResetRequest
         ? "Enter your account email and we will send a password reset link."
         : isResetComplete
@@ -764,6 +802,9 @@ function setAuthMode(mode) {
 
 function openAuthModal(mode = "login", message = "") {
   if (!els.authOverlay) return;
+  if (mode === "login" && state.appConfig?.server_claimed === false && !state.user) {
+    mode = "claim";
+  }
   setAuthMode(mode);
   els.authStatus.textContent = message;
   els.authStatus.dataset.tone = message ? "error" : "";
@@ -788,6 +829,20 @@ function closeAuthModal() {
 async function submitAuthForm() {
   const payload = Object.fromEntries(new FormData(els.authForm).entries());
   const mode = authMode();
+  if (mode === "claim") {
+    const result = await api("/api/auth/claim-server", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    state.user = result.user;
+    state.appConfig = { ...(state.appConfig || {}), server_claimed: true };
+    syncSettingsFromUser(state.user);
+    updateAuthUi();
+    await loadNotificationSummary().catch(() => {});
+    closeAuthModal();
+    await activatePage("dashboard", { replace: true });
+    return;
+  }
   if (mode === "register") {
     const result = await api("/api/auth/register-start", {
       method: "POST",
@@ -796,6 +851,19 @@ async function submitAuthForm() {
     els.authStatus.textContent = result.message || "Check your email for a verification link.";
     els.authStatus.dataset.tone = "";
     els.submitAuthButton.textContent = "Resend Verification Email";
+    return;
+  }
+  if (mode === "register-direct") {
+    const result = await api("/api/auth/register", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    state.user = result.user;
+    syncSettingsFromUser(state.user);
+    updateAuthUi();
+    await loadNotificationSummary().catch(() => {});
+    closeAuthModal();
+    await activatePage("dashboard", { replace: true });
     return;
   }
   if (mode === "reset-request") {
@@ -1815,7 +1883,8 @@ function userProfileRoute() {
 }
 
 function favoritesShareRoute() {
-  return /^\/favorites\/shared\/?$/.test(window.location.pathname);
+  const match = window.location.pathname.match(/^\/favorites\/([^/]+)\/?$/);
+  return match ? decodeURIComponent(match[1]) : "";
 }
 
 function cardDetailRoute() {
@@ -2774,6 +2843,7 @@ function shareUrlForEntity(type, entity) {
   if (type === "deck" || type === "shared-deck") return shareUrlForDeck(entity);
   if (type === "container") return shareUrlForContainer(entity);
   if (type === "set") return shareUrlForSet(entity);
+  if (type === "favorites") return shareUrlForFavorites();
   return shareUrlForWishlist(entity);
 }
 
@@ -2782,6 +2852,7 @@ function emailEntityLabel(type) {
   if (type === "deck" || type === "shared-deck") return "Deck";
   if (type === "container") return "Container";
   if (type === "set") return "Set";
+  if (type === "favorites") return "Favorites";
   return "Wishlist";
 }
 
@@ -2790,7 +2861,9 @@ function openEmailShareModal(type, entity) {
   state.emailingWishlist = type === "wishlist" ? entity : null;
   els.emailWishlistForm.reset();
   els.emailWishlistForm.entity_type.value = type;
-  els.emailWishlistForm.entity_id.value = type === "shared-deck"
+  els.emailWishlistForm.entity_id.value = type === "favorites"
+    ? (entity.share_id || "")
+    : type === "shared-deck"
     ? (entity.share_id || "")
     : (entity.id || entity.set_code || entity.scryfall_id || entity.card_id || "");
   const label = emailEntityLabel(type);
@@ -2820,6 +2893,15 @@ function openEmailCardModal(card) {
 
 function openEmailSetModal(set) {
   openEmailShareModal("set", set);
+}
+
+function openEmailFavoritesModal() {
+  const shareId = state.user?.store_share_id || "";
+  if (!shareId) {
+    setStatus("Your account does not have a favorites share link yet. Refresh and try again.", "error", els.favoritesStatus);
+    return;
+  }
+  openEmailShareModal("favorites", { name: "Favorites", share_id: shareId });
 }
 
 function closeEmailWishlistModal() {
@@ -4060,7 +4142,8 @@ function shareUrlForSet(set) {
 }
 
 function shareUrlForFavorites() {
-  return new URL("/favorites/shared", window.location.origin).toString();
+  const shareId = state.user?.store_share_id || "";
+  return shareId ? new URL(`/favorites/${encodeURIComponent(shareId)}`, window.location.origin).toString() : "";
 }
 
 function openShareUrl(title, url) {
@@ -4118,7 +4201,12 @@ function openSetShareModal(set) {
 }
 
 function openFavoritesShareModal() {
-  openShareUrl("Favorites", shareUrlForFavorites());
+  const url = shareUrlForFavorites();
+  if (!url) {
+    setStatus("Your account does not have a favorites share link yet. Refresh and try again.", "error", els.favoritesStatus);
+    return;
+  }
+  openShareUrl("Favorites", url);
 }
 
 function cardBlogPreviewHtml(card) {
@@ -4692,6 +4780,123 @@ function variantsForCard(card) {
   return variants.length ? variants : ["Normal"];
 }
 
+function resetAddPurchaseMatrix() {
+  if (els.addPurchaseRows) els.addPurchaseRows.innerHTML = "";
+  if (els.addPurchaseMatrix) els.addPurchaseMatrix.hidden = true;
+}
+
+function collapseAddAdvancedFilters() {
+  if (els.addAdvancedFilters) els.addAdvancedFilters.hidden = true;
+  if (els.addAdvancedToggle) {
+    els.addAdvancedToggle.setAttribute("aria-expanded", "false");
+    els.addAdvancedToggle.textContent = "Show advanced filters";
+  }
+}
+
+function conditionOptionsHtml(selected = "Near Mint") {
+  return cardConditions.map((condition) => (
+    `<option value="${escapeHtml(condition)}" ${condition === selected ? "selected" : ""}>${escapeHtml(condition)}</option>`
+  )).join("");
+}
+
+function addPurchaseRowHtml(row = {}) {
+  const rowId = row.row_id || (window.crypto?.randomUUID ? window.crypto.randomUUID() : `row-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+  const variant = row.variant || "Normal";
+  const condition = cardConditions.includes(row.card_condition) ? row.card_condition : "Near Mint";
+  const paidPrice = Number(row.paid_price || 0.01) > 0 ? Number(row.paid_price || 0.01).toFixed(2) : "0.01";
+  const acquiredDate = row.acquired_date || todayValue();
+  const quantity = Number.isFinite(Number(row.quantity)) ? Math.max(0, Number(row.quantity || 0)) : 0;
+  return `
+    <tr class="add-purchase-row" data-row-id="${escapeHtml(rowId)}" data-variant="${escapeHtml(variant)}">
+      <td><span class="add-variant-name">${escapeHtml(variant)}</span></td>
+      <td>
+        <select data-add-field="card_condition" aria-label="${escapeAttribute(`${variant} condition`)}">
+          ${conditionOptionsHtml(condition)}
+        </select>
+      </td>
+      <td><input data-add-field="paid_price" type="number" min="0.01" step="0.01" value="${escapeHtml(paidPrice)}" aria-label="${escapeAttribute(`${variant} price paid per card`)}"></td>
+      <td><input data-add-field="acquired_date" type="date" value="${escapeHtml(acquiredDate)}" aria-label="${escapeAttribute(`${variant} date acquired`)}"></td>
+      <td><input data-add-field="graded" type="checkbox" value="1" ${row.graded ? "checked" : ""} aria-label="${escapeAttribute(`${variant} graded`)}"></td>
+      <td><input data-add-field="quantity" type="number" min="0" step="1" value="${escapeHtml(String(quantity))}" aria-label="${escapeAttribute(`${variant} quantity`)}"></td>
+      <td><button class="secondary-button add-row-button" type="button" data-add-row-copy title="Add another condition row for ${escapeAttribute(variant)}" aria-label="Add another condition row for ${escapeAttribute(variant)}">+</button></td>
+    </tr>
+  `;
+}
+
+function renderAddPurchaseRows(card) {
+  if (!els.addPurchaseRows || !els.addPurchaseMatrix) return;
+  els.addPurchaseRows.innerHTML = variantsForCard(card).map((variant) => addPurchaseRowHtml({ variant })).join("");
+  els.addPurchaseMatrix.hidden = false;
+}
+
+function duplicateAddPurchaseRow(row) {
+  if (!row) return;
+  const duplicate = {
+    variant: row.dataset.variant || "Normal",
+    card_condition: row.querySelector('[data-add-field="card_condition"]')?.value || "Near Mint",
+    paid_price: row.querySelector('[data-add-field="paid_price"]')?.value || "0.01",
+    acquired_date: row.querySelector('[data-add-field="acquired_date"]')?.value || todayValue(),
+    graded: Boolean(row.querySelector('[data-add-field="graded"]')?.checked),
+    quantity: 0,
+  };
+  row.insertAdjacentHTML("afterend", addPurchaseRowHtml(duplicate));
+}
+
+function normalizeScryfallColorFilter(value) {
+  const aliases = {
+    white: "w",
+    blue: "u",
+    black: "b",
+    red: "r",
+    green: "g",
+    colorless: "c",
+    colourless: "c",
+  };
+  const tokens = String(value || "").toLowerCase().split(/[\s,;/]+/).filter(Boolean);
+  if (!tokens.length) return "";
+  const normalized = tokens.map((token) => aliases[token] || token).join("").replace(/[^wubrgc]/g, "");
+  return Array.from(new Set(normalized.split(""))).join("");
+}
+
+function addSearchQuery() {
+  const terms = [];
+  const base = els.addSearchInput.value.trim();
+  const setCode = (els.addSetCodeInput?.value || "").trim();
+  const color = (els.addColorInput?.value || "").trim();
+  const type = (els.addTypeInput?.value || "").trim();
+  if (base) terms.push(base);
+  if (setCode) terms.push(`e:${setCode.replace(/\s+/g, "")}`);
+  if (color) {
+    const normalized = normalizeScryfallColorFilter(color);
+    if (normalized) terms.push(`c:${normalized}`);
+  }
+  if (type) terms.push(`t:${type}`);
+  return terms.join(" ").trim();
+}
+
+function addPurchasePayloadRows() {
+  const rows = [];
+  for (const row of els.addPurchaseRows?.querySelectorAll(".add-purchase-row") || []) {
+    const quantity = Number(row.querySelector('[data-add-field="quantity"]')?.value || 0);
+    if (quantity <= 0) continue;
+    rows.push({
+      variant: row.dataset.variant || "Normal",
+      card_condition: row.querySelector('[data-add-field="card_condition"]')?.value || "Near Mint",
+      paid_price: Number(row.querySelector('[data-add-field="paid_price"]')?.value || 0),
+      acquired_date: row.querySelector('[data-add-field="acquired_date"]')?.value || todayValue(),
+      graded: row.querySelector('[data-add-field="graded"]')?.checked ? 1 : 0,
+      quantity,
+    });
+  }
+  return rows;
+}
+
+async function hydrateAddCardSelection(preselectedCard) {
+  if (!preselectedCard?.scryfall_id) return null;
+  const result = await api(`/api/scryfall/cards/${encodeURIComponent(preselectedCard.scryfall_id)}`, { promptLogin: true });
+  return result.card || preselectedCard;
+}
+
 function openAddCardModal(preselectedCard = null) {
   if (!state.user) {
     openAuthModal("register", "Create an account or log in before adding cards to your Collection.");
@@ -4700,16 +4905,14 @@ function openAddCardModal(preselectedCard = null) {
   state.addResults = [];
   state.selectedAddCard = null;
   els.addSearchForm.reset();
+  collapseAddAdvancedFilters();
   els.addCardForm.reset();
   els.addCardForm.scryfall_id.value = "";
-  els.addCardForm.quantity.value = "1";
-  els.addCardForm.paid_price.value = "0.01";
-  els.addCardForm.acquired_date.value = todayValue();
-  els.addCardForm.variant.innerHTML = "<option>Normal</option>";
-  els.addCardForm.card_condition.value = "Near Mint";
-  els.addCardForm.graded.checked = false;
+  resetAddPurchaseMatrix();
   els.addSearchStatus.textContent = "";
+  els.addSearchStatus.dataset.tone = "";
   els.addSearchResults.innerHTML = "";
+  els.addCardForm.hidden = true;
   els.selectedAddCard.hidden = true;
   els.selectedAddCard.innerHTML = "";
   els.confirmAddCardButton.disabled = true;
@@ -4717,12 +4920,23 @@ function openAddCardModal(preselectedCard = null) {
   els.addCardOverlay.hidden = false;
   document.body.classList.add("modal-open");
   if (preselectedCard && preselectedCard.scryfall_id) {
-    state.addResults = [preselectedCard];
     els.addSearchInput.value = cardTitle(preselectedCard);
-    renderAddResults(state.addResults);
-    selectAddCard(preselectedCard);
-    els.addSearchStatus.textContent = "Selected from Search.";
-    els.addCardForm.quantity.focus();
+    els.addSearchStatus.textContent = "Loading exact Scryfall print...";
+    hydrateAddCardSelection(preselectedCard)
+      .then((card) => {
+        state.addResults = [card];
+        renderAddResults(state.addResults);
+        selectAddCard(card);
+        els.addSearchStatus.textContent = "Selected exact print from Search.";
+        els.addSearchStatus.dataset.tone = "";
+        els.addPurchaseRows?.querySelector('[data-add-field="quantity"]')?.focus();
+      })
+      .catch((error) => {
+        els.addSearchStatus.textContent = error.message;
+        els.addSearchStatus.dataset.tone = "error";
+        state.addResults = [preselectedCard];
+        renderAddResults(state.addResults);
+      });
   } else {
     els.addSearchInput.focus();
   }
@@ -4732,15 +4946,12 @@ function resetAddCardModalForNew() {
   state.addResults = [];
   state.selectedAddCard = null;
   els.addSearchForm.reset();
+  collapseAddAdvancedFilters();
   els.addCardForm.reset();
   els.addCardForm.scryfall_id.value = "";
-  els.addCardForm.quantity.value = "1";
-  els.addCardForm.paid_price.value = "0.01";
-  els.addCardForm.acquired_date.value = todayValue();
-  els.addCardForm.variant.innerHTML = "<option>Normal</option>";
-  els.addCardForm.card_condition.value = "Near Mint";
-  els.addCardForm.graded.checked = false;
+  resetAddPurchaseMatrix();
   els.addSearchResults.innerHTML = "";
+  els.addCardForm.hidden = true;
   els.selectedAddCard.hidden = true;
   els.selectedAddCard.innerHTML = "";
   els.confirmAddCardButton.disabled = true;
@@ -4755,6 +4966,8 @@ function closeAddCardModal() {
   state.selectedAddCard = null;
   els.addSearchResults.innerHTML = "";
   els.selectedAddCard.innerHTML = "";
+  els.addCardForm.hidden = true;
+  resetAddPurchaseMatrix();
   els.addCardForm.reset();
   els.confirmAddCardButton.disabled = true;
   els.confirmAddNewCardButton.disabled = true;
@@ -4787,9 +5000,9 @@ function renderAddResults(cards) {
 }
 
 async function searchScryfallForAdd() {
-  const query = els.addSearchInput.value.trim();
+  const query = addSearchQuery();
   if (query.length < 2) {
-    els.addSearchStatus.textContent = "Type at least 2 characters.";
+    els.addSearchStatus.textContent = "Type at least 2 characters or use an advanced filter.";
     return;
   }
   els.addSearchButton.disabled = true;
@@ -4811,13 +5024,8 @@ async function searchScryfallForAdd() {
 function selectAddCard(card) {
   state.selectedAddCard = card;
   els.addCardForm.scryfall_id.value = card.scryfall_id;
-  els.addCardForm.variant.innerHTML = "";
-  for (const variant of variantsForCard(card)) {
-    const option = document.createElement("option");
-    option.value = variant;
-    option.textContent = variant;
-    els.addCardForm.variant.appendChild(option);
-  }
+  els.addCardForm.hidden = false;
+  renderAddPurchaseRows(card);
   els.confirmAddCardButton.disabled = false;
   els.confirmAddNewCardButton.disabled = false;
   for (const result of els.addSearchResults.querySelectorAll(".add-result")) {
@@ -4829,7 +5037,7 @@ function selectAddCard(card) {
 function renderSelectedAddCard() {
   const card = state.selectedAddCard;
   if (!card) return;
-  const variant = els.addCardForm.variant.value || "Normal";
+  const variants = variantsForCard(card);
   els.selectedAddCard.hidden = false;
   els.selectedAddCard.innerHTML = `
     <img src="${card.image_small || card.image_normal || ""}" alt="">
@@ -4837,7 +5045,7 @@ function renderSelectedAddCard() {
       <strong>${escapeHtml(cardTitle(card))}</strong>
       <p>${escapeHtml(card.set_name)} #${escapeHtml(card.collector_number)} - ${escapeHtml(card.type_line || "")}</p>
       ${cardRulesName(card) ? `<span>Rules: ${escapeHtml(cardRulesName(card))}</span>` : ""}
-      <span>${escapeHtml(variant)} market: ${dollars.format(priceForVariant(card, variant))}</span>
+      <span>${escapeHtml(variants.join(", "))} variants detected</span>
       <span class="owned-count">Owned: ${integer.format(card.owned_quantity || 0)}</span>
     </div>
   `;
@@ -4871,6 +5079,28 @@ function renderSettingsPage() {
   if (els.settingsAccountEmail) {
     els.settingsAccountEmail.textContent = state.user ? state.user.email : "Not logged in";
   }
+  if (els.settingsAppVersion) {
+    els.settingsAppVersion.textContent = state.appConfig?.app_version || "Unknown";
+  }
+}
+
+async function openChangelogModal() {
+  if (!els.changelogOverlay || !els.changelogText) return;
+  els.changelogText.textContent = "Loading...";
+  els.changelogOverlay.hidden = false;
+  document.body.classList.add("modal-open");
+  try {
+    const result = await api("/api/changelog", { promptLogin: false });
+    els.changelogText.textContent = result.changelog || "No release notes have been written yet.";
+  } catch (error) {
+    els.changelogText.textContent = error.message;
+  }
+}
+
+function closeChangelogModal() {
+  if (!els.changelogOverlay) return;
+  els.changelogOverlay.hidden = true;
+  document.body.classList.remove("modal-open");
 }
 
 function renderProfileImagePreview(dataUrl) {
@@ -5806,7 +6036,7 @@ async function openDetailAddToContainerModal(card) {
     return;
   }
   selectCardForDetailAssignment(card);
-  await openAssignContainerModal();
+  await openAssignContainerModal({ card });
 }
 
 function openSaleManagementForCard(card) {
@@ -5887,8 +6117,8 @@ function renderContainers(containers) {
         <h3>${containerIconHtml(container.storage_type)}<span>${escapeHtml(container.name)}</span></h3>
         ${container.location ? `<span class="container-location">${escapeHtml(container.location)}</span>` : ""}
       </div>
-      <strong>${integer.format(container.stored_quantity || 0)}</strong>
-      <span>${integer.format(container.card_count || 0)} unique cards stored</span>
+      <strong>${integer.format(container.stored_quantity || 0)}${Number(container.capacity || 0) > 0 ? ` / ${integer.format(container.capacity || 0)}` : ""}</strong>
+      <span>${Number(container.capacity || 0) > 0 ? `${formatPercent(container.fill_percent || 0)} full` : `${integer.format(container.card_count || 0)} unique cards stored`}</span>
     `;
     item.addEventListener("click", () => {
       openContainerDetailModal(container.id).catch((error) => {
@@ -5901,9 +6131,37 @@ function renderContainers(containers) {
 
 function renderContainerDetail(container) {
   const cards = container.cards || [];
+  const capacity = Number(container.capacity || 0);
+  const stored = Number(container.stored_quantity || 0);
+  const fill = capacity > 0 ? Math.min(100, Number(container.fill_percent || ((stored / capacity) * 100))) : 0;
   state.activeContainer = container;
   els.containerDetailTitle.textContent = container.name || "Container";
   els.containerDetailMeta.textContent = [containerTypeLabel(container.storage_type), container.location, container.notes].filter(Boolean).join(" - ");
+  els.containerDetailStats.innerHTML = `
+    <section class="container-fill-card">
+      <div class="container-fill-head">
+        <span>Container fullness</span>
+        <strong>${integer.format(stored)}${capacity > 0 ? ` / ${integer.format(capacity)}` : ""}</strong>
+      </div>
+      <div class="container-fill-track" aria-label="${capacity > 0 ? `${formatPercent(fill)} full` : "No capacity set"}">
+        <span style="width: ${escapeHtml(String(fill))}%"></span>
+      </div>
+      <div class="container-stat-grid">
+        <article>
+          <span>Current card count</span>
+          <strong>${integer.format(stored)}</strong>
+        </article>
+        <article>
+          <span>Capacity</span>
+          <strong>${capacity > 0 ? integer.format(capacity) : "Not set"}</strong>
+        </article>
+        <article>
+          <span>Market value</span>
+          <strong>${dollars.format(Number(container.container_value || 0))}</strong>
+        </article>
+      </div>
+    </section>
+  `;
   els.containerDetailCards.innerHTML = "";
   if (!cards.length) {
     els.containerDetailCards.innerHTML = '<div class="empty-state">No cards stored in this container yet.</div>';
@@ -5943,6 +6201,7 @@ function closeContainerDetailModal() {
   document.body.classList.remove("modal-open");
   state.activeContainer = null;
   els.containerDetailCards.innerHTML = "";
+  els.containerDetailStats.innerHTML = "";
   els.containerDetailMeta.textContent = "";
 }
 
@@ -6739,6 +6998,7 @@ function openAddContainerModal() {
   els.addContainerForm.reset();
   els.addContainerForm.id.value = "";
   els.addContainerForm.storage_type.value = "other";
+  els.addContainerForm.capacity.value = "";
   els.addContainerEyebrow.textContent = "New container";
   els.addContainerTitle.textContent = "Add Container";
   els.saveContainerButton.textContent = "Add";
@@ -6758,6 +7018,7 @@ function openEditContainerModal(container) {
   els.addContainerForm.id.value = container.id || "";
   els.addContainerForm.name.value = container.name || "";
   els.addContainerForm.storage_type.value = containerType(container.storage_type);
+  els.addContainerForm.capacity.value = container.capacity || "";
   els.addContainerForm.location.value = container.location || "";
   els.addContainerForm.notes.value = container.notes || "";
   els.addContainerEyebrow.textContent = "Edit container";
@@ -6779,7 +7040,17 @@ function closeAddContainerModal() {
   els.addContainerForm.reset();
 }
 
-function renderAssignContainerCards() {
+function containerAllocationQuantity(card, containerId) {
+  return (containerMemberships(card) || [])
+    .filter((container) => Number(container.id) === Number(containerId))
+    .reduce((total, container) => total + Number(container.quantity || 0), 0);
+}
+
+function renderAssignContainerCards(containers = state.containers || []) {
+  if (state.assignContainerCard) {
+    renderContainerAllocationRows(containers);
+    return;
+  }
   const cards = Array.from(state.selectedCards.values());
   els.assignContainerCards.innerHTML = "";
   if (!cards.length) {
@@ -6806,15 +7077,91 @@ function renderAssignContainerCards() {
   }
 }
 
-async function openAssignContainerModal() {
+function renderContainerAllocationRows(containers = []) {
+  const card = state.assignContainerCard;
+  els.assignContainerCards.innerHTML = "";
+  if (!card) return;
+  const owned = Number(card.quantity || totalVariantQuantity(card) || 0);
+  const stored = (containerMemberships(card) || []).reduce((total, container) => total + Number(container.quantity || 0), 0);
+  const unassigned = Math.max(0, owned - stored);
+  const preview = document.createElement("section");
+  preview.className = "assign-container-card-preview";
+  preview.innerHTML = `
+    <img src="${escapeHtml(card.image_small || card.image_normal || "")}" alt="">
+    <div>
+      <strong>${escapeHtml(cardTitle(card))}</strong>
+      <span>${escapeHtml(card.variant || "Normal")} - ${integer.format(owned)} owned, ${integer.format(stored)} stored, ${integer.format(unassigned)} unassigned</span>
+    </div>
+  `;
+  els.assignContainerCards.appendChild(preview);
+  if (!containers.length) {
+    els.assignContainerCards.insertAdjacentHTML("beforeend", '<div class="empty-state">Create a container first.</div>');
+    return;
+  }
+  const table = document.createElement("div");
+  table.className = "container-allocation-table";
+  table.innerHTML = `
+    <div class="container-allocation-header">
+      <span>Container</span>
+      <span>Type / Location</span>
+      <span>Quantity</span>
+    </div>
+    ${containers.map((container) => {
+      const current = containerAllocationQuantity(card, container.id);
+      const capacity = Number(container.capacity || 0);
+      const remaining = Number(container.remaining_capacity ?? 0);
+      const maxForContainer = capacity > 0 ? Math.min(owned, current + remaining) : owned;
+      const isFull = capacity > 0 && remaining <= 0 && current <= 0;
+      const location = container.location ? ` - ${escapeHtml(container.location)}` : "";
+      const capacityText = capacity > 0
+        ? `${isFull ? "No more space" : `${integer.format(Math.max(0, remaining))} open`} - ${integer.format(current)} stored here`
+        : `${integer.format(current)} stored here`;
+      return `
+        <article class="container-allocation-row${isFull ? " is-full" : ""}" data-container-id="${escapeHtml(container.id)}">
+          <strong>${escapeHtml(container.name || "Container")}</strong>
+          <span>${escapeHtml(containerTypeLabel(container.storage_type))}${location}<small class="container-space-label">${escapeHtml(capacityText)}</small></span>
+          <label>
+            <span class="sr-only">Quantity in ${escapeHtml(container.name || "container")}</span>
+            <input type="number" min="0" max="${escapeHtml(String(maxForContainer))}" step="1" value="${escapeHtml(String(Math.min(current, maxForContainer)))}" ${isFull ? "disabled" : ""}>
+          </label>
+        </article>
+      `;
+    }).join("")}
+  `;
+  els.assignContainerCards.appendChild(table);
+}
+
+function updateAssignContainerMode() {
+  const isCardAllocation = Boolean(state.assignContainerCard);
+  const selectLabel = els.assignContainerForm.container_id.closest("label");
+  if (selectLabel) selectLabel.hidden = isCardAllocation;
+  els.assignContainerForm.container_id.required = !isCardAllocation;
+  if (els.assignCreateContainerButton) {
+    els.assignCreateContainerButton.textContent = isCardAllocation ? "Create Container" : "Add New Container";
+  }
+  const title = document.querySelector("#assignContainerTitle");
+  if (title) title.textContent = isCardAllocation ? "Assign Containers" : "Add to Container";
+  const eyebrow = els.assignContainerOverlay.querySelector(".eyebrow");
+  if (eyebrow) eyebrow.textContent = isCardAllocation ? "Store this card" : "Store selected cards";
+  const submit = els.assignContainerForm.querySelector('button[type="submit"]');
+  if (submit) submit.textContent = isCardAllocation ? "Save Containers" : "Add to Container";
+}
+
+async function openAssignContainerModal(options = {}) {
+  state.assignContainerCard = options.card || null;
   if (!state.selectedCards.size) return;
   const containers = await loadContainers();
   const select = els.assignContainerForm.container_id;
   populateAssignContainerSelect(containers);
-  renderAssignContainerCards();
+  updateAssignContainerMode();
+  renderAssignContainerCards(containers);
   els.assignContainerOverlay.hidden = false;
   document.body.classList.add("modal-open");
-  select.focus();
+  if (state.assignContainerCard) {
+    els.assignContainerCards.querySelector('input[type="number"]')?.focus();
+  } else {
+    select.focus();
+  }
 }
 
 function populateAssignContainerSelect(containers) {
@@ -6828,8 +7175,12 @@ function populateAssignContainerSelect(containers) {
   } else {
     for (const container of containers) {
       const option = document.createElement("option");
+      const capacity = Number(container.capacity || 0);
+      const remaining = Number(container.remaining_capacity ?? 0);
+      const isFull = capacity > 0 && remaining <= 0;
       option.value = container.id;
-      option.textContent = `${containerTypeLabel(container.storage_type)} - ${container.name}${container.location ? ` - ${container.location}` : ""}`;
+      option.disabled = isFull;
+      option.textContent = `${containerTypeLabel(container.storage_type)} - ${container.name}${container.location ? ` - ${container.location}` : ""}${isFull ? " - no more space" : ""}`;
       select.appendChild(option);
     }
   }
@@ -6838,8 +7189,10 @@ function populateAssignContainerSelect(containers) {
 function closeAssignContainerModal() {
   els.assignContainerOverlay.hidden = true;
   document.body.classList.remove("modal-open");
+  state.assignContainerCard = null;
   els.assignContainerForm.reset();
   els.assignContainerCards.innerHTML = "";
+  updateAssignContainerMode();
 }
 
 function renderSaleCards() {
@@ -7640,7 +7993,7 @@ function renderCardDetail(card) {
       </section>
     </div>
   `;
-  els.cardDetailShell.querySelector("#addPurchaseButton")?.addEventListener("click", () => openAddPurchaseModal(card));
+  els.cardDetailShell.querySelector("#addPurchaseButton")?.addEventListener("click", () => openAddCardModal(card));
   els.cardDetailShell.querySelector("#adjustInventoryButton")?.addEventListener("click", () => openInventoryAdjustModal(card));
   els.cardDetailShell.querySelector("#addDirectSaleButton")?.addEventListener("click", () => openDirectSaleModal(card));
   els.cardDetailShell.querySelector(".card-notes-form")?.addEventListener("submit", (event) => {
@@ -8022,6 +8375,22 @@ function deckRowsHtml(cards, emptyMessage = "No cards in this deck yet.") {
   `).join("");
 }
 
+function profileFavoriteRowsHtml(cards) {
+  if (!cards.length) {
+    return '<div class="empty-state">No public favorite cards yet.</div>';
+  }
+  return cards.map((card) => `
+    <article class="deck-card-row deck-card-preview-trigger" role="button" tabindex="0" data-card-id="${escapeHtml(card.scryfall_id || card.card_id || "")}" data-variant="${escapeHtml(card.variant || "Normal")}">
+      <img src="${escapeHtml(card.image_small || card.image_normal || "")}" alt="">
+      <div>
+        <strong>${escapeHtml(cardTitle(card))}</strong>
+        <span>${escapeHtml(card.set_name || "")} #${escapeHtml(card.collector_number || "")} - ${escapeHtml(card.variant || "Normal")}</span>
+        <div class="deck-card-tags">${cardMetadataPillsHtml(card)}</div>
+      </div>
+    </article>
+  `).join("");
+}
+
 function containerRowsHtml(cards) {
   if (!cards.length) {
     return '<div class="empty-state">No cards in this container yet.</div>';
@@ -8392,7 +8761,7 @@ function renderUserProfile(profile) {
   const profileImage = profile.profile_image
     ? `<img src="${escapeHtml(profile.profile_image)}" alt="${escapeHtml(profile.name || "User")} profile picture">`
     : `<span>${escapeHtml((profile.name || "U").slice(0, 1).toUpperCase())}</span>`;
-  const favoriteRows = favorites.length ? deckRowsHtml(favorites) : '<div class="empty-state">No public favorite cards yet.</div>';
+  const favoriteRows = profileFavoriteRowsHtml(favorites);
   const deckRows = decks.length ? `
     <div class="profile-deck-list">
       ${decks.map((deck) => `
@@ -8610,6 +8979,7 @@ function renderSharedFavorites(payload) {
   const cards = payload.cards || [];
   const decks = payload.decks || [];
   const store = payload.store || [];
+  const ownerName = payload.owner_name || "Collector";
   const deckRows = decks.length ? `
     <div class="favorite-decks-share-list">
       ${decks.map((deck) => `
@@ -8643,7 +9013,7 @@ function renderSharedFavorites(payload) {
       <div class="shared-deck-head">
         <div>
           <p class="eyebrow">Shared favorites</p>
-          <h2>Favorites</h2>
+          <h2>${escapeHtml(ownerName)}'s Favorites</h2>
           <span>${integer.format(cards.length)} favorite cards - ${integer.format(decks.length)} favorite decks - ${integer.format(store.length)} store listings</span>
         </div>
       </div>
@@ -8711,11 +9081,11 @@ async function loadUserProfile(slug) {
   }
 }
 
-async function loadSharedFavorites() {
+async function loadSharedFavorites(shareId) {
   showPage("favorites-share");
   els.favoritesShareShell.innerHTML = '<div class="empty-state">Loading shared favorites...</div>';
   try {
-    const payload = await api("/api/shared-favorites");
+    const payload = await api(`/api/shared-favorites/${encodeURIComponent(shareId || "")}`);
     renderSharedFavorites(payload);
   } catch (error) {
     els.favoritesShareShell.innerHTML = `<div class="empty-state">${escapeHtml(error.message)}</div>`;
@@ -8985,6 +9355,16 @@ function wireEvents() {
       closeAdminEmailTemplateModal();
     }
   });
+  els.openChangelogButton?.addEventListener("click", () => {
+    openChangelogModal().catch((error) => setStatus(error.message, "error", els.settingsPageStatus));
+  });
+  els.closeChangelogButton?.addEventListener("click", closeChangelogModal);
+  els.dismissChangelogButton?.addEventListener("click", closeChangelogModal);
+  els.changelogOverlay?.addEventListener("click", (event) => {
+    if (event.target === els.changelogOverlay) {
+      closeChangelogModal();
+    }
+  });
   els.closeAddPurchaseButton.addEventListener("click", closeAddPurchaseModal);
   els.cancelAddPurchaseButton.addEventListener("click", closeAddPurchaseModal);
   els.addPurchaseOverlay.addEventListener("click", (event) => {
@@ -9019,6 +9399,7 @@ function wireEvents() {
     button.addEventListener("click", () => setFavoritesFilter(button.dataset.favoritesFilter));
   }
   els.shareFavoritesButton.addEventListener("click", openFavoritesShareModal);
+  els.emailFavoritesButton?.addEventListener("click", openEmailFavoritesModal);
   els.addToDeckButton.addEventListener("click", () => {
     openAssignDeckModal().catch((error) => setStatus(error.message, "error"));
   });
@@ -9103,7 +9484,8 @@ function wireEvents() {
   });
   els.closeAuthButton.addEventListener("click", closeAuthModal);
   els.toggleAuthModeButton.addEventListener("click", () => {
-    setAuthMode(authMode() === "login" ? "register" : "login");
+    const createMode = state.appConfig?.email_configured === false ? "register-direct" : "register";
+    setAuthMode(authMode() === "login" ? createMode : "login");
     els.authStatus.textContent = "";
   });
   els.forgotPasswordButton.addEventListener("click", () => {
@@ -9505,6 +9887,9 @@ function wireEvents() {
     if (event.key === "Escape" && els.notificationDetailOverlay && !els.notificationDetailOverlay.hidden) {
       closeNotificationDetailModal();
     }
+    if (event.key === "Escape" && els.changelogOverlay && !els.changelogOverlay.hidden) {
+      closeChangelogModal();
+    }
     if (event.key === "Escape" && !els.authOverlay.hidden) {
       closeAuthModal();
     }
@@ -9592,6 +9977,12 @@ function wireEvents() {
     els.addSearchStatus.dataset.tone = "";
     searchScryfallForAdd();
   });
+  els.addAdvancedToggle?.addEventListener("click", () => {
+    const isHidden = Boolean(els.addAdvancedFilters?.hidden);
+    if (els.addAdvancedFilters) els.addAdvancedFilters.hidden = !isHidden;
+    els.addAdvancedToggle.setAttribute("aria-expanded", String(isHidden));
+    els.addAdvancedToggle.textContent = isHidden ? "Hide advanced filters" : "Show advanced filters";
+  });
   els.addSearchInput.addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
       event.preventDefault();
@@ -9599,14 +9990,48 @@ function wireEvents() {
       searchScryfallForAdd();
     }
   });
-  els.addCardForm.variant.addEventListener("change", renderSelectedAddCard);
+  els.addPurchaseRows?.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-add-row-copy]");
+    if (!button) return;
+    duplicateAddPurchaseRow(button.closest(".add-purchase-row"));
+  });
   els.addCardForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     if (!state.selectedAddCard) {
       els.addSearchStatus.textContent = "Choose a card first.";
       return;
     }
-    const payload = Object.fromEntries(new FormData(els.addCardForm).entries());
+    const purchases = addPurchasePayloadRows();
+    if (!purchases.length) {
+      els.addSearchStatus.textContent = "No quantity detected.";
+      els.addSearchStatus.dataset.tone = "error";
+      els.addPurchaseRows?.querySelector('[data-add-field="quantity"]')?.focus();
+      return;
+    }
+    for (const purchase of purchases) {
+      if (purchase.quantity < 1) {
+        els.addSearchStatus.textContent = "Quantity must be at least 1.";
+        els.addSearchStatus.dataset.tone = "error";
+        return;
+      }
+      if (!purchase.acquired_date) {
+        els.addSearchStatus.textContent = "Choose a date acquired for every row with quantity.";
+        els.addSearchStatus.dataset.tone = "error";
+        return;
+      }
+      if (purchase.paid_price <= 0) {
+        els.addSearchStatus.textContent = "Price paid per card must be greater than $0.00.";
+        els.addSearchStatus.dataset.tone = "error";
+        return;
+      }
+    }
+    const formValues = Object.fromEntries(new FormData(els.addCardForm).entries());
+    const payload = {
+      scryfall_id: formValues.scryfall_id,
+      store_name: formValues.store_name || "",
+      store_location: formValues.store_location || "",
+      purchases,
+    };
     payload.expected_name = state.selectedAddCard.name || "";
     payload.expected_set_code = state.selectedAddCard.set_code || "";
     payload.expected_collector_number = state.selectedAddCard.collector_number || "";
@@ -9621,7 +10046,9 @@ function wireEvents() {
         body: JSON.stringify(payload),
         promptLogin: true,
       });
-      setStatus(`Added ${addedCardTitle} (${result.variant}).`);
+      const quantity = Number(result.quantity_added || 0);
+      const variantLabel = (result.variants || []).join(", ") || result.variant || "selected variants";
+      setStatus(`Added ${integer.format(quantity)} ${addedCardTitle} card${quantity === 1 ? "" : "s"} (${variantLabel}).`);
       if (addAndNew) {
         resetAddCardModalForNew();
       } else {
@@ -9634,10 +10061,11 @@ function wireEvents() {
       }
       const detailVisible = Array.from(els.pages).some((page) => page.dataset.page === "card-detail" && !page.hidden);
       if (detailVisible) {
-        await loadCardDetail(payload.scryfall_id, payload.variant || "Normal");
+        await loadCardDetail(payload.scryfall_id, purchases[0]?.variant || "Normal");
       }
     } catch (error) {
       els.addSearchStatus.textContent = error.message;
+      els.addSearchStatus.dataset.tone = "error";
       els.confirmAddCardButton.disabled = false;
       els.confirmAddNewCardButton.disabled = false;
     }
@@ -9821,6 +10249,7 @@ function wireEvents() {
       container: "containers",
       wishlist: "wishlists",
       set: "sets",
+      favorites: "favorites",
     };
     const endpoint = endpoints[type];
     const label = emailEntityLabel(type);
@@ -9844,7 +10273,7 @@ function wireEvents() {
       });
       const recipient = payload.email;
       closeEmailWishlistModal();
-      const statusTarget = type === "deck" ? els.decksStatus : type === "shared-deck" ? els.browseDecksStatus : type === "container" ? els.containersStatus : type === "wishlist" ? els.wishlistStatus : type === "set" ? els.setsStatus : els.status;
+      const statusTarget = type === "deck" ? els.decksStatus : type === "shared-deck" ? els.browseDecksStatus : type === "container" ? els.containersStatus : type === "wishlist" ? els.wishlistStatus : type === "set" ? els.setsStatus : type === "favorites" ? els.favoritesStatus : els.status;
       setStatus(`${label} emailed to ${recipient}.`, "success", statusTarget);
     } catch (error) {
       els.emailWishlistStatus.textContent = error.message;
@@ -9869,9 +10298,14 @@ function wireEvents() {
       const containers = await loadContainers();
       if (returnToAssignContainer && !els.assignContainerOverlay.hidden) {
         populateAssignContainerSelect(containers);
-        els.assignContainerForm.container_id.value = String(result.container.id);
-        renderAssignContainerCards();
-        els.assignContainerForm.container_id.focus();
+        renderAssignContainerCards(containers);
+        if (state.assignContainerCard) {
+          const newRowInput = els.assignContainerCards.querySelector(`[data-container-id="${CSS.escape(String(result.container.id))}"] input`);
+          newRowInput?.focus();
+        } else {
+          els.assignContainerForm.container_id.value = String(result.container.id);
+          els.assignContainerForm.container_id.focus();
+        }
       }
       if (state.activeContainer && Number(state.activeContainer.id) === Number(result.container.id)) {
         renderContainerDetail(result.container);
@@ -9919,8 +10353,52 @@ function wireEvents() {
     event.preventDefault();
     const containerId = els.assignContainerForm.container_id.value;
     const statusTarget = activeStatusTarget();
+    if (state.assignContainerCard) {
+      const card = state.assignContainerCard;
+      const owned = Number(card.quantity || totalVariantQuantity(card) || 0);
+      const allocations = Array.from(els.assignContainerCards.querySelectorAll(".container-allocation-row")).map((row) => ({
+        container_id: Number(row.dataset.containerId || 0),
+        quantity: Number(row.querySelector('input[type="number"]')?.value || 0),
+        max: Number(row.querySelector('input[type="number"]')?.max || 0),
+      })).filter((allocation) => allocation.container_id);
+      if (!allocations.length) {
+        setStatus("Create a container first.", "error", statusTarget);
+        return;
+      }
+      const overCapacity = allocations.find((allocation) => allocation.quantity > allocation.max);
+      if (overCapacity) {
+        setStatus("One of those containers does not have enough space.", "error", statusTarget);
+        return;
+      }
+      const total = allocations.reduce((sum, allocation) => sum + Math.max(0, Number(allocation.quantity || 0)), 0);
+      if (total > owned) {
+        setStatus(`Only ${integer.format(owned)} total copy/copies are owned for this variant.`, "error", statusTarget);
+        return;
+      }
+      try {
+        const result = await api(`/api/cards/${encodeURIComponent(card.scryfall_id || card.card_id)}/containers`, {
+          method: "POST",
+          body: JSON.stringify({
+            variant: card.variant || "Normal",
+            allocations,
+          }),
+        });
+        setStatus(`Stored ${integer.format(result.stored || 0)} card${Number(result.stored || 0) === 1 ? "" : "s"} across containers.`, "success", statusTarget);
+        closeAssignContainerModal();
+        clearSelectedCards();
+        await loadContainers();
+        await reloadVisibleCardPages();
+      } catch (error) {
+        setStatus(error.message, "error", statusTarget);
+      }
+      return;
+    }
     if (!containerId) {
       setStatus("Create a container first.", "error", statusTarget);
+      return;
+    }
+    if (els.assignContainerForm.container_id.selectedOptions[0]?.disabled) {
+      setStatus("That container has no more space.", "error", statusTarget);
       return;
     }
     const cardsByKey = new Map(Array.from(state.selectedCards.values()).map((card) => [`${card.card_id}::${card.variant}`, card]));
@@ -10158,7 +10636,7 @@ async function boot() {
     loadSharedStore(initialStoreShareId);
   } else if (initialFavoritesShare) {
     document.body.classList.add("share-only");
-    loadSharedFavorites();
+    loadSharedFavorites(initialFavoritesShare);
   } else if (initialSharedSet) {
     document.body.classList.add("share-only");
     loadSharedSet(initialSharedSet);
