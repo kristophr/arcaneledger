@@ -404,11 +404,21 @@ body {
   background: var(--paper);
 }
 
+html,
+body {
+  max-width: 100%;
+}
+
+body {
+  overflow-x: hidden;
+}
+
 button,
 input,
 select,
 textarea {
   font: inherit;
+  max-width: 100%;
 }
 
 .topbar {
@@ -2581,7 +2591,7 @@ body:not(.is-authenticated) .nav-bottom {
 
 .admin-email-template-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(150px, 0.7fr) 38px max-content;
+  grid-template-columns: minmax(0, 1fr) minmax(150px, 0.7fr) 38px max-content max-content;
   gap: 10px;
   align-items: end;
   border: 1px solid var(--line);
@@ -2720,7 +2730,7 @@ body:not(.is-authenticated) .nav-bottom {
 .admin-email-template-modal,
 .admin-announcement-modal,
 .announcement-detail-modal {
-  width: min(760px, calc(100vw - 28px));
+  width: min(820px, calc(100vw - 28px));
   max-height: calc(100vh - 32px);
   overflow: auto;
   border: 1px solid var(--line);
@@ -2728,6 +2738,11 @@ body:not(.is-authenticated) .nav-bottom {
   padding: 18px;
   background: var(--panel);
   box-shadow: 0 22px 80px rgba(0, 0, 0, 0.28);
+}
+
+.admin-email-template-row .admin-save-email-template-button,
+.admin-email-template-row .admin-edit-email-template-button {
+  white-space: nowrap;
 }
 
 .admin-template-variable-row {
@@ -7813,6 +7828,18 @@ body:not(.is-authenticated) .nav-bottom {
 }
 
 @media (max-width: 1120px) {
+  .admin-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-server-details {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .admin-email-template-row {
+    grid-template-columns: minmax(0, 1fr) minmax(150px, 220px) 38px max-content max-content;
+  }
+
   .card-detail-shell {
     max-width: 100%;
   }
@@ -7925,12 +7952,13 @@ body:not(.is-authenticated) .nav-bottom {
     grid-template-columns: 1fr;
   }
 
-  .admin-grid {
-    grid-template-columns: 1fr;
+  .admin-band {
+    width: 100%;
+    overflow-x: hidden;
   }
 
-  .admin-server-details {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .admin-grid {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .admin-user-row {
@@ -7938,15 +7966,22 @@ body:not(.is-authenticated) .nav-bottom {
   }
 
   .admin-email-template-row {
-    grid-template-columns: minmax(0, 1fr) minmax(150px, 0.7fr);
+    grid-template-columns: minmax(0, 1fr) minmax(150px, 220px);
+    align-items: stretch;
   }
 
   .admin-announcement-row {
     grid-template-columns: 1fr;
   }
 
+  .admin-email-template-row .icon-only-button,
+  .admin-email-template-row .admin-save-email-template-button,
   .admin-email-template-row .admin-edit-email-template-button {
     justify-self: start;
+  }
+
+  .admin-email-template-row .admin-edit-email-template-button {
+    grid-column: span 2;
   }
 
   .admin-report-row {
@@ -8082,6 +8117,28 @@ body:not(.is-authenticated) .nav-bottom {
     flex-direction: column;
   }
 
+  .panel {
+    min-height: auto;
+    padding: 14px;
+  }
+
+  .panel-head {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .panel-head-actions {
+    justify-content: flex-start;
+  }
+
+  .panel-head-actions select,
+  .panel-head-actions button,
+  .admin-email-panel .panel-head button,
+  .admin-home-panel .panel-head button {
+    width: 100%;
+  }
+
   .home-meta-grid,
   .metric-grid,
   .dashboard-grid,
@@ -8109,6 +8166,39 @@ body:not(.is-authenticated) .nav-bottom {
 
   .admin-email-template-row {
     grid-template-columns: 1fr;
+  }
+
+  .admin-email-template-row .icon-only-button,
+  .admin-email-template-row .admin-save-email-template-button,
+  .admin-email-template-row .admin-edit-email-template-button {
+    grid-column: 1;
+    width: 100%;
+    justify-self: stretch;
+  }
+
+  .admin-email-template-row .icon-only-button {
+    min-width: 0;
+  }
+
+  .admin-template-address-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-email-template-modal,
+  .admin-announcement-modal,
+  .announcement-detail-modal {
+    width: min(100%, calc(100vw - 20px));
+    max-height: calc(100dvh - 20px);
+    padding: 14px;
+  }
+
+  .admin-template-variable-row {
+    gap: 6px;
+  }
+
+  .admin-template-variable-row span {
+    padding: 5px 8px;
+    font-size: 0.76rem;
   }
 
   .admin-server-details {

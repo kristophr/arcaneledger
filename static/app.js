@@ -3714,6 +3714,7 @@ function renderAdminEmailTemplates() {
       <button class="secondary-button compact-button admin-test-email-template-button icon-only-button" type="button" aria-label="Send test email" title="Send test email">
         <span class="email-test-icon" aria-hidden="true"></span>
       </button>
+      <button class="secondary-button compact-button admin-save-email-template-button" type="button">Save</button>
       <button class="secondary-button compact-button admin-edit-email-template-button" type="button">Edit Template</button>
     </article>
   `).join("");
@@ -3725,6 +3726,9 @@ function renderAdminEmailTemplates() {
   });
   els.adminEmailTemplatesList.querySelectorAll(".admin-edit-email-template-button").forEach((button) => {
     button.addEventListener("click", () => openAdminEmailTemplateModal(button.closest(".admin-email-template-row")?.dataset.templateId));
+  });
+  els.adminEmailTemplatesList.querySelectorAll(".admin-save-email-template-button").forEach((button) => {
+    button.addEventListener("click", () => saveAdminEmailTemplateFromRow(button).catch((error) => setStatus(`Template save failed: ${error.message}`, "error", els.adminEmailStatus || els.adminStatus)));
   });
   els.adminEmailTemplatesList.querySelectorAll(".admin-test-email-template-button").forEach((button) => {
     button.addEventListener("click", () => sendAdminEmailTemplateTest(button).catch((error) => setStatus(`Test failed: ${error.message}`, "error", els.adminEmailStatus || els.adminStatus)));
@@ -3741,8 +3745,10 @@ function updateAdminEmailTemplateFromRow(row) {
 
 function addAdminEmailTemplate() {
   if (!isAdminUser()) return;
-  state.adminEmailTemplates = [...(state.adminEmailTemplates || []), newAdminEmailTemplate()];
+  const template = newAdminEmailTemplate();
+  state.adminEmailTemplates = [...(state.adminEmailTemplates || []), template];
   renderAdminEmailTemplates();
+  openAdminEmailTemplateModal(template.id);
 }
 
 function openAdminEmailTemplateModal(templateId) {
@@ -3776,14 +3782,47 @@ function closeAdminEmailTemplateModal() {
 }
 
 async function saveAdminEmailTemplate(template) {
+  const payload = adminEmailTemplatePayload(template);
   const result = await api("/api/admin/email-templates", {
     method: "POST",
-    body: JSON.stringify(template),
+    body: JSON.stringify(payload),
   });
   state.adminEmailTemplates = result.templates || state.adminEmailTemplates.map((item) => (
     item.id === template.id ? result.template : item
   ));
   return result.template;
+}
+
+function adminEmailTemplatePayload(template) {
+  const rawId = String(template?.id || "");
+  const payload = {
+    name: (template?.name || "").trim(),
+    trigger: template?.trigger || "user_created",
+    to_email: (template?.to_email || "%email%").trim(),
+    from_email: (template?.from_email || defaultAdminFromEmail()).trim(),
+    subject: (template?.subject || "Welcome to %appname%").trim(),
+    body: template?.body || "",
+  };
+  if (/^\d+$/.test(rawId)) {
+    payload.id = rawId;
+  }
+  return payload;
+}
+
+async function saveAdminEmailTemplateFromRow(button) {
+  const row = button?.closest(".admin-email-template-row");
+  updateAdminEmailTemplateFromRow(row);
+  const templateId = row?.dataset.templateId;
+  const template = (state.adminEmailTemplates || []).find((item) => item.id === templateId);
+  if (!template) return;
+  button.disabled = true;
+  try {
+    await saveAdminEmailTemplate(template);
+    renderAdminEmailTemplates();
+    setStatus("Template saved to database.", "success", els.adminEmailStatus || els.adminStatus);
+  } finally {
+    button.disabled = false;
+  }
 }
 
 async function saveAdminEmailTemplateBody() {
