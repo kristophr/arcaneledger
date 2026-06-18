@@ -2284,9 +2284,13 @@ body:not(.is-authenticated) .nav-bottom {
   font-weight: 800;
 }
 
+.admin-email-status {
+  margin-bottom: 10px;
+}
+
 .admin-email-template-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(150px, 0.7fr) max-content;
+  grid-template-columns: minmax(0, 1fr) minmax(150px, 0.7fr) 38px max-content;
   gap: 10px;
   align-items: end;
   border: 1px solid var(--line);
@@ -2302,6 +2306,13 @@ body:not(.is-authenticated) .nav-bottom {
   min-width: 0;
 }
 
+.admin-template-address-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
 .admin-email-template-row label span,
 .admin-template-editor-field span {
   color: var(--muted);
@@ -2313,6 +2324,7 @@ body:not(.is-authenticated) .nav-bottom {
 
 .admin-email-template-row input,
 .admin-email-template-row select,
+.admin-template-editor-field input,
 .admin-template-editor-field textarea {
   width: 100%;
   border: 1px solid var(--line);
@@ -2322,9 +2334,49 @@ body:not(.is-authenticated) .nav-bottom {
 }
 
 .admin-email-template-row input,
-.admin-email-template-row select {
+.admin-email-template-row select,
+.admin-template-editor-field input {
   min-height: 36px;
   padding: 0 9px;
+}
+
+.icon-only-button {
+  width: 38px;
+  min-width: 38px;
+  min-height: 36px;
+  padding: 0;
+  display: inline-grid;
+  place-items: center;
+}
+
+.email-test-icon {
+  position: relative;
+  width: 17px;
+  height: 13px;
+  border: 2px solid currentColor;
+  border-radius: 3px;
+}
+
+.email-test-icon::before,
+.email-test-icon::after {
+  content: "";
+  position: absolute;
+  top: 1px;
+  width: 10px;
+  height: 2px;
+  background: currentColor;
+  transform-origin: left center;
+}
+
+.email-test-icon::before {
+  left: 1px;
+  transform: rotate(35deg);
+}
+
+.email-test-icon::after {
+  right: -1px;
+  transform-origin: right center;
+  transform: rotate(-35deg);
 }
 
 .admin-email-template-modal {

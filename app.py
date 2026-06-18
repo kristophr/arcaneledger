@@ -30,6 +30,27 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 STATIC_DIR = ROOT / "static"
+
+
+def load_env_file(path=ROOT / ".env"):
+    if not path.exists():
+        return
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, value = stripped.split("=", 1)
+        key = key.strip()
+        if not key or key in os.environ:
+            continue
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+            value = value[1:-1]
+        os.environ[key] = value
+
+
+load_env_file()
+
 DATA_DIR = Path(os.environ.get("DATA_DIR", ROOT / "data"))
 DB_PATH = Path(os.environ.get("DB_PATH", DATA_DIR / "mtg_collection.sqlite"))
 LOG_DIR = Path(os.environ.get("LOG_DIR", DATA_DIR / "logs"))
@@ -641,10 +662,16 @@ def email_status():
     }
 
 
-def mailgun_sender():
-    if MAILGUN_FROM_NAME:
-        return f"{MAILGUN_FROM_NAME} <{MAILGUN_FROM_EMAIL}>"
-    return MAILGUN_FROM_EMAIL
+def formatted_sender(email, name=""):
+    clean_email = (email or "").strip()
+    clean_name = (name or "").strip()
+    if clean_name:
+        return f"{clean_name} <{clean_email}>"
+    return clean_email
+
+
+def mailgun_sender(from_email=None):
+    return formatted_sender(from_email or MAILGUN_FROM_EMAIL, MAILGUN_FROM_NAME)
 
 
 def mailgun_auth_header():
@@ -716,10 +743,8 @@ def mailgun_trace():
     return trace
 
 
-def smtp_sender():
-    if SMTP_FROM_NAME:
-        return f"{SMTP_FROM_NAME} <{SMTP_FROM}>"
-    return SMTP_FROM
+def smtp_sender(from_email=None):
+    return formatted_sender(from_email or SMTP_FROM, SMTP_FROM_NAME)
 
 
 def smtp_response_text(message):
@@ -871,12 +896,12 @@ def encode_multipart_form(fields):
     return boundary, b"".join(parts)
 
 
-def send_email(to_email, subject, text=None, html=None, tags=None):
+def send_email(to_email, subject, text=None, html=None, tags=None, from_email=None):
     if smtp_configured():
-        return send_smtp_email(to_email, subject, text, html)
+        return send_smtp_email(to_email, subject, text, html, from_email=from_email)
     if not mailgun_configured():
         raise ValueError("Email is not configured. Set SMTP_HOST, SMTP_USER, SMTP_PASSWORD, and SMTP_FROM, or configure Mailgun API settings.")
-    return send_mailgun_email(to_email, subject, text, html, tags)
+    return send_mailgun_email(to_email, subject, text, html, tags, from_email=from_email)
 
 
 def validate_email_message(to_email, subject, text=None, html=None):
@@ -890,10 +915,10 @@ def validate_email_message(to_email, subject, text=None, html=None):
     return recipient, subject.strip()
 
 
-def send_smtp_email(to_email, subject, text=None, html=None):
+def send_smtp_email(to_email, subject, text=None, html=None, from_email=None):
     recipient, clean_subject = validate_email_message(to_email, subject, text, html)
     message = EmailMessage()
-    message["From"] = smtp_sender()
+    message["From"] = smtp_sender(from_email)
     message["To"] = recipient
     message["Subject"] = clean_subject
     message.set_content(text or "")
@@ -915,11 +940,11 @@ def send_smtp_email(to_email, subject, text=None, html=None):
     return {"ok": True, "provider": "smtp", "status": "sent"}
 
 
-def send_mailgun_email(to_email, subject, text=None, html=None, tags=None):
+def send_mailgun_email(to_email, subject, text=None, html=None, tags=None, from_email=None):
     recipient, clean_subject = validate_email_message(to_email, subject, text, html)
 
     fields = [
-        ("from", mailgun_sender()),
+        ("from", mailgun_sender(from_email)),
         ("to", recipient),
         ("subject", clean_subject),
     ]
@@ -2566,6 +2591,54 @@ def adopt_legacy_data(conn, user_id):
 
 def verification_base_url():
     return APP_BASE_URL or "http://127.0.0.1:8000"
+
+
+def public_app_config():
+    return {
+        "app_base_url": APP_BASE_URL,
+    }
+
+
+def render_email_template_text(value, variables):
+    rendered = str(value or "")
+    for key, replacement in variables.items():
+        rendered = rendered.replace(f"%{key}%", str(replacement or ""))
+    return rendered
+
+
+def admin_email_template_variables(user):
+    display_name = user["name"] if "name" in user.keys() and user["name"] else user["email"]
+    return {
+        "displayname": display_name,
+        "email": user["email"],
+        "date": datetime.now(timezone.utc).date().isoformat(),
+    }
+
+
+def send_admin_email_template_test(conn, admin_user, payload):
+    del conn
+    variables = admin_email_template_variables(admin_user)
+    name = str(payload.get("name") or "Template").strip()[:80] or "Template"
+    from_email = render_email_template_text(payload.get("from_email") or "", variables).strip()
+    if from_email and "@" not in from_email:
+        raise ValueError("Template From must be a valid email address.")
+    body = render_email_template_text(payload.get("body") or "", variables).strip()
+    if not body:
+        raise ValueError("Template body is required.")
+    result = send_email(
+        admin_user["email"],
+        f"Arcane Ledger test: {name}",
+        body,
+        tags=["arcaneledger", "template-test"],
+        from_email=from_email or None,
+    )
+    return {
+        "ok": True,
+        "email": admin_user["email"],
+        "provider": result.get("provider"),
+        "status": result.get("status"),
+        "message": f"Test successfully sent to {admin_user['email']}.",
+    }
 
 
 def verification_url(token):
@@ -9888,6 +9961,8 @@ class Handler(SimpleHTTPRequestHandler):
                 init_db(conn)
                 if parsed.path == "/api/health":
                     return self.send_json({"ok": True, "status": "healthy"})
+                if parsed.path == "/api/config":
+                    return self.send_json(public_app_config())
                 if parsed.path == "/api/auth/session":
                     user = self.current_user(conn)
                     return self.send_json({"authenticated": bool(user), "user": user_payload(user)})
@@ -10172,6 +10247,9 @@ class Handler(SimpleHTTPRequestHandler):
                 if parsed.path == "/api/reports":
                     user = self.require_user(conn)
                     return self.send_json(create_content_report(conn, user["id"], self.read_json()), HTTPStatus.CREATED)
+                if parsed.path == "/api/admin/email-templates/test":
+                    user = self.require_admin(conn)
+                    return self.send_json(send_admin_email_template_test(conn, user, self.read_json()))
                 if parsed.path == "/api/sync":
                     return self.send_json(sync_catalog(conn))
                 if parsed.path == "/api/import":

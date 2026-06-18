@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Arcane Ledger</title>
-    <link rel="stylesheet" href="/styles.css?v=135">
+    <link rel="stylesheet" href="/styles.css?v=137">
   </head>
   <body>
     <header class="topbar">
@@ -721,6 +721,7 @@
               </div>
               <button id="addAdminEmailTemplateButton" class="primary-button compact-button" type="button">+ Template</button>
             </div>
+            <div id="adminEmailStatus" class="status admin-email-status" aria-live="polite"></div>
             <div id="adminEmailTemplatesList" class="admin-email-template-list"></div>
           </section>
         </div>
@@ -1875,6 +1876,16 @@
           <span>%email%</span>
           <span>%date%</span>
         </div>
+        <div class="admin-template-address-grid">
+          <label class="admin-template-editor-field">
+            <span>To</span>
+            <input id="adminEmailTemplateTo" type="text" placeholder="%email%">
+          </label>
+          <label class="admin-template-editor-field">
+            <span>From</span>
+            <input id="adminEmailTemplateFrom" type="email" placeholder="admin@example.com">
+          </label>
+        </div>
         <label class="admin-template-editor-field">
           <span>Template body</span>
           <textarea id="adminEmailTemplateBody" rows="16" placeholder="Welcome %displayname%,"></textarea>
@@ -1886,6 +1897,6 @@
       </section>
     </div>
 
-    <script src="/app.js?v=147"></script>
+    <script src="/app.js?v=150"></script>
   </body>
 </html>

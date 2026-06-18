@@ -17,6 +17,7 @@ const state = {
   adminReports: [],
   adminEmailTemplates: [],
   editingAdminEmailTemplateId: null,
+  appConfig: {},
   userProfile: null,
   activeBlogCard: null,
   activeBlogDeck: null,
@@ -172,6 +173,7 @@ const els = {
   wishlistStatus: document.querySelector("#wishlistStatus"),
   notificationsStatus: document.querySelector("#notificationsStatus"),
   adminStatus: document.querySelector("#adminStatus"),
+  adminEmailStatus: document.querySelector("#adminEmailStatus"),
   catalogSearchStatus: document.querySelector("#catalogSearchStatus"),
   notificationsList: document.querySelector("#notificationsList"),
   notificationsNavDot: document.querySelector("#notificationsNavDot"),
@@ -189,6 +191,8 @@ const els = {
   addAdminEmailTemplateButton: document.querySelector("#addAdminEmailTemplateButton"),
   adminEmailTemplateOverlay: document.querySelector("#adminEmailTemplateOverlay"),
   adminEmailTemplateModalTitle: document.querySelector("#adminEmailTemplateModalTitle"),
+  adminEmailTemplateTo: document.querySelector("#adminEmailTemplateTo"),
+  adminEmailTemplateFrom: document.querySelector("#adminEmailTemplateFrom"),
   adminEmailTemplateBody: document.querySelector("#adminEmailTemplateBody"),
   closeAdminEmailTemplateButton: document.querySelector("#closeAdminEmailTemplateButton"),
   cancelAdminEmailTemplateButton: document.querySelector("#cancelAdminEmailTemplateButton"),
@@ -593,6 +597,29 @@ async function api(path, options = {}) {
     throw new Error(message);
   }
   return payload;
+}
+
+async function loadAppConfig() {
+  try {
+    state.appConfig = await api("/api/config");
+  } catch {
+    state.appConfig = {};
+  }
+}
+
+function hostFromBaseUrl(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  try {
+    return new URL(raw).host;
+  } catch {
+    return raw.replace(/^https?:\/\//i, "").replace(/\/.*$/, "");
+  }
+}
+
+function defaultAdminFromEmail() {
+  const host = hostFromBaseUrl(state.appConfig?.app_base_url) || window.location.hostname;
+  return host ? `admin@${host}` : "";
 }
 
 function updateAuthUi() {
@@ -3441,6 +3468,8 @@ function newAdminEmailTemplate() {
     id: `draft-${Date.now()}-${Math.random().toString(16).slice(2)}`,
     name: `Template ${nextIndex}`,
     trigger: "user_created",
+    to_email: "%email%",
+    from_email: defaultAdminFromEmail(),
     body: "Welcome %displayname%,\n\nThanks for creating your Arcane Ledger account on %date%.",
   };
 }
@@ -3465,6 +3494,9 @@ function renderAdminEmailTemplates() {
         <span>Trigger</span>
         <select class="admin-email-template-trigger">${adminEmailTriggerOptions(template.trigger || "user_created")}</select>
       </label>
+      <button class="secondary-button compact-button admin-test-email-template-button icon-only-button" type="button" aria-label="Send test email" title="Send test email">
+        <span class="email-test-icon" aria-hidden="true"></span>
+      </button>
       <button class="secondary-button compact-button admin-edit-email-template-button" type="button">Edit Template</button>
     </article>
   `).join("");
@@ -3476,6 +3508,9 @@ function renderAdminEmailTemplates() {
   });
   els.adminEmailTemplatesList.querySelectorAll(".admin-edit-email-template-button").forEach((button) => {
     button.addEventListener("click", () => openAdminEmailTemplateModal(button.closest(".admin-email-template-row")?.dataset.templateId));
+  });
+  els.adminEmailTemplatesList.querySelectorAll(".admin-test-email-template-button").forEach((button) => {
+    button.addEventListener("click", () => sendAdminEmailTemplateTest(button).catch((error) => setStatus(`Test failed: ${error.message}`, "error", els.adminEmailStatus || els.adminStatus)));
   });
 }
 
@@ -3501,6 +3536,12 @@ function openAdminEmailTemplateModal(templateId) {
   if (els.adminEmailTemplateModalTitle) {
     els.adminEmailTemplateModalTitle.textContent = `Edit ${template.name || "Template"}`;
   }
+  if (els.adminEmailTemplateTo) {
+    els.adminEmailTemplateTo.value = template.to_email || "%email%";
+  }
+  if (els.adminEmailTemplateFrom) {
+    els.adminEmailTemplateFrom.value = template.from_email || defaultAdminFromEmail();
+  }
   if (els.adminEmailTemplateBody) {
     els.adminEmailTemplateBody.value = template.body || "";
   }
@@ -3517,10 +3558,32 @@ function closeAdminEmailTemplateModal() {
 function saveAdminEmailTemplateBody() {
   const template = (state.adminEmailTemplates || []).find((item) => item.id === state.editingAdminEmailTemplateId);
   if (!template) return;
+  template.to_email = els.adminEmailTemplateTo?.value.trim() || "%email%";
+  template.from_email = els.adminEmailTemplateFrom?.value.trim() || defaultAdminFromEmail();
   template.body = els.adminEmailTemplateBody?.value || "";
   closeAdminEmailTemplateModal();
   renderAdminEmailTemplates();
-  setStatus("Template draft saved in this admin session.", "success", els.adminStatus);
+  setStatus("Template draft saved in this admin session.", "success", els.adminEmailStatus || els.adminStatus);
+}
+
+async function sendAdminEmailTemplateTest(button) {
+  const row = button?.closest(".admin-email-template-row");
+  updateAdminEmailTemplateFromRow(row);
+  const templateId = row?.dataset.templateId;
+  const template = (state.adminEmailTemplates || []).find((item) => item.id === templateId);
+  if (!template) return;
+  button.disabled = true;
+  const target = els.adminEmailStatus || els.adminStatus;
+  setStatus(`Sending test for ${template.name || "template"}...`, "", target);
+  try {
+    const result = await api("/api/admin/email-templates/test", {
+      method: "POST",
+      body: JSON.stringify(template),
+    });
+    setStatus(result.message || "Test successfully sent.", "success", target);
+  } finally {
+    button.disabled = false;
+  }
 }
 
 async function resolveAdminReport(button, action) {
@@ -10038,6 +10101,7 @@ function wireEvents() {
 }
 
 async function boot() {
+  await loadAppConfig();
   state.settings = loadSettings();
   applySettings();
   const initialSharedId = sharedRouteId();
