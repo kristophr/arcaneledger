@@ -10,6 +10,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 COPY app.py /app/app.py
+COPY CHANGELOG.md /app/CHANGELOG.md
 COPY static /app/static
 
 RUN mkdir -p /app/data /imports
