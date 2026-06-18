@@ -2772,6 +2772,11 @@ body:not(.is-authenticated) .nav-bottom {
   position: relative;
 }
 
+.admin-announcement-modal {
+  position: relative;
+}
+
+.admin-announcement-modal .modal-header,
 .announcement-detail-modal .modal-header {
   display: flex;
   justify-content: space-between;
@@ -2780,6 +2785,7 @@ body:not(.is-authenticated) .nav-bottom {
   padding-right: 46px;
 }
 
+.admin-announcement-modal .modal-close,
 .announcement-detail-modal .modal-close {
   position: absolute;
   top: 14px;

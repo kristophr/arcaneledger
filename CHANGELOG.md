@@ -18,6 +18,9 @@
 ### Fixed
 - Fixed the card detail action listeners so removed share/email buttons no longer require matching DOM elements.
 - Fixed the card ledger modal mobile layout so ledger entries stack cleanly on narrow screens.
+- Fixed Admin announcement modal close-button placement.
+- Fixed announcement date-range display so Home and Admin announcement lists show clear local dates like `6/18/26 - 6/22/26`.
+- Verified announcement subject, body, beginning date, and display-until date persist to the database and active Home announcements filter inclusively through the end date.
 
 ## 0.1.9 beta
 

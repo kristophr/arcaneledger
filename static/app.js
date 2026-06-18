@@ -1624,7 +1624,7 @@ function renderHomeAnnouncements() {
   els.homeAnnouncementsList.innerHTML = announcements.map((announcement) => `
     <button class="home-announcement-row" type="button" data-announcement-id="${escapeHtml(announcement.id)}">
       <span>${escapeHtml(announcement.subject || "Announcement")}</span>
-      <small>${escapeHtml(formatDate(announcement.starts_on || ""))} - ${escapeHtml(formatDate(announcement.ends_on || ""))}</small>
+      <small>${escapeHtml(formatAnnouncementRange(announcement))}</small>
     </button>
   `).join("");
   els.homeAnnouncementsList.querySelectorAll(".home-announcement-row").forEach((button) => {
@@ -1641,7 +1641,7 @@ function openHomeAnnouncementDetail(announcement) {
     els.homeAnnouncementDetailTitle.textContent = announcement.subject || "Announcement";
   }
   if (els.homeAnnouncementDetailMeta) {
-    els.homeAnnouncementDetailMeta.textContent = `${formatDate(announcement.starts_on || "")} - ${formatDate(announcement.ends_on || "")}`;
+    els.homeAnnouncementDetailMeta.textContent = formatAnnouncementRange(announcement);
   }
   if (els.homeAnnouncementDetailBody) {
     els.homeAnnouncementDetailBody.innerHTML = markdownToHtml(announcement.body || "");
@@ -3900,7 +3900,7 @@ function renderAdminAnnouncements() {
     <article class="admin-announcement-row ${announcement.status === "published" ? "is-published" : "is-draft"}" data-announcement-id="${escapeHtml(announcement.id)}">
       <div class="admin-announcement-main">
         <strong>${escapeHtml(announcement.subject || "Untitled announcement")}</strong>
-        <span>${escapeHtml(formatDate(announcement.starts_on || ""))} - ${escapeHtml(formatDate(announcement.ends_on || ""))}</span>
+        <span>${escapeHtml(formatAnnouncementRange(announcement))}</span>
         <small>${escapeHtml(announcementStatusLabel(announcement.status))} · Updated ${escapeHtml(formatDate(announcement.updated_at || announcement.created_at || ""))}</small>
       </div>
       <button class="secondary-button compact-button admin-edit-announcement-button" type="button">Edit</button>
@@ -4404,6 +4404,19 @@ function formatDate(value) {
   const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
   if (!year || monthIndex < 0 || monthIndex > 11) return value;
   return `${year.slice(-2)} ${monthNames[monthIndex]}`;
+}
+
+function formatAnnouncementDate(value) {
+  if (!value) return "Not set";
+  const [year, month, day] = String(value).slice(0, 10).split("-");
+  const monthNumber = Number(month);
+  const dayNumber = Number(day);
+  if (!year || !monthNumber || !dayNumber) return value;
+  return `${monthNumber}/${dayNumber}/${year.slice(-2)}`;
+}
+
+function formatAnnouncementRange(announcement) {
+  return `${formatAnnouncementDate(announcement?.starts_on || "")} - ${formatAnnouncementDate(announcement?.ends_on || "")}`;
 }
 
 function ensureSelectOption(select, value) {
