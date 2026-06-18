@@ -501,6 +501,11 @@ const els = {
   cardMetaTitle: document.querySelector("#cardMetaTitle"),
   cardMetaList: document.querySelector("#cardMetaList"),
   closeCardMetaButton: document.querySelector("#closeCardMetaButton"),
+  cardLedgerOverlay: document.querySelector("#cardLedgerOverlay"),
+  cardLedgerEyebrow: document.querySelector("#cardLedgerEyebrow"),
+  cardLedgerTitle: document.querySelector("#cardLedgerTitle"),
+  cardLedgerList: document.querySelector("#cardLedgerList"),
+  closeCardLedgerButton: document.querySelector("#closeCardLedgerButton"),
   shareOverlay: document.querySelector("#shareOverlay"),
   shareTitle: document.querySelector("#shareTitle"),
   shareUrlInput: document.querySelector("#shareUrlInput"),
@@ -7912,6 +7917,63 @@ function renderMovementHistory(movements) {
   `;
 }
 
+function movementTypeLabel(movement) {
+  if (movement?.movement_type === "sell") return "Sell";
+  if (movement?.movement_type === "adjust") {
+    return movement.adjustment_type === "increase" ? "Adjust In" : "Adjust Out";
+  }
+  return "Buy";
+}
+
+function renderLedgerEntries(movements) {
+  if (!movements || !movements.length) {
+    return '<div class="empty-state">No ledger entries yet.</div>';
+  }
+  return `
+    <div class="card-ledger-table">
+      <div class="card-ledger-head">
+        <span>Date</span>
+        <span>Type</span>
+        <span>Qty</span>
+        <span>Variant</span>
+        <span>Condition</span>
+        <span>Amount</span>
+      </div>
+      ${movements.map((movement) => {
+        const amount = movement.movement_type === "adjust"
+          ? ""
+          : dollars.format(movement.total_amount ?? movement.total_price ?? 0);
+        return `
+          <div class="card-ledger-row">
+            <span>${escapeHtml(formatDate(movement.movement_date || movement.purchase_date))}</span>
+            <strong>${escapeHtml(movementTypeLabel(movement))}</strong>
+            <b>${integer.format(movement.quantity || 0)}</b>
+            <span>${escapeHtml(movement.variant || "Normal")}</span>
+            <span>${escapeHtml(movement.card_condition || "Near Mint")}</span>
+            <span>${escapeHtml(amount || "-")}</span>
+          </div>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function openCardLedgerModal(card) {
+  if (!els.cardLedgerOverlay) return;
+  if (els.cardLedgerEyebrow) els.cardLedgerEyebrow.textContent = "Card ledger";
+  if (els.cardLedgerTitle) els.cardLedgerTitle.textContent = cardTitle(card) || "Ledger";
+  if (els.cardLedgerList) els.cardLedgerList.innerHTML = renderLedgerEntries(card.movements || card.purchases || []);
+  els.cardLedgerOverlay.hidden = false;
+  document.body.classList.add("modal-open");
+}
+
+function closeCardLedgerModal() {
+  if (!els.cardLedgerOverlay) return;
+  els.cardLedgerOverlay.hidden = true;
+  document.body.classList.remove("modal-open");
+  if (els.cardLedgerList) els.cardLedgerList.innerHTML = "";
+}
+
 function renderCardComments(card) {
   const comments = Array.isArray(card.comments) ? card.comments : [];
   return `
@@ -8215,6 +8277,98 @@ function renderCardAggregateStats(stats = {}) {
   `;
 }
 
+function cardWebSearchLinks(card) {
+  const title = cardTitle(card);
+  const rulesName = cardRulesName(card) || card.name || title;
+  const setName = card.set_name || "";
+  const setCode = card.set || card.set_code || "";
+  const collector = card.collector_number || "";
+  const marketQuery = [title, setCode, collector].filter(Boolean).join(" ");
+  const broadQuery = [title, setName || setCode, "MTG"].filter(Boolean).join(" ");
+  const tcgQuery = title || rulesName;
+  return [
+    {
+      label: "TCGplayer",
+      href: `https://www.tcgplayer.com/search/magic/product?productLineName=magic&q=${encodeURIComponent(tcgQuery)}`,
+    },
+    {
+      label: "Cardmarket",
+      href: `https://www.cardmarket.com/en/Magic/Products/Search?searchString=${encodeURIComponent(tcgQuery)}`,
+    },
+    {
+      label: "Cardhoarder",
+      href: `https://www.cardhoarder.com/cards?data%5Bsearch%5D=${encodeURIComponent(tcgQuery)}`,
+    },
+    {
+      label: "eBay",
+      href: `https://www.ebay.com/sch/i.html?_nkw=${encodeURIComponent(marketQuery || broadQuery)}`,
+    },
+    {
+      label: "EDHREC",
+      href: `https://edhrec.com/route/?cc=${encodeURIComponent(rulesName || title)}`,
+    },
+    {
+      label: "MTGGoldfish",
+      href: `https://www.mtggoldfish.com/q?utf8=%E2%9C%93&query_string=${encodeURIComponent(rulesName || title)}`,
+    },
+  ].filter((link) => link.href && title);
+}
+
+function renderCardDetailActionPanel(card, { owned = false, canManageCollection = false } = {}) {
+  const showRefresh = Boolean(canManageCollection);
+  const showSale = Boolean(canManageCollection && owned);
+  if (!showRefresh && !card.scryfall_uri && !showSale) return "";
+  return `
+    <section class="card-insight-panel card-detail-action-panel">
+      <div class="panel-head compact-panel-head">
+        <h2>Card Actions</h2>
+        <span>Tools</span>
+      </div>
+      <div class="card-action-grid">
+        ${showRefresh ? `
+          <button class="card-action-tile detail-refresh-button" type="button">
+            <strong>&#8635;</strong>
+            <span>Refresh Scryfall</span>
+          </button>
+        ` : ""}
+        ${card.scryfall_uri ? `
+          <a class="card-action-tile detail-scryfall-button" href="${escapeHtml(card.scryfall_uri)}" target="_blank" rel="noreferrer">
+            <strong>S</strong>
+            <span>View on Scryfall</span>
+          </a>
+        ` : ""}
+        ${showSale ? `
+          <button class="card-action-tile detail-for-sale-button" type="button">
+            <strong><span class="sale-icon" aria-hidden="true"></span></strong>
+            <span>Put Up For Sale</span>
+          </button>
+        ` : ""}
+      </div>
+    </section>
+  `;
+}
+
+function renderCardWebSearchPanel(card) {
+  const links = cardWebSearchLinks(card);
+  if (!links.length) return "";
+  return `
+    <section class="card-insight-panel card-web-search-panel">
+      <div class="panel-head compact-panel-head">
+        <h2>Search the Web</h2>
+        <span>External sites</span>
+      </div>
+      <div class="card-web-link-grid">
+        ${links.map((link) => `
+          <a href="${escapeHtml(link.href)}" target="_blank" rel="noreferrer">
+            <span>${escapeHtml(link.label)}</span>
+            <b>&#8599;</b>
+          </a>
+        `).join("")}
+      </div>
+    </section>
+  `;
+}
+
 function openCardMetaOverlay(title, eyebrow = "Arcane Ledger meta") {
   els.cardMetaEyebrow.textContent = eyebrow;
   els.cardMetaTitle.textContent = title;
@@ -8337,6 +8491,7 @@ function renderCardDetail(card) {
               ${hasContainers ? '<span class="storage-check-icon" aria-hidden="true"></span>' : '<span class="storage-x-icon" aria-hidden="true"></span>'}
             </button>
             ${listedForSale ? '<button class="detail-storage-button detail-store-button" type="button" aria-label="Manage sale listing" title="Manage sale listing"><span class="sale-icon" aria-hidden="true"></span></button>' : ""}` : ""}
+            ${owned ? '<button class="detail-storage-button detail-ledger-button" type="button" aria-label="View ledger" title="View ledger"><span class="ledger-icon" aria-hidden="true"></span></button>' : ""}
             <button class="detail-storage-button detail-blog-posts-button" type="button" aria-label="View blog posts about this card" title="View blog posts"><span class="blog-post-icon" aria-hidden="true"></span></button>
           </div>
         </div>
@@ -8363,16 +8518,8 @@ function renderCardDetail(card) {
             ${!owned ? '<button class="wishlist-button detail-wishlist-button" type="button" aria-label="Add to Wishlist" title="Add to Wishlist"></button>' : ""}
           </div>
         </div>
-        <aside class="card-detail-toolbar" aria-label="Card actions">
-          ${owned ? '<button class="detail-action-button detail-refresh-button" type="button" aria-label="Refresh from Scryfall" title="Refresh from Scryfall">&#8635;</button>' : ""}
-          <a class="detail-action-button detail-scryfall-button" href="${escapeHtml(card.scryfall_uri || "#")}" target="_blank" rel="noreferrer" aria-label="View on Scryfall" title="View on Scryfall">S</a>
-          ${canManageCollection && owned ? '<button class="detail-action-button detail-for-sale-button" type="button" aria-label="Mark this card for sale" title="Mark this card for sale"><span class="sale-icon" aria-hidden="true"></span></button>' : ""}
-          <button class="detail-action-button detail-share-button" type="button" aria-label="Share card" title="Share card">&#8599;</button>
-          <button class="detail-action-button detail-email-button" type="button" aria-label="Email card" title="Email card"><span class="send-icon" aria-hidden="true"></span></button>
-          ${owned ? '<button class="detail-action-button detail-delete-button" type="button" aria-label="Delete card" title="Delete card"><span class="trash-icon" aria-hidden="true"></span></button>' : ""}
-        </aside>
       </article>
-      ${canManageCollection ? `<aside class="card-detail-insights">
+      <aside class="card-detail-insights">
         <section class="card-insight-panel">
           <div class="panel-head compact-panel-head">
             <h2>Market</h2>
@@ -8380,7 +8527,9 @@ function renderCardDetail(card) {
           </div>
           ${renderCardPriceChart(card)}
         </section>
-        <section class="card-insight-panel card-meta-panel">
+        ${renderCardDetailActionPanel(card, { owned, canManageCollection })}
+        ${renderCardWebSearchPanel(card)}
+        ${canManageCollection ? `<section class="card-insight-panel card-meta-panel">
           <div class="panel-head compact-panel-head">
             <h2>Arcane Ledger Meta</h2>
             <span>All users</span>
@@ -8397,7 +8546,8 @@ function renderCardDetail(card) {
             <button class="secondary-button" type="submit">Save Notes</button>
           </form>
         </section>
-      </aside>` : ""}
+        ` : ""}
+      </aside>
     </div>
     <div class="card-detail-lower-grid ${owned ? "" : "is-comments-only"}">
       ${owned ? `<section class="purchase-history-panel">
@@ -8447,8 +8597,8 @@ function renderCardDetail(card) {
   els.cardDetailShell.querySelector(".detail-blog-posts-button")?.addEventListener("click", () => {
     openCardBlogListModal(card).catch((error) => setStatus(error.message, "error"));
   });
-  els.cardDetailShell.querySelector(".detail-share-button").addEventListener("click", () => openShareModal(card));
-  els.cardDetailShell.querySelector(".detail-email-button").addEventListener("click", () => openEmailCardModal(card));
+  els.cardDetailShell.querySelector(".detail-share-button")?.addEventListener("click", () => openShareModal(card));
+  els.cardDetailShell.querySelector(".detail-email-button")?.addEventListener("click", () => openEmailCardModal(card));
   els.cardDetailShell.querySelector(".detail-delete-button")?.addEventListener("click", () => {
     deleteCardFromDetail(card).catch((error) => setStatus(error.message, "error"));
   });
@@ -8467,6 +8617,7 @@ function renderCardDetail(card) {
     }
   });
   els.cardDetailShell.querySelector(".detail-store-button")?.addEventListener("click", () => openSaleManagementForCard(card));
+  els.cardDetailShell.querySelector(".detail-ledger-button")?.addEventListener("click", () => openCardLedgerModal(card));
   els.cardDetailShell.querySelectorAll(".delete-movement-button").forEach((button) => {
     button.addEventListener("click", () => {
       deleteCardMovement(button).catch((error) => setStatus(error.message, "error"));
@@ -10226,6 +10377,12 @@ function wireEvents() {
       closeCardMetaModal();
     }
   });
+  els.closeCardLedgerButton?.addEventListener("click", closeCardLedgerModal);
+  els.cardLedgerOverlay?.addEventListener("click", (event) => {
+    if (event.target === els.cardLedgerOverlay) {
+      closeCardLedgerModal();
+    }
+  });
   els.closeShareButton.addEventListener("click", closeShareModal);
   els.copyShareButton.addEventListener("click", copyShareUrl);
   els.shareOverlay.addEventListener("click", (event) => {
@@ -10416,6 +10573,9 @@ function wireEvents() {
     }
     if (event.key === "Escape" && !els.cardMetaOverlay.hidden) {
       closeCardMetaModal();
+    }
+    if (event.key === "Escape" && els.cardLedgerOverlay && !els.cardLedgerOverlay.hidden) {
+      closeCardLedgerModal();
     }
     if (event.key === "Escape" && !els.importReviewOverlay.hidden) {
       closeImportReviewModal();

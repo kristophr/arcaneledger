@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.2.0 beta
+
+### Added
+- Added a read-only card ledger modal on owned card pages with date, transaction type, quantity, variant, condition, and amount.
+- Added a compact ledger icon to the card detail icon row when the user owns the card.
+- Added a card-page “Search the Web” panel with external card lookups for TCGplayer, Cardmarket, Cardhoarder, eBay, EDHREC, and MTGGoldfish.
+- Added a card-page “Card Actions” panel for refreshing Scryfall metadata, opening Scryfall directly, and putting owned cards up for sale.
+
+### Changed
+- Reworked the card detail page to remove the vertical right-side action rail and move tools into the right-side information column.
+- Removed card share and email actions from the card detail action area while that workflow is being redesigned.
+- Widened the card ledger modal and adjusted its columns so the ledger avoids horizontal scrollbars.
+- Shortened the web search panel title to “Search the Web” and matched its two-column layout to nearby card meta panels.
+- Bumped frontend asset versions for the card detail page updates.
+
+### Fixed
+- Fixed the card detail action listeners so removed share/email buttons no longer require matching DOM elements.
+- Fixed the card ledger modal mobile layout so ledger entries stack cleanly on narrow screens.
+
 ## 0.1.9 beta
 
 ### Added
