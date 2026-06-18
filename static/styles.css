@@ -2740,6 +2740,24 @@ body:not(.is-authenticated) .nav-bottom {
   box-shadow: 0 22px 80px rgba(0, 0, 0, 0.28);
 }
 
+.announcement-detail-modal {
+  position: relative;
+}
+
+.announcement-detail-modal .modal-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+  padding-right: 46px;
+}
+
+.announcement-detail-modal .modal-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+}
+
 .admin-email-template-row .admin-save-email-template-button,
 .admin-email-template-row .admin-edit-email-template-button {
   white-space: nowrap;
