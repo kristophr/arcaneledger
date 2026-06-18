@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.1.9 beta
+
+### Added
+- Added persistent Admin email templates so saved templates survive logout, reloads, and server restarts.
+- Added Admin Home Page Management with draft and published announcements.
+- Added date-ranged Home announcements that display only when published and active for the current date.
+- Added read-only announcement detail modals on the Home page with safe Markdown rendering.
+- Added a collapsible left navigation rail that can switch between icon-only and icon-with-text modes.
+- Added a Home page “Today’s Card” spotlight selected daily from cataloged collection cards.
+
+### Changed
+- Reworked the Home page layout with announcements and Today’s Card in the main area.
+- Grouped Home page metadata into a compact “Overall Server Stats” panel.
+- Reduced the visual footprint of the Home page stat tiles.
+- Cache-busted frontend assets for the navigation and Home page layout changes.
+
+### Fixed
+- Fixed Admin email templates previously saving only as in-browser session drafts.
+- Fixed announcement drafts so canceling a new unsaved announcement removes the temporary row.
+
 ## 0.1.8 beta
 
 ### Added

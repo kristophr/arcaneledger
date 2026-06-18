@@ -16,7 +16,10 @@ const state = {
   adminServer: null,
   adminReports: [],
   adminEmailTemplates: [],
+  adminAnnouncements: [],
+  homeAnnouncements: [],
   editingAdminEmailTemplateId: null,
+  editingAdminAnnouncementId: null,
   appConfig: {},
   userProfile: null,
   activeBlogCard: null,
@@ -82,6 +85,7 @@ const state = {
   favoritesView: localStorage.getItem("arcaneledger.favoritesView") || "tiles",
   favoritesFilter: localStorage.getItem("arcaneledger.favoritesFilter") || "all",
   settings: null,
+  navCollapsed: localStorage.getItem("arcaneledger.navCollapsed") === "1",
 };
 
 const settingsKey = "arcaneledger.settings";
@@ -152,6 +156,19 @@ const els = {
   homeWishlistCount: document.querySelector("#homeWishlistCount"),
   homeSaleQuantity: document.querySelector("#homeSaleQuantity"),
   homeSaleAskingTotal: document.querySelector("#homeSaleAskingTotal"),
+  homeTodaysCardPanel: document.querySelector("#homeTodaysCardPanel"),
+  homeTodaysCardLink: document.querySelector("#homeTodaysCardLink"),
+  homeTodaysCardImage: document.querySelector("#homeTodaysCardImage"),
+  homeTodaysCardName: document.querySelector("#homeTodaysCardName"),
+  homeTodaysCardMeta: document.querySelector("#homeTodaysCardMeta"),
+  homeTodaysCardText: document.querySelector("#homeTodaysCardText"),
+  homeAnnouncementsPanel: document.querySelector("#homeAnnouncementsPanel"),
+  homeAnnouncementsList: document.querySelector("#homeAnnouncementsList"),
+  homeAnnouncementDetailOverlay: document.querySelector("#homeAnnouncementDetailOverlay"),
+  homeAnnouncementDetailTitle: document.querySelector("#homeAnnouncementDetailTitle"),
+  homeAnnouncementDetailMeta: document.querySelector("#homeAnnouncementDetailMeta"),
+  homeAnnouncementDetailBody: document.querySelector("#homeAnnouncementDetailBody"),
+  closeHomeAnnouncementDetailButton: document.querySelector("#closeHomeAnnouncementDetailButton"),
   historyCount: document.querySelector("#historyCount"),
   historyChart: document.querySelector("#historyChart"),
   refreshPriceSnapshotsButton: document.querySelector("#refreshPriceSnapshotsButton"),
@@ -182,6 +199,7 @@ const els = {
   catalogSearchStatus: document.querySelector("#catalogSearchStatus"),
   notificationsList: document.querySelector("#notificationsList"),
   notificationsNavDot: document.querySelector("#notificationsNavDot"),
+  navCollapseButton: document.querySelector("#navCollapseButton"),
   adminUsersList: document.querySelector("#adminUsersList"),
   adminUserCount: document.querySelector("#adminUserCount"),
   adminReportsList: document.querySelector("#adminReportsList"),
@@ -203,6 +221,20 @@ const els = {
   closeAdminEmailTemplateButton: document.querySelector("#closeAdminEmailTemplateButton"),
   cancelAdminEmailTemplateButton: document.querySelector("#cancelAdminEmailTemplateButton"),
   saveAdminEmailTemplateButton: document.querySelector("#saveAdminEmailTemplateButton"),
+  adminAnnouncementCount: document.querySelector("#adminAnnouncementCount"),
+  adminAnnouncementsList: document.querySelector("#adminAnnouncementsList"),
+  adminAnnouncementStatus: document.querySelector("#adminAnnouncementStatus"),
+  addAdminAnnouncementButton: document.querySelector("#addAdminAnnouncementButton"),
+  adminAnnouncementOverlay: document.querySelector("#adminAnnouncementOverlay"),
+  adminAnnouncementModalTitle: document.querySelector("#adminAnnouncementModalTitle"),
+  adminAnnouncementSubject: document.querySelector("#adminAnnouncementSubject"),
+  adminAnnouncementStartsOn: document.querySelector("#adminAnnouncementStartsOn"),
+  adminAnnouncementEndsOn: document.querySelector("#adminAnnouncementEndsOn"),
+  adminAnnouncementBody: document.querySelector("#adminAnnouncementBody"),
+  closeAdminAnnouncementButton: document.querySelector("#closeAdminAnnouncementButton"),
+  cancelAdminAnnouncementButton: document.querySelector("#cancelAdminAnnouncementButton"),
+  draftAdminAnnouncementButton: document.querySelector("#draftAdminAnnouncementButton"),
+  publishAdminAnnouncementButton: document.querySelector("#publishAdminAnnouncementButton"),
   refreshAdminButton: document.querySelector("#refreshAdminButton"),
   refreshAdminLogsButton: document.querySelector("#refreshAdminLogsButton"),
   reportOverlay: document.querySelector("#reportOverlay"),
@@ -685,6 +717,7 @@ function updateAuthUi() {
     els.settingsAccountEmail.textContent = loggedIn ? state.user.email : "Not logged in";
   }
   updateNotificationsDot();
+  applyNavCollapsedState();
 }
 
 function openMyProfile() {
@@ -943,7 +976,9 @@ async function logout() {
   state.adminServer = null;
   state.adminReports = [];
   state.adminEmailTemplates = [];
+  state.adminAnnouncements = [];
   state.editingAdminEmailTemplateId = null;
+  state.editingAdminAnnouncementId = null;
   state.ownedSetCards = [];
   state.ownedSets = [];
   state.activeWishlist = null;
@@ -1533,6 +1568,9 @@ function setFavoritesFilter(filter) {
 }
 
 function renderHome(data = {}) {
+  state.homeAnnouncements = Array.isArray(data.announcements) ? data.announcements : [];
+  renderHomeAnnouncements();
+  renderTodaysCard(data.todays_card || null);
   if (els.homeTotalValue) els.homeTotalValue.textContent = dollars.format(data.total_value || 0);
   if (els.homeUserCount) els.homeUserCount.textContent = integer.format(data.user_count || 0);
   if (els.homeCatalogedCards) els.homeCatalogedCards.textContent = integer.format(data.cataloged_cards || 0);
@@ -1542,6 +1580,75 @@ function renderHome(data = {}) {
   if (els.homeWishlistCount) els.homeWishlistCount.textContent = integer.format(data.wishlist_count || 0);
   if (els.homeSaleQuantity) els.homeSaleQuantity.textContent = integer.format(data.sale_quantity || 0);
   if (els.homeSaleAskingTotal) els.homeSaleAskingTotal.textContent = dollars.format(data.sale_asking_total || 0);
+}
+
+function renderTodaysCard(card) {
+  if (els.homeTodaysCardPanel) {
+    els.homeTodaysCardPanel.hidden = !card;
+  }
+  if (!card) return;
+  if (els.homeTodaysCardLink) {
+    els.homeTodaysCardLink.href = cardDetailUrl(card);
+  }
+  if (els.homeTodaysCardImage) {
+    els.homeTodaysCardImage.src = card.image_normal || card.image_small || "";
+    els.homeTodaysCardImage.alt = cardTitle(card);
+  }
+  if (els.homeTodaysCardName) {
+    els.homeTodaysCardName.textContent = cardTitle(card);
+  }
+  if (els.homeTodaysCardMeta) {
+    els.homeTodaysCardMeta.textContent = `${card.set_name || ""} #${card.collector_number || ""} · ${card.variant || "Normal"} · ${dollars.format(card.display_price || card.market_price || 0)}`;
+  }
+  if (els.homeTodaysCardText) {
+    const fallback = card.type_line ? `${card.type_line}${card.rarity ? ` · ${card.rarity}` : ""}` : "Click to view card details.";
+    els.homeTodaysCardText.textContent = card.flavor_text || fallback;
+  }
+}
+
+function renderHomeAnnouncements() {
+  const announcements = state.homeAnnouncements || [];
+  if (els.homeAnnouncementsPanel) {
+    els.homeAnnouncementsPanel.hidden = !announcements.length;
+  }
+  if (!els.homeAnnouncementsList) return;
+  if (!announcements.length) {
+    els.homeAnnouncementsList.innerHTML = "";
+    return;
+  }
+  els.homeAnnouncementsList.innerHTML = announcements.map((announcement) => `
+    <button class="home-announcement-row" type="button" data-announcement-id="${escapeHtml(announcement.id)}">
+      <span>${escapeHtml(announcement.subject || "Announcement")}</span>
+      <small>${escapeHtml(formatDate(announcement.starts_on || ""))} - ${escapeHtml(formatDate(announcement.ends_on || ""))}</small>
+    </button>
+  `).join("");
+  els.homeAnnouncementsList.querySelectorAll(".home-announcement-row").forEach((button) => {
+    button.addEventListener("click", () => {
+      const announcement = announcements.find((item) => String(item.id) === String(button.dataset.announcementId));
+      openHomeAnnouncementDetail(announcement);
+    });
+  });
+}
+
+function openHomeAnnouncementDetail(announcement) {
+  if (!announcement || !els.homeAnnouncementDetailOverlay) return;
+  if (els.homeAnnouncementDetailTitle) {
+    els.homeAnnouncementDetailTitle.textContent = announcement.subject || "Announcement";
+  }
+  if (els.homeAnnouncementDetailMeta) {
+    els.homeAnnouncementDetailMeta.textContent = `${formatDate(announcement.starts_on || "")} - ${formatDate(announcement.ends_on || "")}`;
+  }
+  if (els.homeAnnouncementDetailBody) {
+    els.homeAnnouncementDetailBody.innerHTML = markdownToHtml(announcement.body || "");
+  }
+  els.homeAnnouncementDetailOverlay.hidden = false;
+  document.body.classList.add("modal-open");
+}
+
+function closeHomeAnnouncementDetail() {
+  if (!els.homeAnnouncementDetailOverlay) return;
+  els.homeAnnouncementDetailOverlay.hidden = true;
+  document.body.classList.remove("modal-open");
 }
 
 async function loadHome() {
@@ -1631,6 +1738,27 @@ function showPage(pageName) {
     command.classList.toggle("is-active", command.dataset.pageTarget === activePage);
   }
   els.myProfileButton?.classList.toggle("is-active", pageName === "user-profile");
+}
+
+function applyNavCollapsedState() {
+  document.body.classList.toggle("nav-collapsed", state.navCollapsed);
+  if (els.navCollapseButton) {
+    const label = state.navCollapsed ? "Expand navigation" : "Collapse navigation";
+    els.navCollapseButton.setAttribute("aria-label", label);
+    els.navCollapseButton.setAttribute("aria-pressed", state.navCollapsed ? "true" : "false");
+    els.navCollapseButton.title = label;
+  }
+  for (const command of els.navCommands || []) {
+    const label = command.textContent.trim().replace(/\s+/g, " ");
+    if (label) command.title = label;
+  }
+  if (els.myProfileButton) els.myProfileButton.title = "My Profile";
+}
+
+function toggleNavCollapsed() {
+  state.navCollapsed = !state.navCollapsed;
+  localStorage.setItem("arcaneledger.navCollapsed", state.navCollapsed ? "1" : "0");
+  applyNavCollapsedState();
 }
 
 function pagePath(pageName) {
@@ -3396,20 +3524,25 @@ async function loadAdmin() {
     setStatus("Admin access required.", "error", els.adminStatus);
     return;
   }
-  const [users, server, reports, logs] = await Promise.all([
+  const [users, server, reports, templates, announcements, logs] = await Promise.all([
     api("/api/admin/users"),
     api("/api/admin/server"),
     api("/api/admin/reports"),
+    api("/api/admin/email-templates"),
+    api("/api/admin/announcements"),
     loadAdminLogs(false),
   ]);
   state.adminUsers = users.users || [];
   state.adminServer = server;
   state.adminReports = reports.reports || [];
+  state.adminEmailTemplates = templates.templates || [];
+  state.adminAnnouncements = announcements.announcements || [];
   renderAdminUsers();
   renderAdminServer();
   renderAdminReports();
   renderAdminLogs();
   renderAdminEmailTemplates();
+  renderAdminAnnouncements();
 }
 
 async function loadAdminLogs(render = true) {
@@ -3642,16 +3775,34 @@ function closeAdminEmailTemplateModal() {
   state.editingAdminEmailTemplateId = null;
 }
 
-function saveAdminEmailTemplateBody() {
+async function saveAdminEmailTemplate(template) {
+  const result = await api("/api/admin/email-templates", {
+    method: "POST",
+    body: JSON.stringify(template),
+  });
+  state.adminEmailTemplates = result.templates || state.adminEmailTemplates.map((item) => (
+    item.id === template.id ? result.template : item
+  ));
+  return result.template;
+}
+
+async function saveAdminEmailTemplateBody() {
   const template = (state.adminEmailTemplates || []).find((item) => item.id === state.editingAdminEmailTemplateId);
   if (!template) return;
   template.to_email = els.adminEmailTemplateTo?.value.trim() || "%email%";
   template.from_email = els.adminEmailTemplateFrom?.value.trim() || defaultAdminFromEmail();
   template.subject = els.adminEmailTemplateSubject?.value.trim() || "Welcome to %appname%";
   template.body = els.adminEmailTemplateBody?.value || "";
-  closeAdminEmailTemplateModal();
-  renderAdminEmailTemplates();
-  setStatus("Template draft saved in this admin session.", "success", els.adminEmailStatus || els.adminStatus);
+  const button = els.saveAdminEmailTemplateButton;
+  if (button) button.disabled = true;
+  try {
+    await saveAdminEmailTemplate(template);
+    closeAdminEmailTemplateModal();
+    renderAdminEmailTemplates();
+    setStatus("Template saved.", "success", els.adminEmailStatus || els.adminStatus);
+  } finally {
+    if (button) button.disabled = false;
+  }
 }
 
 async function sendAdminEmailTemplateTest(button) {
@@ -3672,6 +3823,133 @@ async function sendAdminEmailTemplateTest(button) {
   } finally {
     button.disabled = false;
   }
+}
+
+function announcementStatusLabel(status) {
+  return status === "published" ? "Published" : "Draft";
+}
+
+function newAdminAnnouncement() {
+  const today = todayValue();
+  return {
+    id: `draft-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    subject: "",
+    starts_on: today,
+    ends_on: today,
+    status: "draft",
+    body: "",
+  };
+}
+
+function renderAdminAnnouncements() {
+  if (!els.adminAnnouncementsList) return;
+  const announcements = state.adminAnnouncements || [];
+  if (els.adminAnnouncementCount) {
+    const published = announcements.filter((item) => item.status === "published").length;
+    els.adminAnnouncementCount.textContent = `${integer.format(announcements.length)} announcement${announcements.length === 1 ? "" : "s"} · ${integer.format(published)} published`;
+  }
+  if (!announcements.length) {
+    els.adminAnnouncementsList.innerHTML = '<div class="empty-state">No announcements yet.</div>';
+    return;
+  }
+  els.adminAnnouncementsList.innerHTML = announcements.map((announcement) => `
+    <article class="admin-announcement-row ${announcement.status === "published" ? "is-published" : "is-draft"}" data-announcement-id="${escapeHtml(announcement.id)}">
+      <div class="admin-announcement-main">
+        <strong>${escapeHtml(announcement.subject || "Untitled announcement")}</strong>
+        <span>${escapeHtml(formatDate(announcement.starts_on || ""))} - ${escapeHtml(formatDate(announcement.ends_on || ""))}</span>
+        <small>${escapeHtml(announcementStatusLabel(announcement.status))} · Updated ${escapeHtml(formatDate(announcement.updated_at || announcement.created_at || ""))}</small>
+      </div>
+      <button class="secondary-button compact-button admin-edit-announcement-button" type="button">Edit</button>
+    </article>
+  `).join("");
+  els.adminAnnouncementsList.querySelectorAll(".admin-edit-announcement-button").forEach((button) => {
+    button.addEventListener("click", () => openAdminAnnouncementModal(button.closest(".admin-announcement-row")?.dataset.announcementId));
+  });
+}
+
+function addAdminAnnouncement() {
+  if (!isAdminUser()) return;
+  const announcement = newAdminAnnouncement();
+  state.adminAnnouncements = [announcement, ...(state.adminAnnouncements || [])];
+  renderAdminAnnouncements();
+  openAdminAnnouncementModal(announcement.id);
+}
+
+function openAdminAnnouncementModal(announcementId) {
+  if (!isAdminUser()) return;
+  const announcement = (state.adminAnnouncements || []).find((item) => String(item.id) === String(announcementId));
+  if (!announcement || !els.adminAnnouncementOverlay) return;
+  state.editingAdminAnnouncementId = announcement.id;
+  if (els.adminAnnouncementModalTitle) {
+    els.adminAnnouncementModalTitle.textContent = announcement.id && String(announcement.id).startsWith("draft-") ? "Add Announcement" : "Edit Announcement";
+  }
+  if (els.adminAnnouncementSubject) els.adminAnnouncementSubject.value = announcement.subject || "";
+  if (els.adminAnnouncementStartsOn) els.adminAnnouncementStartsOn.value = announcement.starts_on || todayValue();
+  if (els.adminAnnouncementEndsOn) els.adminAnnouncementEndsOn.value = announcement.ends_on || announcement.starts_on || todayValue();
+  if (els.adminAnnouncementBody) els.adminAnnouncementBody.value = announcement.body || "";
+  els.adminAnnouncementOverlay.hidden = false;
+  document.body.classList.add("modal-open");
+  els.adminAnnouncementSubject?.focus();
+}
+
+function closeAdminAnnouncementModal() {
+  if (!els.adminAnnouncementOverlay) return;
+  const editingId = String(state.editingAdminAnnouncementId || "");
+  els.adminAnnouncementOverlay.hidden = true;
+  document.body.classList.remove("modal-open");
+  if (editingId.startsWith("draft-")) {
+    state.adminAnnouncements = (state.adminAnnouncements || []).filter((item) => String(item.id) !== editingId);
+    renderAdminAnnouncements();
+  }
+  state.editingAdminAnnouncementId = null;
+}
+
+function currentAdminAnnouncementFromModal(status) {
+  const announcement = (state.adminAnnouncements || []).find((item) => String(item.id) === String(state.editingAdminAnnouncementId)) || {};
+  return {
+    id: announcement.id,
+    subject: els.adminAnnouncementSubject?.value.trim() || "",
+    starts_on: els.adminAnnouncementStartsOn?.value || todayValue(),
+    ends_on: els.adminAnnouncementEndsOn?.value || els.adminAnnouncementStartsOn?.value || todayValue(),
+    body: els.adminAnnouncementBody?.value || "",
+    status,
+  };
+}
+
+async function saveAdminAnnouncement(status) {
+  const button = status === "published" ? els.publishAdminAnnouncementButton : els.draftAdminAnnouncementButton;
+  if (button) button.disabled = true;
+  try {
+    const payload = currentAdminAnnouncementFromModal(status);
+    const result = await api("/api/admin/announcements", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    state.adminAnnouncements = result.announcements || [];
+    closeAdminAnnouncementModal();
+    renderAdminAnnouncements();
+    setStatus(status === "published" ? "Announcement published." : "Announcement saved as draft.", "success", els.adminAnnouncementStatus || els.adminStatus);
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+function insertAnnouncementMarkdown(action) {
+  const textarea = els.adminAnnouncementBody;
+  if (!textarea) return;
+  const start = textarea.selectionStart || 0;
+  const end = textarea.selectionEnd || 0;
+  const selected = textarea.value.slice(start, end);
+  const snippets = {
+    bold: `**${selected || "bold text"}**`,
+    italic: `*${selected || "italic text"}*`,
+    heading: `## ${selected || "Heading"}`,
+    list: `- ${selected || "List item"}`,
+    link: `[${selected || "link text"}](https://example.com)`,
+  };
+  const insert = snippets[action] || selected;
+  textarea.setRangeText(insert, start, end, "select");
+  textarea.focus();
 }
 
 async function resolveAdminReport(button, action) {
@@ -7457,6 +7735,54 @@ function escapeAttribute(value) {
   return escapeHtml(value).replaceAll("'", "&#39;");
 }
 
+function inlineMarkdownToHtml(value) {
+  let text = escapeHtml(value);
+  text = text.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>');
+  text = text.replace(/`([^`]+)`/g, "<code>$1</code>");
+  text = text.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  text = text.replace(/\*([^*]+)\*/g, "<em>$1</em>");
+  return text;
+}
+
+function markdownToHtml(value) {
+  const lines = String(value || "").replace(/\r\n/g, "\n").split("\n");
+  const html = [];
+  let inList = false;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      if (inList) {
+        html.push("</ul>");
+        inList = false;
+      }
+      continue;
+    }
+    if (trimmed.startsWith("- ") || trimmed.startsWith("* ")) {
+      if (!inList) {
+        html.push("<ul>");
+        inList = true;
+      }
+      html.push(`<li>${inlineMarkdownToHtml(trimmed.slice(2))}</li>`);
+      continue;
+    }
+    if (inList) {
+      html.push("</ul>");
+      inList = false;
+    }
+    if (trimmed.startsWith("### ")) {
+      html.push(`<h4>${inlineMarkdownToHtml(trimmed.slice(4))}</h4>`);
+    } else if (trimmed.startsWith("## ")) {
+      html.push(`<h3>${inlineMarkdownToHtml(trimmed.slice(3))}</h3>`);
+    } else if (trimmed.startsWith("# ")) {
+      html.push(`<h2>${inlineMarkdownToHtml(trimmed.slice(2))}</h2>`);
+    } else {
+      html.push(`<p>${inlineMarkdownToHtml(trimmed)}</p>`);
+    }
+  }
+  if (inList) html.push("</ul>");
+  return html.join("");
+}
+
 function cssImageUrl(value) {
   return `url("${String(value || "").replaceAll("\\", "\\\\").replaceAll('"', "%22")}")`;
 }
@@ -9373,6 +9699,7 @@ function wireEvents() {
     }
     openAddCardModal();
   });
+  els.navCollapseButton?.addEventListener("click", toggleNavCollapsed);
   els.accountButton.addEventListener("click", () => {
     if (state.user) {
       activatePage("settings", { push: true });
@@ -9407,10 +9734,35 @@ function wireEvents() {
   els.addAdminEmailTemplateButton?.addEventListener("click", addAdminEmailTemplate);
   els.closeAdminEmailTemplateButton?.addEventListener("click", closeAdminEmailTemplateModal);
   els.cancelAdminEmailTemplateButton?.addEventListener("click", closeAdminEmailTemplateModal);
-  els.saveAdminEmailTemplateButton?.addEventListener("click", saveAdminEmailTemplateBody);
+  els.saveAdminEmailTemplateButton?.addEventListener("click", () => {
+    saveAdminEmailTemplateBody().catch((error) => setStatus(`Template save failed: ${error.message}`, "error", els.adminEmailStatus || els.adminStatus));
+  });
   els.adminEmailTemplateOverlay?.addEventListener("click", (event) => {
     if (event.target === els.adminEmailTemplateOverlay) {
       closeAdminEmailTemplateModal();
+    }
+  });
+  els.addAdminAnnouncementButton?.addEventListener("click", addAdminAnnouncement);
+  els.closeAdminAnnouncementButton?.addEventListener("click", closeAdminAnnouncementModal);
+  els.cancelAdminAnnouncementButton?.addEventListener("click", closeAdminAnnouncementModal);
+  els.draftAdminAnnouncementButton?.addEventListener("click", () => {
+    saveAdminAnnouncement("draft").catch((error) => setStatus(`Announcement save failed: ${error.message}`, "error", els.adminAnnouncementStatus || els.adminStatus));
+  });
+  els.publishAdminAnnouncementButton?.addEventListener("click", () => {
+    saveAdminAnnouncement("published").catch((error) => setStatus(`Announcement publish failed: ${error.message}`, "error", els.adminAnnouncementStatus || els.adminStatus));
+  });
+  els.adminAnnouncementOverlay?.addEventListener("click", (event) => {
+    if (event.target === els.adminAnnouncementOverlay) {
+      closeAdminAnnouncementModal();
+    }
+  });
+  els.adminAnnouncementOverlay?.querySelectorAll("[data-markdown-action]")?.forEach((button) => {
+    button.addEventListener("click", () => insertAnnouncementMarkdown(button.dataset.markdownAction));
+  });
+  els.closeHomeAnnouncementDetailButton?.addEventListener("click", closeHomeAnnouncementDetail);
+  els.homeAnnouncementDetailOverlay?.addEventListener("click", (event) => {
+    if (event.target === els.homeAnnouncementDetailOverlay) {
+      closeHomeAnnouncementDetail();
     }
   });
   els.openChangelogButton?.addEventListener("click", () => {
@@ -10661,6 +11013,7 @@ async function boot() {
     state.user = null;
     updateAuthUi();
   });
+  applyNavCollapsedState();
   const isShareOnlyRoute = isAlwaysShareOnlyRoute || Boolean((initialSharedId || initialCardDetail) && !state.user);
   if (!isShareOnlyRoute) {
     wireEvents();

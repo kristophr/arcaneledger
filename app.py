@@ -101,8 +101,8 @@ SESSION_IDLE_MINUTES = int(os.environ.get("SESSION_IDLE_MINUTES", "30") or 30)
 EMAIL_VERIFICATION_MINUTES = int(os.environ.get("EMAIL_VERIFICATION_MINUTES", "30") or 30)
 PASSWORD_RESET_MINUTES = int(os.environ.get("PASSWORD_RESET_MINUTES", str(EMAIL_VERIFICATION_MINUTES)) or EMAIL_VERIFICATION_MINUTES)
 SUPPORTED_SCRYFALL_LANGUAGES = {"en"}
-APP_VERSION = "0.1.8 beta"
-USER_AGENT = "arcaneledger/0.1.8"
+APP_VERSION = "0.1.9 beta"
+USER_AGENT = "arcaneledger/0.1.9"
 PROCESS_STARTED_AT = datetime.now(timezone.utc).replace(microsecond=0)
 COLOR_ORDER = ("W", "U", "B", "R", "G")
 CARD_CONDITIONS = (
@@ -1497,6 +1497,32 @@ def init_db(conn):
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
         );
 
+        CREATE TABLE IF NOT EXISTS admin_email_templates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            trigger_key TEXT NOT NULL DEFAULT 'user_created',
+            to_email TEXT NOT NULL DEFAULT '%email%',
+            from_email TEXT NOT NULL DEFAULT '',
+            subject TEXT NOT NULL DEFAULT '',
+            body TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS home_announcements (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            subject TEXT NOT NULL,
+            body TEXT NOT NULL DEFAULT '',
+            starts_on TEXT NOT NULL,
+            ends_on TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'draft',
+            admin_user_id INTEGER,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            published_at TEXT,
+            FOREIGN KEY (admin_user_id) REFERENCES users(id) ON DELETE SET NULL
+        );
+
         CREATE TABLE IF NOT EXISTS card_sale_journal (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER,
@@ -1645,6 +1671,8 @@ def init_db(conn):
         CREATE INDEX IF NOT EXISTS idx_card_sales_card ON card_sales(user_id, card_id, variant, card_condition);
         CREATE UNIQUE INDEX IF NOT EXISTS idx_notifications_source ON notifications(user_id, source_type, source_key);
         CREATE INDEX IF NOT EXISTS idx_notifications_user_read ON notifications(user_id, is_read, updated_at);
+        CREATE INDEX IF NOT EXISTS idx_admin_email_templates_trigger ON admin_email_templates(trigger_key);
+        CREATE INDEX IF NOT EXISTS idx_home_announcements_status_dates ON home_announcements(status, starts_on, ends_on);
         CREATE INDEX IF NOT EXISTS idx_card_sale_journal_card ON card_sale_journal(user_id, card_id, variant, card_condition, sold_date);
         CREATE INDEX IF NOT EXISTS idx_inventory_adjustments_card ON inventory_adjustments(user_id, card_id, variant, card_condition, adjustment_date);
         CREATE INDEX IF NOT EXISTS idx_snapshots_date ON price_snapshots(snapshot_date);
@@ -2766,6 +2794,220 @@ def admin_email_template_variables(user):
         "daysinactive": days_inactive,
         "inactive_days": days_inactive,
         "year": today.year,
+    }
+
+
+ADMIN_EMAIL_TEMPLATE_TRIGGERS = {"user_created", "inactive_30_days", "inactive_60_days", "inactive_90_days"}
+
+
+def admin_email_template_row(row):
+    return {
+        "id": str(row["id"]),
+        "name": row["name"] or "",
+        "trigger": row["trigger_key"] or "user_created",
+        "to_email": row["to_email"] or "%email%",
+        "from_email": row["from_email"] or "",
+        "subject": row["subject"] or "",
+        "body": row["body"] or "",
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
+
+
+def list_admin_email_templates(conn):
+    rows = conn.execute(
+        """
+        SELECT id, name, trigger_key, to_email, from_email, subject, body, created_at, updated_at
+        FROM admin_email_templates
+        ORDER BY updated_at DESC, name COLLATE NOCASE
+        """
+    ).fetchall()
+    return {"templates": [admin_email_template_row(row) for row in rows]}
+
+
+def save_admin_email_template(conn, payload):
+    name = re.sub(r"\s+", " ", (payload.get("name") or "").strip())
+    if not name:
+        raise ValueError("Template name is required.")
+    if len(name) > 80:
+        raise ValueError("Template name must be 80 characters or fewer.")
+    trigger_key = (payload.get("trigger") or payload.get("trigger_key") or "user_created").strip()
+    if trigger_key not in ADMIN_EMAIL_TEMPLATE_TRIGGERS:
+        raise ValueError("Choose a valid email trigger.")
+    to_email = (payload.get("to_email") or "%email%").strip()
+    from_email = (payload.get("from_email") or "").strip()
+    subject = (payload.get("subject") or "").strip()
+    body = payload.get("body") or ""
+    if len(to_email) > 200:
+        raise ValueError("To field must be 200 characters or fewer.")
+    if len(from_email) > 200:
+        raise ValueError("From field must be 200 characters or fewer.")
+    if len(subject) > 160:
+        raise ValueError("Subject must be 160 characters or fewer.")
+    if len(body) > 20000:
+        raise ValueError("Template body must be 20,000 characters or fewer.")
+    timestamp = now_iso()
+    raw_id = str(payload.get("id") or "")
+    template_id = int(raw_id) if raw_id.isdigit() else 0
+    if template_id:
+        existing = conn.execute("SELECT id FROM admin_email_templates WHERE id = ?", (template_id,)).fetchone()
+        if not existing:
+            raise KeyError("Email template not found")
+        conn.execute(
+            """
+            UPDATE admin_email_templates
+            SET name = ?, trigger_key = ?, to_email = ?, from_email = ?, subject = ?, body = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (name, trigger_key, to_email, from_email, subject, body, timestamp, template_id),
+        )
+    else:
+        cursor = conn.execute(
+            """
+            INSERT INTO admin_email_templates (name, trigger_key, to_email, from_email, subject, body, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (name, trigger_key, to_email, from_email, subject, body, timestamp, timestamp),
+        )
+        template_id = cursor.lastrowid
+    conn.commit()
+    row = conn.execute(
+        """
+        SELECT id, name, trigger_key, to_email, from_email, subject, body, created_at, updated_at
+        FROM admin_email_templates
+        WHERE id = ?
+        """,
+        (template_id,),
+    ).fetchone()
+    return {"ok": True, "template": admin_email_template_row(row), "templates": list_admin_email_templates(conn)["templates"]}
+
+
+ANNOUNCEMENT_STATUSES = {"draft", "published"}
+
+
+def announcement_row(row):
+    return {
+        "id": str(row["id"]),
+        "subject": row["subject"] or "",
+        "body": row["body"] or "",
+        "starts_on": row["starts_on"] or "",
+        "ends_on": row["ends_on"] or "",
+        "status": row["status"] or "draft",
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+        "published_at": row["published_at"] or "",
+    }
+
+
+def list_admin_announcements(conn):
+    rows = conn.execute(
+        """
+        SELECT id, subject, body, starts_on, ends_on, status, created_at, updated_at, published_at
+        FROM home_announcements
+        ORDER BY updated_at DESC, starts_on DESC, id DESC
+        """
+    ).fetchall()
+    return {"announcements": [announcement_row(row) for row in rows]}
+
+
+def active_home_announcements(conn):
+    today = today_iso()
+    rows = conn.execute(
+        """
+        SELECT id, subject, body, starts_on, ends_on, status, created_at, updated_at, published_at
+        FROM home_announcements
+        WHERE status = 'published'
+          AND starts_on <= ?
+          AND ends_on >= ?
+        ORDER BY starts_on DESC, updated_at DESC, id DESC
+        """,
+        (today, today),
+    ).fetchall()
+    return [announcement_row(row) for row in rows]
+
+
+def clean_announcement_payload(payload, status):
+    subject = re.sub(r"\s+", " ", (payload.get("subject") or "").strip())
+    if not subject:
+        raise ValueError("Announcement subject is required.")
+    if len(subject) > 160:
+        raise ValueError("Announcement subject must be 160 characters or fewer.")
+    body = payload.get("body") or ""
+    if len(body) > 20000:
+        raise ValueError("Announcement body must be 20,000 characters or fewer.")
+    starts_on = (payload.get("starts_on") or today_iso()).strip()
+    ends_on = (payload.get("ends_on") or starts_on).strip()
+    if not parse_iso_date(starts_on):
+        raise ValueError("Beginning date must be a valid date.")
+    if not parse_iso_date(ends_on):
+        raise ValueError("Display until date must be a valid date.")
+    if ends_on < starts_on:
+        raise ValueError("Display until date cannot be before the beginning date.")
+    status = (status or payload.get("status") or "draft").strip().lower()
+    if status not in ANNOUNCEMENT_STATUSES:
+        raise ValueError("Choose draft or publish.")
+    return {
+        "subject": subject,
+        "body": body,
+        "starts_on": starts_on,
+        "ends_on": ends_on,
+        "status": status,
+    }
+
+
+def save_home_announcement(conn, admin_user_id, payload):
+    cleaned = clean_announcement_payload(payload, payload.get("status"))
+    timestamp = now_iso()
+    raw_id = str(payload.get("id") or "")
+    announcement_id = int(raw_id) if raw_id.isdigit() else 0
+    published_at = timestamp if cleaned["status"] == "published" else None
+    if announcement_id:
+        existing = conn.execute(
+            "SELECT id, published_at FROM home_announcements WHERE id = ?",
+            (announcement_id,),
+        ).fetchone()
+        if not existing:
+            raise KeyError("Announcement not found")
+        published_at = existing["published_at"] or (timestamp if cleaned["status"] == "published" else None)
+        conn.execute(
+            """
+            UPDATE home_announcements
+            SET subject = ?, body = ?, starts_on = ?, ends_on = ?, status = ?, admin_user_id = ?,
+                updated_at = ?, published_at = ?
+            WHERE id = ?
+            """,
+            (
+                cleaned["subject"], cleaned["body"], cleaned["starts_on"], cleaned["ends_on"], cleaned["status"],
+                admin_user_id, timestamp, published_at, announcement_id,
+            ),
+        )
+    else:
+        cursor = conn.execute(
+            """
+            INSERT INTO home_announcements (
+                subject, body, starts_on, ends_on, status, admin_user_id, created_at, updated_at, published_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                cleaned["subject"], cleaned["body"], cleaned["starts_on"], cleaned["ends_on"], cleaned["status"],
+                admin_user_id, timestamp, timestamp, published_at,
+            ),
+        )
+        announcement_id = cursor.lastrowid
+    conn.commit()
+    row = conn.execute(
+        """
+        SELECT id, subject, body, starts_on, ends_on, status, created_at, updated_at, published_at
+        FROM home_announcements
+        WHERE id = ?
+        """,
+        (announcement_id,),
+    ).fetchone()
+    return {
+        "ok": True,
+        "announcement": announcement_row(row),
+        "announcements": list_admin_announcements(conn)["announcements"],
     }
 
 
@@ -5091,6 +5333,39 @@ def home_stats(conn):
         WHERE COALESCE(quantity, 0) > 0
         """
     ).fetchone()
+    daily_count = conn.execute(
+        """
+        SELECT COUNT(*) AS count
+        FROM (
+            SELECT col.card_id, COALESCE(NULLIF(col.variant, ''), 'Normal') AS variant
+            FROM collection col
+            WHERE COALESCE(col.quantity, 0) > 0
+            GROUP BY col.card_id, COALESCE(NULLIF(col.variant, ''), 'Normal')
+        )
+        """
+    ).fetchone()["count"] or 0
+    todays_card = None
+    if daily_count:
+        offset = int(date.today().strftime("%Y%m%d")) % int(daily_count)
+        row = conn.execute(
+            f"""
+            SELECT c.scryfall_id, c.name, c.flavor_name, c.flavor_text, c.set_code, c.set_name,
+                   c.collector_number, c.rarity, c.type_line, c.type_category, c.colors, c.color_identity,
+                   c.image_small, c.image_normal, c.scryfall_uri,
+                   COALESCE(NULLIF(col.variant, ''), 'Normal') AS variant,
+                   COALESCE(SUM(col.quantity), 0) AS quantity,
+                   ({price_expr}) AS display_price
+            FROM collection col
+            JOIN cards c ON c.scryfall_id = col.card_id
+            WHERE COALESCE(col.quantity, 0) > 0
+            GROUP BY col.card_id, COALESCE(NULLIF(col.variant, ''), 'Normal')
+            ORDER BY lower(c.name), lower(c.set_code), c.collector_number, variant
+            LIMIT 1 OFFSET ?
+            """,
+            (offset,),
+        ).fetchone()
+        if row:
+            todays_card = with_value_aliases(dict(row))
     return {
         "user_count": int(totals["user_count"] or 0),
         "cataloged_cards": int(totals["cataloged_cards"] or 0),
@@ -5102,6 +5377,8 @@ def home_stats(conn):
         "sale_listing_count": int(sale_summary["listing_count"] or 0),
         "sale_quantity": int(sale_summary["sale_quantity"] or 0),
         "sale_asking_total": float(sale_summary["asking_total"] or 0),
+        "announcements": active_home_announcements(conn),
+        "todays_card": todays_card,
     }
 
 
@@ -10587,6 +10864,12 @@ class Handler(SimpleHTTPRequestHandler):
                 if parsed.path == "/api/admin/reports":
                     self.require_admin(conn)
                     return self.send_json(list_content_reports(conn))
+                if parsed.path == "/api/admin/email-templates":
+                    self.require_admin(conn)
+                    return self.send_json(list_admin_email_templates(conn))
+                if parsed.path == "/api/admin/announcements":
+                    self.require_admin(conn)
+                    return self.send_json(list_admin_announcements(conn))
                 if parsed.path == "/api/cards/for-sale":
                     user = self.require_user(conn)
                     return self.send_json({"cards": list_sale_cards(conn, parsed.query, user["id"])})
@@ -10844,6 +11127,12 @@ class Handler(SimpleHTTPRequestHandler):
                 if parsed.path == "/api/admin/email-templates/test":
                     user = self.require_admin(conn)
                     return self.send_json(send_admin_email_template_test(conn, user, self.read_json()))
+                if parsed.path == "/api/admin/email-templates":
+                    self.require_admin(conn)
+                    return self.send_json(save_admin_email_template(conn, self.read_json()))
+                if parsed.path == "/api/admin/announcements":
+                    user = self.require_admin(conn)
+                    return self.send_json(save_home_announcement(conn, user["id"], self.read_json()))
                 if parsed.path == "/api/sync":
                     return self.send_json(sync_catalog(conn))
                 if parsed.path == "/api/import":

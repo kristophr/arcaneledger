@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Arcane Ledger</title>
-    <link rel="stylesheet" href="/styles.css?v=142">
+    <link rel="stylesheet" href="/styles.css?v=143">
   </head>
   <body>
     <header class="topbar">
@@ -20,6 +20,9 @@
 
     <div class="app-shell">
       <aside class="command-menu" aria-label="App navigation">
+        <button id="navCollapseButton" class="nav-collapse-button" type="button" aria-label="Collapse navigation" aria-pressed="false" title="Collapse navigation">
+          <span aria-hidden="true"></span>
+        </button>
         <nav>
           <button class="nav-command is-active" type="button" data-page-target="home"><span class="home-icon" aria-hidden="true"></span>Home</button>
           <button class="nav-command" type="button" data-page-target="dashboard"><span class="dashboard-icon" aria-hidden="true"></span>Dashboard</button>
@@ -56,44 +59,81 @@
             <h2>Catalog the collection. Build the decks. Find the cards.</h2>
             <p>Arcane Ledger is a Magic: The Gathering collection tracker powered by Scryfall catalog data and collector-owned pricing history.</p>
           </div>
-          <div class="home-stat-card home-stat-card-feature">
-            <span>Total cataloged value</span>
-            <strong id="homeTotalValue">$0.00</strong>
-          </div>
         </div>
-        <div class="home-meta-grid">
-          <article class="home-stat-card">
-            <span>Users</span>
-            <strong id="homeUserCount">0</strong>
-          </article>
-          <article class="home-stat-card">
-            <span>Cards cataloged</span>
-            <strong id="homeCatalogedCards">0</strong>
-          </article>
-          <article class="home-stat-card">
-            <span>Unique cards</span>
-            <strong id="homeUniqueCards">0</strong>
-          </article>
-          <article class="home-stat-card">
-            <span>Decks built</span>
-            <strong id="homeDeckCount">0</strong>
-          </article>
-          <article class="home-stat-card">
-            <span>Containers</span>
-            <strong id="homeContainerCount">0</strong>
-          </article>
-          <article class="home-stat-card">
-            <span>Wishlists</span>
-            <strong id="homeWishlistCount">0</strong>
-          </article>
-          <article class="home-stat-card">
-            <span>Cards for sale</span>
-            <strong id="homeSaleQuantity">0</strong>
-          </article>
-          <article class="home-stat-card">
-            <span>Store asking total</span>
-            <strong id="homeSaleAskingTotal">$0.00</strong>
-          </article>
+        <div class="home-dashboard-layout">
+          <div class="home-center-grid">
+            <section id="homeAnnouncementsPanel" class="home-announcements-panel" hidden>
+              <div class="panel-head">
+                <div>
+                  <p class="eyebrow">Announcements</p>
+                  <h3>Latest Updates</h3>
+                </div>
+              </div>
+              <div id="homeAnnouncementsList" class="home-announcements-list"></div>
+            </section>
+            <section id="homeTodaysCardPanel" class="home-todays-card-panel" hidden>
+              <div class="panel-head">
+                <div>
+                  <p class="eyebrow">Today's Card</p>
+                  <h3>Daily Collection Spotlight</h3>
+                </div>
+              </div>
+              <a id="homeTodaysCardLink" class="home-todays-card-link" href="#">
+                <img id="homeTodaysCardImage" src="" alt="">
+                <div>
+                  <strong id="homeTodaysCardName">Card</strong>
+                  <span id="homeTodaysCardMeta"></span>
+                  <p id="homeTodaysCardText"></p>
+                </div>
+              </a>
+            </section>
+          </div>
+          <aside class="home-server-stats-panel" aria-label="Overall server stats">
+            <div class="panel-head">
+              <div>
+                <p class="eyebrow">Overall Server Stats</p>
+                <h3>Community Snapshot</h3>
+              </div>
+            </div>
+            <div class="home-meta-grid">
+              <article class="home-stat-card">
+                <span>Total value</span>
+                <strong id="homeTotalValue">$0.00</strong>
+              </article>
+              <article class="home-stat-card">
+                <span>Users</span>
+                <strong id="homeUserCount">0</strong>
+              </article>
+              <article class="home-stat-card">
+                <span>Cards cataloged</span>
+                <strong id="homeCatalogedCards">0</strong>
+              </article>
+              <article class="home-stat-card">
+                <span>Unique cards</span>
+                <strong id="homeUniqueCards">0</strong>
+              </article>
+              <article class="home-stat-card">
+                <span>Decks built</span>
+                <strong id="homeDeckCount">0</strong>
+              </article>
+              <article class="home-stat-card">
+                <span>Containers</span>
+                <strong id="homeContainerCount">0</strong>
+              </article>
+              <article class="home-stat-card">
+                <span>Wishlists</span>
+                <strong id="homeWishlistCount">0</strong>
+              </article>
+              <article class="home-stat-card">
+                <span>Cards for sale</span>
+                <strong id="homeSaleQuantity">0</strong>
+              </article>
+              <article class="home-stat-card">
+                <span>Store asking total</span>
+                <strong id="homeSaleAskingTotal">$0.00</strong>
+              </article>
+            </div>
+          </aside>
         </div>
       </section>
 
@@ -740,6 +780,17 @@
             </div>
             <div id="adminEmailStatus" class="status admin-email-status" aria-live="polite"></div>
             <div id="adminEmailTemplatesList" class="admin-email-template-list"></div>
+          </section>
+          <section class="panel admin-panel admin-home-panel">
+            <div class="panel-head">
+              <div>
+                <h3>Home Page Management</h3>
+                <span id="adminAnnouncementCount"></span>
+              </div>
+              <button id="addAdminAnnouncementButton" class="primary-button compact-button" type="button">Add Announcement</button>
+            </div>
+            <div id="adminAnnouncementStatus" class="status admin-announcement-status" aria-live="polite"></div>
+            <div id="adminAnnouncementsList" class="admin-announcements-list"></div>
           </section>
         </div>
       </section>
@@ -1980,6 +2031,62 @@
       </section>
     </div>
 
-    <script src="/app.js?v=163"></script>
+    <div id="adminAnnouncementOverlay" class="modal-overlay" hidden>
+      <section class="admin-announcement-modal" role="dialog" aria-modal="true" aria-labelledby="adminAnnouncementModalTitle">
+        <div class="modal-header">
+          <div>
+            <p class="eyebrow">Home announcement</p>
+            <h2 id="adminAnnouncementModalTitle">Add Announcement</h2>
+          </div>
+          <button id="closeAdminAnnouncementButton" class="modal-close" type="button" aria-label="Close announcement editor">x</button>
+        </div>
+        <label class="admin-template-editor-field">
+          <span>Subject</span>
+          <input id="adminAnnouncementSubject" type="text" maxlength="160" placeholder="Announcement subject">
+        </label>
+        <div class="admin-template-address-grid">
+          <label class="admin-template-editor-field">
+            <span>Beginning Date</span>
+            <input id="adminAnnouncementStartsOn" type="date">
+          </label>
+          <label class="admin-template-editor-field">
+            <span>Display Until Date</span>
+            <input id="adminAnnouncementEndsOn" type="date">
+          </label>
+        </div>
+        <div class="markdown-toolbar" aria-label="Markdown controls">
+          <button type="button" data-markdown-action="bold" title="Bold">B</button>
+          <button type="button" data-markdown-action="italic" title="Italic">I</button>
+          <button type="button" data-markdown-action="heading" title="Heading">H</button>
+          <button type="button" data-markdown-action="list" title="Bulleted list">•</button>
+          <button type="button" data-markdown-action="link" title="Link">Link</button>
+        </div>
+        <label class="admin-template-editor-field">
+          <span>Body</span>
+          <textarea id="adminAnnouncementBody" rows="14" placeholder="Write with Markdown syntax..."></textarea>
+        </label>
+        <div class="modal-actions">
+          <button id="cancelAdminAnnouncementButton" class="secondary-button" type="button">Cancel</button>
+          <button id="draftAdminAnnouncementButton" class="secondary-button" type="button">Draft</button>
+          <button id="publishAdminAnnouncementButton" class="primary-button" type="button">Publish</button>
+        </div>
+      </section>
+    </div>
+
+    <div id="homeAnnouncementDetailOverlay" class="modal-overlay" hidden>
+      <section class="announcement-detail-modal" role="dialog" aria-modal="true" aria-labelledby="homeAnnouncementDetailTitle">
+        <div class="modal-header">
+          <div>
+            <p class="eyebrow">Announcement</p>
+            <h2 id="homeAnnouncementDetailTitle">Announcement</h2>
+          </div>
+          <button id="closeHomeAnnouncementDetailButton" class="modal-close" type="button" aria-label="Close announcement">x</button>
+        </div>
+        <p id="homeAnnouncementDetailMeta" class="settings-help"></p>
+        <div id="homeAnnouncementDetailBody" class="announcement-markdown-body"></div>
+      </section>
+    </div>
+
+    <script src="/app.js?v=166"></script>
   </body>
 </html>
