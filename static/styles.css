@@ -2386,6 +2386,10 @@ body:not(.is-authenticated) .nav-bottom {
   margin-bottom: 14px;
 }
 
+.admin-template-subject-field {
+  margin-bottom: 14px;
+}
+
 .admin-email-template-row label span,
 .admin-template-editor-field span {
   color: var(--muted);
@@ -7225,7 +7229,7 @@ body:not(.is-authenticated) .nav-bottom {
 .container-allocation-header,
 .container-allocation-row {
   display: grid;
-  grid-template-columns: minmax(120px, 1fr) minmax(120px, 1fr) 94px;
+  grid-template-columns: minmax(72px, 0.65fr) minmax(118px, 0.9fr) minmax(140px, 1.15fr) minmax(110px, 0.9fr) 94px;
   gap: 10px;
   align-items: center;
   padding: 9px 10px;

@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Arcane Ledger</title>
-    <link rel="stylesheet" href="/styles.css?v=141">
+    <link rel="stylesheet" href="/styles.css?v=142">
   </head>
   <body>
     <header class="topbar">
@@ -1938,9 +1938,22 @@
           <button id="closeAdminEmailTemplateButton" class="modal-close" type="button" aria-label="Close email template editor">x</button>
         </header>
         <div class="admin-template-variable-row" aria-label="Available dynamic variables">
+          <span>%appname%</span>
+          <span>%appversion%</span>
           <span>%displayname%</span>
+          <span>%username%</span>
           <span>%email%</span>
+          <span>%useremail%</span>
+          <span>%baseurl%</span>
+          <span>%domainname%</span>
+          <span>%fromemail%</span>
+          <span>%supportemail%</span>
+          <span>%lastlogin%</span>
+          <span>%lastlogindate%</span>
+          <span>%daysinactive%</span>
+          <span>%inactive_days%</span>
           <span>%date%</span>
+          <span>%year%</span>
         </div>
         <div class="admin-template-address-grid">
           <label class="admin-template-editor-field">
@@ -1952,6 +1965,10 @@
             <input id="adminEmailTemplateFrom" type="email" placeholder="admin@example.com">
           </label>
         </div>
+        <label class="admin-template-editor-field admin-template-subject-field">
+          <span>Subject</span>
+          <input id="adminEmailTemplateSubject" type="text" maxlength="160" placeholder="Welcome to %appname%">
+        </label>
         <label class="admin-template-editor-field">
           <span>Template body</span>
           <textarea id="adminEmailTemplateBody" rows="16" placeholder="Welcome %displayname%,"></textarea>
@@ -1963,6 +1980,6 @@
       </section>
     </div>
 
-    <script src="/app.js?v=162"></script>
+    <script src="/app.js?v=163"></script>
   </body>
 </html>

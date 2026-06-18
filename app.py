@@ -101,8 +101,8 @@ SESSION_IDLE_MINUTES = int(os.environ.get("SESSION_IDLE_MINUTES", "30") or 30)
 EMAIL_VERIFICATION_MINUTES = int(os.environ.get("EMAIL_VERIFICATION_MINUTES", "30") or 30)
 PASSWORD_RESET_MINUTES = int(os.environ.get("PASSWORD_RESET_MINUTES", str(EMAIL_VERIFICATION_MINUTES)) or EMAIL_VERIFICATION_MINUTES)
 SUPPORTED_SCRYFALL_LANGUAGES = {"en"}
-APP_VERSION = "0.1.7 beta"
-USER_AGENT = "arcaneledger/0.1.7"
+APP_VERSION = "0.1.8 beta"
+USER_AGENT = "arcaneledger/0.1.8"
 PROCESS_STARTED_AT = datetime.now(timezone.utc).replace(microsecond=0)
 COLOR_ORDER = ("W", "U", "B", "R", "G")
 CARD_CONDITIONS = (
@@ -178,6 +178,13 @@ def today_iso():
 def parse_iso_date(value):
     try:
         return datetime.strptime(value, "%Y-%m-%d").date()
+    except (TypeError, ValueError):
+        return None
+
+
+def parse_iso_datetime(value):
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     except (TypeError, ValueError):
         return None
 
@@ -1252,6 +1259,7 @@ def init_db(conn):
             profile_slug TEXT UNIQUE,
             role TEXT NOT NULL DEFAULT 'normal',
             is_banned INTEGER NOT NULL DEFAULT 0,
+            last_login_at TEXT,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         );
@@ -1619,9 +1627,10 @@ def init_db(conn):
             container_id INTEGER NOT NULL,
             card_id TEXT NOT NULL,
             variant TEXT NOT NULL DEFAULT 'Normal',
+            card_condition TEXT NOT NULL DEFAULT 'Near Mint',
             quantity INTEGER NOT NULL DEFAULT 0,
             updated_at TEXT NOT NULL,
-            PRIMARY KEY (container_id, card_id, variant),
+            PRIMARY KEY (container_id, card_id, variant, card_condition),
             FOREIGN KEY (container_id) REFERENCES containers(id) ON DELETE CASCADE,
             FOREIGN KEY (card_id) REFERENCES cards(scryfall_id) ON DELETE CASCADE
         );
@@ -1632,7 +1641,7 @@ def init_db(conn):
         CREATE INDEX IF NOT EXISTS idx_card_purchases_card ON card_purchases(user_id, card_id, variant, purchase_date);
         CREATE INDEX IF NOT EXISTS idx_wishlist_items_user_card ON wishlist_items(user_id, card_id, variant);
         CREATE INDEX IF NOT EXISTS idx_deck_cards_card ON deck_cards(card_id, variant);
-        CREATE INDEX IF NOT EXISTS idx_container_cards_card ON container_cards(card_id, variant);
+        CREATE INDEX IF NOT EXISTS idx_container_cards_card ON container_cards(card_id, variant, card_condition);
         CREATE INDEX IF NOT EXISTS idx_card_sales_card ON card_sales(user_id, card_id, variant, card_condition);
         CREATE UNIQUE INDEX IF NOT EXISTS idx_notifications_source ON notifications(user_id, source_type, source_key);
         CREATE INDEX IF NOT EXISTS idx_notifications_user_read ON notifications(user_id, is_read, updated_at);
@@ -1864,6 +1873,46 @@ def migrate_containers_schema(conn):
         WHERE capacity IS NULL OR capacity < 0
         """
     )
+    card_columns = table_columns(conn, "container_cards")
+    card_pk = table_pk(conn, "container_cards")
+    if "card_condition" not in card_columns or card_pk != ["container_id", "card_id", "variant", "card_condition"]:
+        condition_select = "COALESCE(NULLIF(card_condition, ''), 'Near Mint')" if "card_condition" in card_columns else "'Near Mint'"
+        conn.execute("DROP TABLE IF EXISTS container_cards_condition_migration")
+        conn.execute(
+            """
+            CREATE TABLE container_cards_condition_migration (
+                container_id INTEGER NOT NULL,
+                card_id TEXT NOT NULL,
+                variant TEXT NOT NULL DEFAULT 'Normal',
+                card_condition TEXT NOT NULL DEFAULT 'Near Mint',
+                quantity INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (container_id, card_id, variant, card_condition),
+                FOREIGN KEY (container_id) REFERENCES containers(id) ON DELETE CASCADE,
+                FOREIGN KEY (card_id) REFERENCES cards(scryfall_id) ON DELETE CASCADE
+            )
+            """
+        )
+        conn.execute(
+            f"""
+            INSERT OR REPLACE INTO container_cards_condition_migration (
+                container_id, card_id, variant, card_condition, quantity, updated_at
+            )
+            SELECT container_id,
+                   card_id,
+                   COALESCE(NULLIF(variant, ''), 'Normal') AS variant,
+                   {condition_select} AS card_condition,
+                   COALESCE(SUM(quantity), 0) AS quantity,
+                   COALESCE(MAX(updated_at), ?) AS updated_at
+            FROM container_cards
+            GROUP BY container_id, card_id, COALESCE(NULLIF(variant, ''), 'Normal'), {condition_select}
+            """,
+            (now_iso(),),
+        )
+        conn.execute("DROP TABLE container_cards")
+        conn.execute("ALTER TABLE container_cards_condition_migration RENAME TO container_cards")
+    conn.execute("DROP INDEX IF EXISTS idx_container_cards_card")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_container_cards_card ON container_cards(card_id, variant, card_condition)")
 
 
 def migrate_card_sales_schema(conn):
@@ -2465,6 +2514,8 @@ def migrate_user_schema(conn):
         conn.execute("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'normal'")
     if "is_banned" not in user_columns:
         conn.execute("ALTER TABLE users ADD COLUMN is_banned INTEGER NOT NULL DEFAULT 0")
+    if "last_login_at" not in user_columns:
+        conn.execute("ALTER TABLE users ADD COLUMN last_login_at TEXT")
     for column in (
         "public_email", "contact_whatsapp", "contact_signal", "contact_telegram", "contact_discord",
         "contact_website", "contact_instagram", "contact_bluesky", "contact_threads", "about_me", "profile_image",
@@ -2575,6 +2626,7 @@ def user_payload(row):
         "profile_slug": row["profile_slug"] if "profile_slug" in row.keys() else profile_slug(row["name"] if "name" in row.keys() else row["email"]),
         "profile_url": f"/user/{urllib.parse.quote(row['profile_slug'])}" if "profile_slug" in row.keys() and row["profile_slug"] else "",
         "store_share_id": row["store_share_id"] if "store_share_id" in row.keys() else "",
+        "last_login_at": row["last_login_at"] if "last_login_at" in row.keys() else "",
         "created_at": row["created_at"],
     }
 
@@ -2591,6 +2643,7 @@ def create_session(conn, user_id):
         "INSERT INTO sessions (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
         (session_hash(token), user_id, created, expires),
     )
+    conn.execute("UPDATE users SET last_login_at = ?, updated_at = ? WHERE id = ?", (created, created, user_id))
     return token, expires
 
 
@@ -2633,7 +2686,9 @@ def current_user_from_token(conn, token):
             conn.execute("DELETE FROM sessions WHERE token_hash = ?", (token_hash,))
             conn.commit()
             return None
+        timestamp = now_iso()
         conn.execute("UPDATE sessions SET expires_at = ? WHERE token_hash = ?", (session_expires_at(), token_hash))
+        conn.execute("UPDATE users SET last_login_at = ?, updated_at = ? WHERE id = ?", (timestamp, timestamp, row["id"]))
         conn.commit()
     else:
         conn.execute("DELETE FROM sessions WHERE expires_at <= ?", (now_iso(),))
@@ -2686,10 +2741,31 @@ def render_email_template_text(value, variables):
 
 def admin_email_template_variables(user):
     display_name = user["name"] if "name" in user.keys() and user["name"] else user["email"]
+    base_url = verification_base_url()
+    domain_name = app_base_domain()
+    from_email = sender_email(MAILGUN_FROM_EMAIL) or sender_email(SMTP_FROM, fallback=False) or default_from_email()
+    today = datetime.now(timezone.utc).date()
+    last_login = user["last_login_at"] if "last_login_at" in user.keys() and user["last_login_at"] else ""
+    last_login_at = parse_iso_datetime(last_login)
+    last_login_date = last_login_at.date() if last_login_at else None
+    days_inactive = (today - last_login_date).days if last_login_date else ""
     return {
+        "appname": "Arcane Ledger",
+        "appversion": APP_VERSION,
+        "baseurl": base_url,
+        "domainname": domain_name,
+        "fromemail": from_email,
+        "supportemail": from_email,
         "displayname": display_name,
+        "username": display_name,
         "email": user["email"],
-        "date": datetime.now(timezone.utc).date().isoformat(),
+        "useremail": user["email"],
+        "date": today.isoformat(),
+        "lastlogin": last_login,
+        "lastlogindate": last_login_date.isoformat() if last_login_date else "",
+        "daysinactive": days_inactive,
+        "inactive_days": days_inactive,
+        "year": today.year,
     }
 
 
@@ -2700,12 +2776,15 @@ def send_admin_email_template_test(conn, admin_user, payload):
     from_email = render_email_template_text(payload.get("from_email") or "", variables).strip()
     if from_email and not sender_email(from_email, fallback=False):
         raise ValueError("Template From must be a valid email address.")
+    subject = render_email_template_text(payload.get("subject") or f"%appname% test: {name}", variables).strip()
+    if not subject:
+        raise ValueError("Template subject is required.")
     body = render_email_template_text(payload.get("body") or "", variables).strip()
     if not body:
         raise ValueError("Template body is required.")
     result = send_email(
         admin_user["email"],
-        f"Arcane Ledger test: {name}",
+        subject,
         body,
         tags=["arcaneledger", "template-test"],
         from_email=from_email or None,
@@ -5168,7 +5247,7 @@ def deck_cards(conn, user_id, deck_id):
                col.acquired_date,
                col.share_id,
                ({price_expr}) AS display_price,
-               COALESCE(cc.quantity, 0) * ({price_expr}) AS container_value
+               COALESCE(dc.quantity, 0) * ({price_expr}) AS deck_value
         FROM deck_cards dc
         JOIN cards c ON c.scryfall_id = dc.card_id
         LEFT JOIN collection col ON col.user_id = ? AND col.card_id = dc.card_id AND col.variant = dc.variant
@@ -6387,8 +6466,12 @@ def delete_deck(conn, user_id, deck_id):
     return {"ok": True, "deleted": deck_id}
 
 
-def allocated_quantity(conn, user_id, card_id, variant, exclude_container_id=None):
+def allocated_quantity(conn, user_id, card_id, variant, condition=None, exclude_container_id=None):
     params = [user_id, card_id, variant]
+    condition_sql = ""
+    if condition is not None:
+        condition_sql = " AND COALESCE(NULLIF(cc.card_condition, ''), ?) = ?"
+        params.extend([DEFAULT_CARD_CONDITION, card_condition(condition)])
     exclude_sql = ""
     if exclude_container_id is not None:
         exclude_sql = " AND cc.container_id != ?"
@@ -6398,7 +6481,7 @@ def allocated_quantity(conn, user_id, card_id, variant, exclude_container_id=Non
         SELECT COALESCE(SUM(quantity), 0) AS quantity
         FROM container_cards cc
         JOIN containers c ON c.id = cc.container_id
-        WHERE c.user_id = ? AND cc.card_id = ? AND cc.variant = ?{exclude_sql}
+        WHERE c.user_id = ? AND cc.card_id = ? AND cc.variant = ?{condition_sql}{exclude_sql}
         """,
         params,
     ).fetchone()
@@ -6605,10 +6688,10 @@ def container_cards(conn, user_id, container_id):
     price_expr = current_price_sql("c")
     rows = conn.execute(
         f"""
-        SELECT c.*, cc.variant, cc.quantity AS stored_quantity, cc.updated_at,
+        SELECT c.*, cc.variant, COALESCE(NULLIF(cc.card_condition, ''), ?) AS card_condition,
+               cc.quantity AS stored_quantity, cc.updated_at,
                COALESCE(col.quantity, 0) AS quantity,
                COALESCE(col.paid_price, 0.01) AS paid_price,
-               COALESCE(col.card_condition, 'Near Mint') AS card_condition,
                COALESCE(col.graded, 0) AS graded,
                col.acquired_date,
                col.share_id,
@@ -6618,9 +6701,9 @@ def container_cards(conn, user_id, container_id):
         JOIN cards c ON c.scryfall_id = cc.card_id
         LEFT JOIN collection col ON col.user_id = ? AND col.card_id = cc.card_id AND col.variant = cc.variant
         WHERE cc.container_id = ?
-        ORDER BY c.name COLLATE NOCASE, cc.variant
+        ORDER BY c.name COLLATE NOCASE, cc.variant, cc.card_condition
         """,
-        (user_id, container_id),
+        (DEFAULT_CARD_CONDITION, user_id, container_id),
     ).fetchall()
     return rows_to_dicts(rows)
 
@@ -6687,22 +6770,23 @@ def add_cards_to_container(conn, user_id, container_id, payload):
     for item in cards:
         card_id = item.get("card_id") or item.get("scryfall_id")
         variant = item.get("variant") or "Normal"
+        item_condition = card_condition(item.get("card_condition"))
         quantity = max(0, int(item.get("quantity") or 0))
         if not card_id or quantity <= 0:
             continue
-        owned = owned_quantity(conn, user_id, card_id, variant)
+        owned = condition_owned_quantity(conn, user_id, card_id, variant, item_condition)
         if owned <= 0:
             raise ValueError("Only owned cards can be stored in containers.")
         existing = conn.execute(
             """
             SELECT COALESCE(quantity, 0) AS quantity
             FROM container_cards
-            WHERE container_id = ? AND card_id = ? AND variant = ?
+            WHERE container_id = ? AND card_id = ? AND variant = ? AND card_condition = ?
             """,
-            (container_id, card_id, variant),
+            (container_id, card_id, variant, item_condition),
         ).fetchone()
         current_here = int(existing["quantity"] or 0) if existing else 0
-        allocated_elsewhere = allocated_quantity(conn, user_id, card_id, variant, exclude_container_id=container_id)
+        allocated_elsewhere = allocated_quantity(conn, user_id, card_id, variant, item_condition, exclude_container_id=container_id)
         max_here = owned - allocated_elsewhere
         if current_here + quantity > max_here:
             available = max(0, max_here - current_here)
@@ -6711,13 +6795,13 @@ def add_cards_to_container(conn, user_id, container_id, payload):
             raise ValueError(f"{container['name']} only has space for {max(0, remaining_capacity)} more card/copy.")
         conn.execute(
             """
-            INSERT INTO container_cards (container_id, card_id, variant, quantity, updated_at)
-            VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(container_id, card_id, variant) DO UPDATE SET
+            INSERT INTO container_cards (container_id, card_id, variant, card_condition, quantity, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(container_id, card_id, variant, card_condition) DO UPDATE SET
                 quantity = container_cards.quantity + excluded.quantity,
                 updated_at = excluded.updated_at
             """,
-            (container_id, card_id, variant, quantity, timestamp),
+            (container_id, card_id, variant, item_condition, quantity, timestamp),
         )
         added += quantity
         if remaining_capacity is not None:
@@ -6729,12 +6813,8 @@ def add_cards_to_container(conn, user_id, container_id, payload):
 
 def update_card_container_allocations(conn, user_id, card_id, payload):
     card_id = (card_id or payload.get("card_id") or payload.get("scryfall_id") or "").strip()
-    variant = payload.get("variant") or "Normal"
     if not card_id:
         raise ValueError("Card is required.")
-    owned = owned_quantity(conn, user_id, card_id, variant)
-    if owned <= 0:
-        raise ValueError("Only owned cards can be stored in containers.")
     containers = rows_to_dicts(conn.execute(
         "SELECT id FROM containers WHERE user_id = ?",
         (user_id,),
@@ -6746,18 +6826,40 @@ def update_card_container_allocations(conn, user_id, card_id, payload):
     if not isinstance(allocations, list):
         raise ValueError("Container allocations are required.")
     normalized = []
-    total = 0
+    totals_by_bucket = {}
+    totals_by_container = {}
+    touched_buckets = set()
     for allocation in allocations:
         if not isinstance(allocation, dict):
             continue
         container_id = int(allocation.get("container_id") or 0)
         quantity = max(0, int(allocation.get("quantity") or 0))
+        variant = allocation.get("variant") or payload.get("variant") or "Normal"
+        condition = card_condition(allocation.get("card_condition") or payload.get("card_condition"))
         if container_id not in valid_container_ids:
             raise ValueError("One of those containers was not found.")
-        normalized.append({"container_id": container_id, "quantity": quantity})
-        total += quantity
-    if total > owned:
-        raise ValueError(f"Only {owned} total copy/copies are owned for this variant.")
+        bucket = (variant, condition)
+        touched_buckets.add(bucket)
+        normalized.append({
+            "container_id": container_id,
+            "variant": variant,
+            "card_condition": condition,
+            "quantity": quantity,
+        })
+        totals_by_bucket[bucket] = totals_by_bucket.get(bucket, 0) + quantity
+        totals_by_container[container_id] = totals_by_container.get(container_id, 0) + quantity
+    if not touched_buckets:
+        raise ValueError("Container allocations are required.")
+    owned_by_bucket = {
+        bucket: condition_owned_quantity(conn, user_id, card_id, bucket[0], bucket[1])
+        for bucket in touched_buckets
+    }
+    if not any(quantity > 0 for quantity in owned_by_bucket.values()):
+        raise ValueError("Only owned cards can be stored in containers.")
+    for bucket, total in totals_by_bucket.items():
+        owned = owned_by_bucket.get(bucket, 0)
+        if total > owned:
+            raise ValueError(f"Only {owned} {bucket[0]} {bucket[1]} copy/copies are owned.")
 
     container_limits = {
         int(row["id"]): {
@@ -6770,7 +6872,7 @@ def update_card_container_allocations(conn, user_id, card_id, payload):
             SELECT ct.id, ct.name, COALESCE(ct.capacity, 0) AS capacity,
                    COALESCE(SUM(
                      CASE
-                       WHEN cc.card_id = ? AND cc.variant = ? THEN 0
+                       WHEN cc.card_id = ? THEN 0
                        ELSE cc.quantity
                      END
                    ), 0) AS stored_other
@@ -6779,15 +6881,15 @@ def update_card_container_allocations(conn, user_id, card_id, payload):
             WHERE ct.user_id = ?
             GROUP BY ct.id
             """,
-            (card_id, variant, user_id),
+            (card_id, user_id),
         ).fetchall()
     }
-    for item in normalized:
-        limit = container_limits.get(item["container_id"])
+    for container_id, quantity in totals_by_container.items():
+        limit = container_limits.get(container_id)
         if not limit or limit["capacity"] <= 0:
             continue
         available_space = max(0, limit["capacity"] - limit["stored_other"])
-        if item["quantity"] > available_space:
+        if quantity > available_space:
             raise ValueError(f"{limit['name']} only has space for {available_space} more card/copy.")
 
     previous_rows = conn.execute(
@@ -6795,9 +6897,9 @@ def update_card_container_allocations(conn, user_id, card_id, payload):
         SELECT cc.container_id
         FROM container_cards cc
         JOIN containers c ON c.id = cc.container_id
-        WHERE c.user_id = ? AND cc.card_id = ? AND cc.variant = ?
+        WHERE c.user_id = ? AND cc.card_id = ?
         """,
-        (user_id, card_id, variant),
+        (user_id, card_id),
     ).fetchall()
     touched = {int(row["container_id"]) for row in previous_rows}
     touched.update(item["container_id"] for item in normalized)
@@ -6806,20 +6908,19 @@ def update_card_container_allocations(conn, user_id, card_id, payload):
         """
         DELETE FROM container_cards
         WHERE card_id = ?
-          AND variant = ?
           AND container_id IN (SELECT id FROM containers WHERE user_id = ?)
         """,
-        (card_id, variant, user_id),
+        (card_id, user_id),
     )
     for item in normalized:
         if item["quantity"] <= 0:
             continue
         conn.execute(
             """
-            INSERT INTO container_cards (container_id, card_id, variant, quantity, updated_at)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO container_cards (container_id, card_id, variant, card_condition, quantity, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (item["container_id"], card_id, variant, item["quantity"], timestamp),
+            (item["container_id"], card_id, item["variant"], item["card_condition"], item["quantity"], timestamp),
         )
     if touched:
         placeholders = ", ".join("?" for _ in touched)
@@ -6828,10 +6929,12 @@ def update_card_container_allocations(conn, user_id, card_id, payload):
             (timestamp, user_id, *sorted(touched)),
         )
     conn.commit()
+    total = sum(totals_by_bucket.values())
+    owned_total = sum(owned_by_bucket.values())
     return {
         "ok": True,
         "stored": total,
-        "unassigned": max(0, owned - total),
+        "unassigned": max(0, owned_total - total),
         "containers": list_containers(conn, user_id),
     }
 
@@ -6842,12 +6945,19 @@ def remove_card_from_container(conn, user_id, container_id, payload):
         raise KeyError("Container not found")
     card_id = payload.get("card_id") or payload.get("scryfall_id")
     variant = payload.get("variant") or "Normal"
+    condition = card_condition(payload.get("card_condition")) if payload.get("card_condition") else None
     if not card_id:
         raise ValueError("Card is required.")
-    cursor = conn.execute(
-        "DELETE FROM container_cards WHERE container_id = ? AND card_id = ? AND variant = ?",
-        (container_id, card_id, variant),
-    )
+    if condition:
+        cursor = conn.execute(
+            "DELETE FROM container_cards WHERE container_id = ? AND card_id = ? AND variant = ? AND card_condition = ?",
+            (container_id, card_id, variant, condition),
+        )
+    else:
+        cursor = conn.execute(
+            "DELETE FROM container_cards WHERE container_id = ? AND card_id = ? AND variant = ?",
+            (container_id, card_id, variant),
+        )
     conn.execute("UPDATE containers SET updated_at = ? WHERE id = ?", (now_iso(), container_id))
     conn.commit()
     return {"ok": True, "removed": cursor.rowcount}
@@ -7036,6 +7146,7 @@ def list_cards(conn, query, user_id):
     container_rows = conn.execute(
         """
         SELECT cc.card_id, COALESCE(NULLIF(cc.variant, ''), 'Normal') AS variant,
+               COALESCE(NULLIF(cc.card_condition, ''), ?) AS card_condition,
                cc.quantity, c.id, c.name, COALESCE(c.storage_type, 'other') AS storage_type,
                c.location
         FROM container_cards cc
@@ -7043,7 +7154,7 @@ def list_cards(conn, query, user_id):
         WHERE c.user_id = ?
         ORDER BY c.name COLLATE NOCASE
         """,
-        (user_id,),
+        (DEFAULT_CARD_CONDITION, user_id),
     ).fetchall()
     for container in container_rows:
         key = (container["card_id"], container["variant"])
@@ -7053,6 +7164,7 @@ def list_cards(conn, query, user_id):
             "storage_type": container["storage_type"],
             "location": container["location"],
             "quantity": container["quantity"],
+            "card_condition": card_condition(container["card_condition"]),
         })
     for card in cards:
         key = (card.get("scryfall_id"), card.get("variant") or "Normal")
@@ -8804,19 +8916,29 @@ def card_deck_memberships(conn, user_id, card_id, variant):
     return rows_to_dicts(rows)
 
 
-def card_container_memberships(conn, user_id, card_id, variant):
+def card_container_memberships(conn, user_id, card_id, variant=None):
+    variant_filter = ""
+    params = [DEFAULT_CARD_CONDITION, user_id, card_id]
+    if variant:
+        variant_filter = " AND COALESCE(NULLIF(cc.variant, ''), 'Normal') = ?"
+        params.append(variant or "Normal")
     rows = conn.execute(
-        """
-        SELECT cc.quantity, c.id, c.name, COALESCE(c.storage_type, 'other') AS storage_type,
+        f"""
+        SELECT COALESCE(NULLIF(cc.variant, ''), 'Normal') AS variant,
+               COALESCE(NULLIF(cc.card_condition, ''), ?) AS card_condition,
+               cc.quantity, c.id, c.name, COALESCE(c.storage_type, 'other') AS storage_type,
                c.location
         FROM container_cards cc
         JOIN containers c ON c.id = cc.container_id
-        WHERE c.user_id = ? AND cc.card_id = ? AND COALESCE(NULLIF(cc.variant, ''), 'Normal') = ?
-        ORDER BY c.name COLLATE NOCASE
+        WHERE c.user_id = ? AND cc.card_id = ?{variant_filter}
+        ORDER BY c.name COLLATE NOCASE, cc.variant, cc.card_condition
         """,
-        (user_id, card_id, variant or "Normal"),
+        params,
     ).fetchall()
-    return rows_to_dicts(rows)
+    memberships = rows_to_dicts(rows)
+    for membership in memberships:
+        membership["card_condition"] = card_condition(membership.get("card_condition"))
+    return memberships
 
 
 def snapshot_price_for_variant(row, variant):
@@ -9099,7 +9221,7 @@ def card_detail(conn, user_id, card_id, variant="Normal"):
     card["condition_inventory"] = condition_inventory_for_card(conn, user_id, card_id)
     card["variant_summaries"] = variant_summaries_for_cards(conn, [card_id], user_id).get(card_id, [])
     card["deck_memberships"] = card_deck_memberships(conn, user_id, card_id, variant)
-    card["container_memberships"] = card_container_memberships(conn, user_id, card_id, variant)
+    card["container_memberships"] = card_container_memberships(conn, user_id, card_id)
     sale = conn.execute(
         """
         SELECT COALESCE(SUM(quantity), 0) AS sale_quantity,
@@ -10160,11 +10282,11 @@ def delete_card_movement(conn, user_id, card_id, payload):
         """
         SELECT COALESCE(SUM(quantity), 0) AS quantity
         FROM card_purchases
-        WHERE user_id = ? AND card_id = ? AND variant = ? AND id != ?
+        WHERE user_id = ? AND card_id = ? AND variant = ? AND card_condition = ? AND id != ?
         """,
-        (user_id, card_id, variant, movement_id),
+        (user_id, card_id, variant, condition, movement_id),
     ).fetchone()["quantity"] or 0)
-    if remaining_owned < allocated_quantity(conn, user_id, card_id, variant):
+    if remaining_owned < allocated_quantity(conn, user_id, card_id, variant, condition):
         raise ValueError("Move cards out of containers before deleting this purchase entry.")
     conn.execute("DELETE FROM card_purchases WHERE id = ? AND user_id = ?", (movement_id, user_id))
     rollup_collection_from_purchases(conn, user_id, card_id, variant)

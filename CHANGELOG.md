@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.1.8 beta
+
+### Added
+- Added subject editing to admin email templates.
+- Added reusable email template variables for app name, app version, base URL, domain name, sender/support email, user display name, account email, last login date, inactivity days, current date, and current year.
+- Added last-login tracking on user accounts so future 30/60/90 day inactivity email triggers can be driven from real login activity.
+- Added condition-aware container allocation so physical storage can now track exact card buckets by variant, condition, and container.
+
+### Changed
+- Updated container assignment from card pages to show every variant and condition combination across every container.
+- Updated container assignment validation to enforce strict on-hand quantities for each exact variant and condition.
+- Updated container detail removals to remove the exact stored condition row instead of only the card variant.
+- Refreshed app metadata and documentation for the 0.1.8 beta release.
+
+### Fixed
+- Fixed deck detail loading when deck card quantities were queried through the wrong SQL alias.
+- Fixed stored container assignments that previously blended all conditions for a variant together.
+- Fixed purchase-journal deletion safety checks so container allocations are validated against the matching variant and condition.
+
 ## 0.1.7 beta
 
 ### Added

@@ -198,6 +198,7 @@ const els = {
   adminEmailTemplateModalTitle: document.querySelector("#adminEmailTemplateModalTitle"),
   adminEmailTemplateTo: document.querySelector("#adminEmailTemplateTo"),
   adminEmailTemplateFrom: document.querySelector("#adminEmailTemplateFrom"),
+  adminEmailTemplateSubject: document.querySelector("#adminEmailTemplateSubject"),
   adminEmailTemplateBody: document.querySelector("#adminEmailTemplateBody"),
   closeAdminEmailTemplateButton: document.querySelector("#closeAdminEmailTemplateButton"),
   cancelAdminEmailTemplateButton: document.querySelector("#cancelAdminEmailTemplateButton"),
@@ -3535,6 +3536,9 @@ function renderAdminReports() {
 function adminEmailTriggerOptions(selectedValue = "user_created") {
   const triggers = [
     { value: "user_created", label: "User created" },
+    { value: "inactive_30_days", label: "Inactive 30 days" },
+    { value: "inactive_60_days", label: "Inactive 60 days" },
+    { value: "inactive_90_days", label: "Inactive 90 days" },
   ];
   return triggers.map((trigger) => (
     `<option value="${escapeHtml(trigger.value)}" ${selectedValue === trigger.value ? "selected" : ""}>${escapeHtml(trigger.label)}</option>`
@@ -3549,7 +3553,8 @@ function newAdminEmailTemplate() {
     trigger: "user_created",
     to_email: "%email%",
     from_email: defaultAdminFromEmail(),
-    body: "Welcome %displayname%,\n\nThanks for creating your Arcane Ledger account on %date%.",
+    subject: "Welcome to %appname%, %displayname%",
+    body: "Welcome %displayname%,\n\nThanks for creating your %appname% account on %date%.\n\nYou can access the site at %baseurl%.\n\n-%domainname%",
   };
 }
 
@@ -3621,6 +3626,9 @@ function openAdminEmailTemplateModal(templateId) {
   if (els.adminEmailTemplateFrom) {
     els.adminEmailTemplateFrom.value = template.from_email || defaultAdminFromEmail();
   }
+  if (els.adminEmailTemplateSubject) {
+    els.adminEmailTemplateSubject.value = template.subject || "Welcome to %appname%";
+  }
   if (els.adminEmailTemplateBody) {
     els.adminEmailTemplateBody.value = template.body || "";
   }
@@ -3639,6 +3647,7 @@ function saveAdminEmailTemplateBody() {
   if (!template) return;
   template.to_email = els.adminEmailTemplateTo?.value.trim() || "%email%";
   template.from_email = els.adminEmailTemplateFrom?.value.trim() || defaultAdminFromEmail();
+  template.subject = els.adminEmailTemplateSubject?.value.trim() || "Welcome to %appname%";
   template.body = els.adminEmailTemplateBody?.value || "";
   closeAdminEmailTemplateModal();
   renderAdminEmailTemplates();
@@ -5913,6 +5922,7 @@ async function removeCardFromActiveDeck(card) {
     body: JSON.stringify({
       card_id: card.scryfall_id,
       variant: card.variant || "Normal",
+      card_condition: card.card_condition || "Near Mint",
     }),
   });
   const deck = await api(`/api/decks/${encodeURIComponent(state.activeDeck.id)}`);
@@ -7039,9 +7049,39 @@ function closeAddContainerModal() {
   els.addContainerForm.reset();
 }
 
-function containerAllocationQuantity(card, containerId) {
-  return (containerMemberships(card) || [])
-    .filter((container) => Number(container.id) === Number(containerId))
+function normalizeConditionName(value) {
+  return value || "Near Mint";
+}
+
+function containerAllocationBuckets(card) {
+  return variantSummaries(card).flatMap((summary) => {
+    const variant = summary.variant || "Normal";
+    const conditions = Array.isArray(summary.conditions) ? summary.conditions : [];
+    if (!conditions.length && Number(summary.quantity || 0) > 0) {
+      return [{
+        variant,
+        card_condition: normalizeConditionName(conditionText(card)),
+        quantity: Number(summary.quantity || 0),
+      }];
+    }
+    return conditions
+      .map((condition) => ({
+        variant,
+        card_condition: normalizeConditionName(condition.card_condition || conditionText(card)),
+        quantity: Number(condition.quantity || 0),
+      }))
+      .filter((condition) => condition.quantity > 0);
+  });
+}
+
+function containerAllocationQuantity(card, containerId, variant = null, condition = null) {
+  let memberships = containerMemberships(card) || [];
+  if (containerId !== null && containerId !== undefined) {
+    memberships = memberships.filter((container) => Number(container.id) === Number(containerId));
+  }
+  return memberships
+    .filter((container) => !variant || (container.variant || "Normal") === variant)
+    .filter((container) => !condition || normalizeConditionName(container.card_condition) === normalizeConditionName(condition))
     .reduce((total, container) => total + Number(container.quantity || 0), 0);
 }
 
@@ -7080,7 +7120,8 @@ function renderContainerAllocationRows(containers = []) {
   const card = state.assignContainerCard;
   els.assignContainerCards.innerHTML = "";
   if (!card) return;
-  const owned = Number(card.quantity || totalVariantQuantity(card) || 0);
+  const buckets = containerAllocationBuckets(card);
+  const owned = buckets.reduce((total, bucket) => total + Number(bucket.quantity || 0), 0);
   const stored = (containerMemberships(card) || []).reduce((total, container) => total + Number(container.quantity || 0), 0);
   const unassigned = Math.max(0, owned - stored);
   const preview = document.createElement("section");
@@ -7089,43 +7130,61 @@ function renderContainerAllocationRows(containers = []) {
     <img src="${escapeHtml(card.image_small || card.image_normal || "")}" alt="">
     <div>
       <strong>${escapeHtml(cardTitle(card))}</strong>
-      <span>${escapeHtml(card.variant || "Normal")} - ${integer.format(owned)} owned, ${integer.format(stored)} stored, ${integer.format(unassigned)} unassigned</span>
+      <span>${integer.format(owned)} owned, ${integer.format(stored)} stored, ${integer.format(unassigned)} unassigned</span>
     </div>
   `;
   els.assignContainerCards.appendChild(preview);
+  if (!buckets.length) {
+    els.assignContainerCards.insertAdjacentHTML("beforeend", '<div class="empty-state">Add this card to your collection first.</div>');
+    return;
+  }
   if (!containers.length) {
     els.assignContainerCards.insertAdjacentHTML("beforeend", '<div class="empty-state">Create a container first.</div>');
     return;
   }
   const table = document.createElement("div");
   table.className = "container-allocation-table";
-  table.innerHTML = `
-    <div class="container-allocation-header">
-      <span>Container</span>
-      <span>Type / Location</span>
-      <span>Quantity</span>
-    </div>
-    ${containers.map((container) => {
-      const current = containerAllocationQuantity(card, container.id);
+  const rows = [];
+  for (const bucket of buckets) {
+    const bucketOwned = Number(bucket.quantity || 0);
+    const bucketStored = containerAllocationQuantity(card, null, bucket.variant, bucket.card_condition);
+    for (const container of containers) {
+      const current = containerAllocationQuantity(card, container.id, bucket.variant, bucket.card_condition);
       const capacity = Number(container.capacity || 0);
       const remaining = Number(container.remaining_capacity ?? 0);
-      const maxForContainer = capacity > 0 ? Math.min(owned, current + remaining) : owned;
+      const maxForContainer = capacity > 0 ? Math.min(bucketOwned, current + remaining) : bucketOwned;
       const isFull = capacity > 0 && remaining <= 0 && current <= 0;
       const location = container.location ? ` - ${escapeHtml(container.location)}` : "";
       const capacityText = capacity > 0
         ? `${isFull ? "No more space" : `${integer.format(Math.max(0, remaining))} open`} - ${integer.format(current)} stored here`
         : `${integer.format(current)} stored here`;
-      return `
-        <article class="container-allocation-row${isFull ? " is-full" : ""}" data-container-id="${escapeHtml(container.id)}">
-          <strong>${escapeHtml(container.name || "Container")}</strong>
-          <span>${escapeHtml(containerTypeLabel(container.storage_type))}${location}<small class="container-space-label">${escapeHtml(capacityText)}</small></span>
+      rows.push(`
+        <article class="container-allocation-row${isFull ? " is-full" : ""}"
+          data-container-id="${escapeHtml(container.id)}"
+          data-variant="${escapeHtml(bucket.variant)}"
+          data-condition="${escapeHtml(bucket.card_condition)}"
+          data-owned="${escapeHtml(String(bucketOwned))}">
+          <strong>${escapeHtml(bucket.variant)}</strong>
+          <span>${escapeHtml(bucket.card_condition)}<small class="container-space-label">${integer.format(bucketStored)} of ${integer.format(bucketOwned)} stored</small></span>
+          <span>${escapeHtml(container.name || "Container")}<small class="container-space-label">${escapeHtml(containerTypeLabel(container.storage_type))}${location}</small></span>
+          <span>${escapeHtml(capacityText)}</span>
           <label>
             <span class="sr-only">Quantity in ${escapeHtml(container.name || "container")}</span>
             <input type="number" min="0" max="${escapeHtml(String(maxForContainer))}" step="1" value="${escapeHtml(String(Math.min(current, maxForContainer)))}" ${isFull ? "disabled" : ""}>
           </label>
         </article>
-      `;
-    }).join("")}
+      `);
+    }
+  }
+  table.innerHTML = `
+    <div class="container-allocation-header">
+      <span>Variant</span>
+      <span>Condition</span>
+      <span>Container</span>
+      <span>Space</span>
+      <span>Quantity</span>
+    </div>
+    ${rows.join("")}
   `;
   els.assignContainerCards.appendChild(table);
 }
@@ -10341,9 +10400,14 @@ function wireEvents() {
     const statusTarget = activeStatusTarget();
     if (state.assignContainerCard) {
       const card = state.assignContainerCard;
-      const owned = Number(card.quantity || totalVariantQuantity(card) || 0);
+      const ownedByBucket = new Map();
+      for (const bucket of containerAllocationBuckets(card)) {
+        ownedByBucket.set(`${bucket.variant}||${bucket.card_condition}`, Number(bucket.quantity || 0));
+      }
       const allocations = Array.from(els.assignContainerCards.querySelectorAll(".container-allocation-row")).map((row) => ({
         container_id: Number(row.dataset.containerId || 0),
+        variant: row.dataset.variant || "Normal",
+        card_condition: row.dataset.condition || "Near Mint",
         quantity: Number(row.querySelector('input[type="number"]')?.value || 0),
         max: Number(row.querySelector('input[type="number"]')?.max || 0),
       })).filter((allocation) => allocation.container_id);
@@ -10356,16 +10420,23 @@ function wireEvents() {
         setStatus("One of those containers does not have enough space.", "error", statusTarget);
         return;
       }
-      const total = allocations.reduce((sum, allocation) => sum + Math.max(0, Number(allocation.quantity || 0)), 0);
-      if (total > owned) {
-        setStatus(`Only ${integer.format(owned)} total copy/copies are owned for this variant.`, "error", statusTarget);
-        return;
+      const totalsByBucket = new Map();
+      for (const allocation of allocations) {
+        const key = `${allocation.variant}||${allocation.card_condition}`;
+        totalsByBucket.set(key, (totalsByBucket.get(key) || 0) + Math.max(0, Number(allocation.quantity || 0)));
+      }
+      for (const [key, total] of totalsByBucket.entries()) {
+        const owned = ownedByBucket.get(key) || 0;
+        if (total > owned) {
+          const [variant, condition] = key.split("||");
+          setStatus(`Only ${integer.format(owned)} ${variant} / ${condition} copy/copies are owned.`, "error", statusTarget);
+          return;
+        }
       }
       try {
         const result = await api(`/api/cards/${encodeURIComponent(card.scryfall_id || card.card_id)}/containers`, {
           method: "POST",
           body: JSON.stringify({
-            variant: card.variant || "Normal",
             allocations,
           }),
         });
