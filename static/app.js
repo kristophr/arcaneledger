@@ -252,8 +252,6 @@ const els = {
   favoriteAddToContainerButton: document.querySelector("#favoriteAddToContainerButton"),
   addCardButton: document.querySelector("#addCardButton"),
   accountButton: document.querySelector("#accountButton"),
-  topThemeControl: document.querySelector("#topThemeControl"),
-  topThemeSelect: document.querySelector("#topThemeSelect"),
   myProfileButton: document.querySelector("#myProfileButton"),
   logoutButton: document.querySelector("#logoutButton"),
   importStatus: document.querySelector("#importStatus"),
@@ -573,11 +571,13 @@ function applySettings() {
   const settings = state.settings || defaultSettings();
   document.documentElement.lang = settings.language || "en";
   document.documentElement.dataset.theme = settings.theme || "light";
-  if (els.topThemeSelect) {
-    els.topThemeSelect.value = settings.theme || "light";
-  }
   if (els.settingsPageForm) {
     els.settingsPageForm.language.value = settings.language || "en";
+    els.settingsPageForm.theme.value = settings.theme || "light";
+  }
+  if (els.settingsForm) {
+    els.settingsForm.language.value = settings.language || "en";
+    els.settingsForm.theme.value = settings.theme || "light";
   }
 }
 
@@ -663,9 +663,6 @@ function updateAuthUi() {
   }
   if (els.addCardButton) {
     els.addCardButton.hidden = !loggedIn;
-  }
-  if (els.topThemeControl) {
-    els.topThemeControl.hidden = !loggedIn;
   }
   if (els.myProfileButton) {
     els.myProfileButton.hidden = !loggedIn;
@@ -5053,6 +5050,7 @@ function renderSelectedAddCard() {
 
 function openSettingsModal() {
   els.settingsForm.language.value = (state.settings && state.settings.language) || "en";
+  els.settingsForm.theme.value = (state.settings && state.settings.theme) || "light";
   els.settingsOverlay.hidden = false;
   document.body.classList.add("modal-open");
   els.settingsForm.language.focus();
@@ -5076,6 +5074,7 @@ function renderSettingsPage() {
   els.settingsPageForm.contact_discord.value = user.contact_discord || "";
   els.settingsPageForm.contact_website.value = user.contact_website || "";
   els.settingsPageForm.language.value = settings.language || "en";
+  els.settingsPageForm.theme.value = settings.theme || "light";
   if (els.settingsAccountEmail) {
     els.settingsAccountEmail.textContent = state.user ? state.user.email : "Not logged in";
   }
@@ -10115,19 +10114,6 @@ function wireEvents() {
       setStatus("Settings saved.", "success", els.settingsPageStatus);
     } catch (error) {
       setStatus(error.message, "error", els.settingsPageStatus);
-    }
-  });
-  els.topThemeSelect.addEventListener("change", async () => {
-    const previousTheme = (state.settings && state.settings.theme) || "light";
-    const nextTheme = els.topThemeSelect.value || "light";
-    saveSettings({ ...(state.settings || defaultSettings()), theme: nextTheme });
-    if (!state.user) return;
-    try {
-      await saveUserSettings(userSettingsPayload({ theme: nextTheme }));
-      setStatus("Theme saved.", "success", activeStatusTarget());
-    } catch (error) {
-      saveSettings({ ...(state.settings || defaultSettings()), theme: previousTheme });
-      setStatus(error.message, "error", activeStatusTarget());
     }
   });
   els.clearDatabaseButton.addEventListener("click", async () => {

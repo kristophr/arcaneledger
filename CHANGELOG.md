@@ -11,9 +11,11 @@
 - Added a unified Add New Card/Add to Collection/Add Purchase workflow with advanced Scryfall filters and variant/condition purchase rows.
 - Added deck JSON export/import tools, full deck export/import, Browse Decks, public deck copying, and card preview modals from deck lists.
 - Added container capacity tracking, full-container prevention, per-container allocation controls, fullness bars, stored card count, and container market value.
+- Added Final Fantasy, Spider Man, and The Last Airbender theme options.
 
 ### Changed
 - Rebranded the app and documentation to Arcane Ledger.
+- Moved theme selection back into Settings and grouped Settings fields into Account Preferences and Store Contact sections.
 - Moved guest users toward Home, Search, Browse Decks, and Store Front while keeping collection tools behind login.
 - Improved card detail pages with responsive phone/tablet layouts, market history, user notes, public comments, anonymous metadata, and consistent share/Scryfall/store actions.
 - Reworked deck behavior so decks can include any Scryfall card, then compare deck needs against the user’s collection instead of blocking deck building.

@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Arcane Ledger</title>
-    <link rel="stylesheet" href="/styles.css?v=140">
+    <link rel="stylesheet" href="/styles.css?v=141">
   </head>
   <body>
     <header class="topbar">
@@ -14,20 +14,6 @@
       </div>
       <div class="actions">
         <button id="addCardButton" class="icon-button" type="button" title="Add a card">+ Add New Card</button>
-        <label id="topThemeControl" class="top-theme-control" hidden>
-          <span>Theme</span>
-          <select id="topThemeSelect" aria-label="Theme">
-            <option value="light">Light</option>
-            <option value="dark">Dark</option>
-            <option value="retro">Retro</option>
-            <option value="neon">Neon</option>
-            <option value="red">Red</option>
-            <option value="blue">Blue</option>
-            <option value="black">Black</option>
-            <option value="green">Green</option>
-            <option value="pride">Pride</option>
-          </select>
-        </label>
         <button id="accountButton" class="icon-button" type="button" title="Log in">Log In</button>
       </div>
     </header>
@@ -600,44 +586,67 @@
               <span id="settingsAccountEmail"></span>
             </div>
             <form id="settingsPageForm" class="settings-form">
-              <label>
-                Display Name
-                <input name="name" type="text" maxlength="80" autocomplete="name" required>
-              </label>
-              <label>
-                Alternate Store Email
-                <input name="public_email" type="email" autocomplete="email" placeholder="Leave blank to show account email">
-              </label>
-              <label>
-                WhatsApp Username
-                <input name="contact_whatsapp" type="text" maxlength="80" autocomplete="off">
-              </label>
-              <label>
-                Signal Username
-                <input name="contact_signal" type="text" maxlength="80" autocomplete="off">
-              </label>
-              <label>
-                Telegram Username
-                <input name="contact_telegram" type="text" maxlength="80" autocomplete="off" placeholder="@username">
-              </label>
-              <label>
-                Discord Username
-                <input name="contact_discord" type="text" maxlength="80" autocomplete="off">
-              </label>
-              <label>
-                Website
-                <input name="contact_website" type="text" maxlength="160" autocomplete="url" placeholder="https://example.com">
-              </label>
-              <label>
-                Language
-                <select name="language">
-                  <option value="en">English (EN)</option>
-                </select>
-              </label>
-            <div class="modal-actions">
-              <button id="editProfileButton" class="secondary-button" type="button">Edit Profile</button>
-              <button class="primary-button" type="submit">Save Settings</button>
-            </div>
+              <fieldset class="settings-group">
+                <legend>Account Preferences</legend>
+                <label>
+                  Display Name
+                  <input name="name" type="text" maxlength="80" autocomplete="name" required>
+                </label>
+                <label>
+                  Language
+                  <select name="language">
+                    <option value="en">English (EN)</option>
+                  </select>
+                </label>
+                <label>
+                  Theme
+                  <select name="theme">
+                    <option value="light">Light</option>
+                    <option value="dark">Dark</option>
+                    <option value="retro">Retro</option>
+                    <option value="neon">Neon</option>
+                    <option value="red">Red</option>
+                    <option value="blue">Blue</option>
+                    <option value="black">Black</option>
+                    <option value="green">Green</option>
+                    <option value="pride">Pride</option>
+                    <option value="final-fantasy">Final Fantasy</option>
+                    <option value="spider-man">Spider Man</option>
+                    <option value="airbender">The Last Airbender</option>
+                  </select>
+                </label>
+              </fieldset>
+              <fieldset class="settings-group">
+                <legend>Store Contact</legend>
+                <label>
+                  Alternate Store Email
+                  <input name="public_email" type="email" autocomplete="email" placeholder="Leave blank to show account email">
+                </label>
+                <label>
+                  WhatsApp Username
+                  <input name="contact_whatsapp" type="text" maxlength="80" autocomplete="off">
+                </label>
+                <label>
+                  Signal Username
+                  <input name="contact_signal" type="text" maxlength="80" autocomplete="off">
+                </label>
+                <label>
+                  Telegram Username
+                  <input name="contact_telegram" type="text" maxlength="80" autocomplete="off" placeholder="@username">
+                </label>
+                <label>
+                  Discord Username
+                  <input name="contact_discord" type="text" maxlength="80" autocomplete="off">
+                </label>
+                <label>
+                  Website
+                  <input name="contact_website" type="text" maxlength="160" autocomplete="url" placeholder="https://example.com">
+                </label>
+              </fieldset>
+              <div class="modal-actions">
+                <button id="editProfileButton" class="secondary-button" type="button">Edit Profile</button>
+                <button class="primary-button" type="submit">Save Settings</button>
+              </div>
             </form>
             <div class="settings-app-info">
               <div>
@@ -1023,6 +1032,23 @@
             Language
             <select name="language">
               <option value="en">English (EN)</option>
+            </select>
+          </label>
+          <label>
+            Theme
+            <select name="theme">
+              <option value="light">Light</option>
+              <option value="dark">Dark</option>
+              <option value="retro">Retro</option>
+              <option value="neon">Neon</option>
+              <option value="red">Red</option>
+              <option value="blue">Blue</option>
+              <option value="black">Black</option>
+              <option value="green">Green</option>
+              <option value="pride">Pride</option>
+              <option value="final-fantasy">Final Fantasy</option>
+              <option value="spider-man">Spider Man</option>
+              <option value="airbender">The Last Airbender</option>
             </select>
           </label>
           <div class="modal-actions">
@@ -1937,6 +1963,6 @@
       </section>
     </div>
 
-    <script src="/app.js?v=161"></script>
+    <script src="/app.js?v=162"></script>
   </body>
 </html>

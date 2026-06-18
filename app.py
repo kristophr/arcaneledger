@@ -116,7 +116,10 @@ DEFAULT_CARD_CONDITION = "Near Mint"
 CONDITION_ORDER = {condition: index for index, condition in enumerate(CARD_CONDITIONS)}
 CONTAINER_TYPES = ("binder", "box", "other")
 DEFAULT_CONTAINER_TYPE = "other"
-THEMES = {"light", "dark", "retro", "neon", "red", "blue", "black", "green", "pride"}
+THEMES = {
+    "light", "dark", "retro", "neon", "red", "blue", "black", "green", "pride",
+    "final-fantasy", "spider-man", "airbender",
+}
 USER_ROLES = {"admin", "paid", "normal"}
 ADMIN_EMAILS = {
     email.strip().lower()
