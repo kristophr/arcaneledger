@@ -2554,6 +2554,10 @@ body:not(.is-authenticated) .nav-bottom {
   grid-column: 1 / -1;
 }
 
+.admin-logs-panel {
+  grid-column: 1 / -1;
+}
+
 .admin-server-details {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
