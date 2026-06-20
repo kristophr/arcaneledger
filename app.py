@@ -5274,6 +5274,36 @@ def dashboard(conn, user_id):
         """,
         (user_id,),
     ).fetchall())
+    recent = rows_to_dicts(conn.execute(
+        f"""
+        SELECT c.*,
+               SUM(col.quantity) AS quantity,
+               COALESCE(
+                   MAX(CASE
+                       WHEN COALESCE(NULLIF(col.variant, ''), 'Normal') != 'Normal'
+                       THEN COALESCE(NULLIF(col.variant, ''), 'Normal')
+                   END),
+                   'Normal'
+               ) AS variant,
+               MAX(COALESCE(p.last_purchase_date, NULLIF(col.acquired_date, ''), col.updated_at)) AS added_at,
+               SUM(col.quantity * ({price_expr})) AS owned_value
+        FROM collection col
+        JOIN cards c ON c.scryfall_id = col.card_id
+        LEFT JOIN (
+            SELECT user_id,
+                   card_id,
+                   MAX(COALESCE(NULLIF(purchase_date, ''), created_at)) AS last_purchase_date
+            FROM card_purchases
+            WHERE user_id = ? AND quantity > 0
+            GROUP BY user_id, card_id
+        ) p ON p.user_id = col.user_id AND p.card_id = col.card_id
+        WHERE col.user_id = ? AND col.quantity > 0
+        GROUP BY col.card_id
+        ORDER BY datetime(added_at) DESC, added_at DESC, c.name
+        LIMIT 10
+        """,
+        (user_id, user_id),
+    ).fetchall())
     history = collection_value_history(conn, user_id)
     set_breakdown = rows_to_dicts(conn.execute(
         f"""
@@ -5300,6 +5330,7 @@ def dashboard(conn, user_id):
     result["gain_loss"] = result["current_total"] - result["paid_total"]
     result["gain_loss_percent"] = (result["gain_loss"] / result["paid_total"] * 100) if result["paid_total"] else 0
     result["top_cards"] = top
+    result["recent_cards"] = recent
     result["history"] = history
     result["set_breakdown"] = set_breakdown
     result["set_completion"] = set_completion(conn, user_id)

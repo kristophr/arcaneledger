@@ -172,6 +172,8 @@ const els = {
   historyCount: document.querySelector("#historyCount"),
   historyChart: document.querySelector("#historyChart"),
   refreshPriceSnapshotsButton: document.querySelector("#refreshPriceSnapshotsButton"),
+  recentCount: document.querySelector("#recentCount"),
+  recentCards: document.querySelector("#recentCards"),
   topCount: document.querySelector("#topCount"),
   topCards: document.querySelector("#topCards"),
   setCompletionCount: document.querySelector("#setCompletionCount"),
@@ -1677,10 +1679,34 @@ function renderDashboard(data) {
   els.containerCount.textContent = integer.format(data.container_count || 0);
   els.uncontainedCards.textContent = integer.format(data.uncontained_cards || 0);
   els.historyCount.textContent = `${(data.history || []).length} months`;
+  els.recentCount.textContent = `${integer.format((data.recent_cards || []).length)} cards`;
   els.topCount.textContent = `${integer.format(data.owned_unique || 0)} owned prints`;
+  renderRecentCards(data.recent_cards || []);
   renderTopCards(data.top_cards || []);
   renderSetCompletion(data.set_completion || []);
   renderChart(data.history || []);
+}
+
+function renderRecentCards(cards) {
+  els.recentCards.innerHTML = "";
+  if (!cards.length) {
+    els.recentCards.innerHTML = '<div class="empty-state">No cards added yet.</div>';
+    return;
+  }
+  for (const card of cards) {
+    const item = document.createElement("a");
+    item.className = "top-item";
+    item.href = cardDetailUrl(card);
+    item.innerHTML = `
+      <img src="${card.image_small || ""}" alt="">
+      <div>
+        <strong title="${escapeHtml(cardTitle(card))}">${escapeHtml(cardTitle(card))}</strong>
+        <span>${escapeHtml(card.set_name)} #${escapeHtml(card.collector_number)} - Added ${formatCompactDate(card.added_at || card.acquired_date)}</span>
+      </div>
+      <span class="value">Qty ${integer.format(card.quantity || 0)}</span>
+    `;
+    els.recentCards.appendChild(item);
+  }
 }
 
 function renderTopCards(cards) {
@@ -4406,13 +4432,17 @@ function formatDate(value) {
   return `${year.slice(-2)} ${monthNames[monthIndex]}`;
 }
 
-function formatAnnouncementDate(value) {
+function formatCompactDate(value) {
   if (!value) return "Not set";
   const [year, month, day] = String(value).slice(0, 10).split("-");
   const monthNumber = Number(month);
   const dayNumber = Number(day);
   if (!year || !monthNumber || !dayNumber) return value;
   return `${monthNumber}/${dayNumber}/${year.slice(-2)}`;
+}
+
+function formatAnnouncementDate(value) {
+  return formatCompactDate(value);
 }
 
 function formatAnnouncementRange(announcement) {

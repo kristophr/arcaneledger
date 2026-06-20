@@ -1624,7 +1624,7 @@ body:not(.is-authenticated) .nav-bottom {
 
 .dashboard-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.45fr) minmax(320px, 0.75fr);
+  grid-template-columns: minmax(0, 1.35fr) minmax(260px, 0.72fr) minmax(260px, 0.72fr);
   gap: 16px;
 }
 
