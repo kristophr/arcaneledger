@@ -30,6 +30,8 @@ const state = {
   ownedSets: [],
   catalogSearchAllResults: [],
   catalogSearchResults: [],
+  catalogHeroCards: [],
+  catalogHeroLoaded: false,
   dashboard: null,
   searchTimer: null,
   favoriteSearchTimer: null,
@@ -252,6 +254,7 @@ const els = {
   storeFrontSearchInput: document.querySelector("#storeFrontSearchInput"),
   wishlistSearchInput: document.querySelector("#wishlistSearchInput"),
   catalogSearchForm: document.querySelector("#catalogSearchForm"),
+  catalogHeroCards: document.querySelector("#catalogHeroCards"),
   catalogSearchInput: document.querySelector("#catalogSearchInput"),
   catalogSearchButton: document.querySelector("#catalogSearchButton"),
   catalogOracleInput: document.querySelector("#catalogOracleInput"),
@@ -361,7 +364,16 @@ const els = {
   changelogText: document.querySelector("#changelogText"),
   closeChangelogButton: document.querySelector("#closeChangelogButton"),
   dismissChangelogButton: document.querySelector("#dismissChangelogButton"),
+  membershipBenefitsButton: document.querySelector("#membershipBenefitsButton"),
+  membershipBenefitsOverlay: document.querySelector("#membershipBenefitsOverlay"),
+  closeMembershipBenefitsButton: document.querySelector("#closeMembershipBenefitsButton"),
+  dismissMembershipBenefitsButton: document.querySelector("#dismissMembershipBenefitsButton"),
   settingsPageStatus: document.querySelector("#settingsPageStatus"),
+  billingPlanStatus: document.querySelector("#billingPlanStatus"),
+  billingHelpText: document.querySelector("#billingHelpText"),
+  billingMonthlyButton: document.querySelector("#billingMonthlyButton"),
+  billingYearlyButton: document.querySelector("#billingYearlyButton"),
+  billingPortalButton: document.querySelector("#billingPortalButton"),
   notificationDetailOverlay: document.querySelector("#notificationDetailOverlay"),
   notificationSubjectInput: document.querySelector("#notificationSubjectInput"),
   notificationBodyInput: document.querySelector("#notificationBodyInput"),
@@ -694,7 +706,11 @@ function updateAuthUi() {
     command.hidden = (!loggedIn && protectedPage(target)) || (target === "admin" && !isAdminUser());
   }
   if (els.accountButton) {
-    els.accountButton.textContent = loggedIn ? (state.user.name || state.user.email) : state.appConfig?.server_claimed === false ? "Claim Server" : "Login / Create Account";
+    if (loggedIn) {
+      els.accountButton.innerHTML = displayNameHtml(state.user.name || state.user.email, state.user);
+    } else {
+      els.accountButton.textContent = state.appConfig?.server_claimed === false ? "Claim Server" : "Login / Create Account";
+    }
     els.accountButton.title = loggedIn
       ? `Account settings - ${state.user.email}`
       : state.appConfig?.server_claimed === false
@@ -1924,6 +1940,7 @@ function activatePage(pageName, options = {}) {
   }
   if (page === "search") {
     clearSelectedCards();
+    loadCatalogHeroCards().catch(() => renderCatalogHeroCards([]));
     renderCatalogSearchResults();
   }
   if (page === "decks") {
@@ -2745,7 +2762,7 @@ function renderFavoriteDecks() {
         <h3><span class="deck-icon" aria-hidden="true"></span><span>${escapeHtml(deck.name || "Deck")}</span></h3>
       </button>
       <strong>${integer.format(deck.card_count || 0)}</strong>
-      <span>${escapeHtml(deck.owner_name || "Arcane Ledger user")}</span>
+      <span>${displayNameHtml(deck.owner_name || "Arcane Ledger user", { is_pro: deck.owner_is_pro, role: deck.owner_role })}</span>
       <div class="wishlist-card-actions">
         <button class="share-button favorite-deck-unfavorite" type="button" aria-label="Remove favorite deck" title="Remove favorite">☆</button>
         <a class="share-button" href="${escapeHtml(deck.deck_url || `/decks/${encodeURIComponent(deck.share_id || "")}`)}" target="_blank" rel="noreferrer" aria-label="Open deck" title="Open deck">&#8599;</a>
@@ -2792,7 +2809,7 @@ function renderFavoriteStoreListings() {
       <img src="${escapeHtml(listing.image_small || listing.image_normal || "")}" alt="">
       <div>
         <strong>${escapeHtml(cardTitle(listing))}</strong>
-        <span>${escapeHtml(listing.seller_name || "Seller")} - ${escapeHtml(listing.variant || "Normal")} - ${escapeHtml(listing.card_condition || "Near Mint")}</span>
+        <span>${displayNameHtml(listing.seller_name || "Seller", { is_pro: listing.seller_is_pro, role: listing.seller_role })} - ${escapeHtml(listing.variant || "Normal")} - ${escapeHtml(listing.card_condition || "Near Mint")}</span>
         <div class="deck-card-tags">
           <span>${integer.format(listing.sale_quantity || listing.quantity || 0)} for sale</span>
           <span>${dollars.format(listing.asking_price || 0)} ask</span>
@@ -3081,6 +3098,40 @@ async function deleteActiveWishlist() {
   els.wishlistStatus.textContent = `Deleted ${wishlistName}.`;
   await loadWishlists();
   await refresh();
+}
+
+function renderCatalogHeroCards(cards = []) {
+  if (!els.catalogHeroCards) return;
+  els.catalogHeroCards.innerHTML = "";
+  if (!cards.length) {
+    els.catalogHeroCards.innerHTML = '<div class="catalog-hero-card-placeholder">Search. Collect. Track.</div>';
+    return;
+  }
+  const tilts = [-8, 5, -3, 7, -5];
+  for (const [index, card] of cards.slice(0, 5).entries()) {
+    const link = document.createElement("a");
+    link.className = "catalog-hero-card-link";
+    link.href = cardDetailUrl(card);
+    link.title = cardTitle(card);
+    link.style.setProperty("--tilt", `${tilts[index % tilts.length]}deg`);
+    link.innerHTML = `<img src="${escapeHtml(card.image_normal || card.image_small || "")}" alt="${escapeHtml(cardTitle(card))}">`;
+    els.catalogHeroCards.appendChild(link);
+  }
+}
+
+async function loadCatalogHeroCards() {
+  if (state.catalogHeroLoaded) {
+    renderCatalogHeroCards(state.catalogHeroCards);
+    return;
+  }
+  state.catalogHeroLoaded = true;
+  try {
+    const result = await api("/api/search/hero-cards", { promptLogin: false });
+    state.catalogHeroCards = result.cards || [];
+  } catch {
+    state.catalogHeroCards = [];
+  }
+  renderCatalogHeroCards(state.catalogHeroCards);
 }
 
 function renderCatalogSearchResults() {
@@ -3400,7 +3451,7 @@ function renderStoreFrontCardDetail(card, sellers) {
   const sellerRows = sellers.length ? sellers.map((seller) => `
     <article class="store-front-seller-row ${seller.is_current_user ? "is-current-user" : ""}" data-store-url="${escapeAttribute(seller.store_url || "")}" data-own-store="${seller.is_current_user ? "1" : "0"}" data-card-title="${escapeAttribute(cardTitle(card))}">
       <span>
-        <strong>${escapeHtml(seller.seller_name || "Seller")}</strong>
+        <strong>${displayNameHtml(seller.seller_name || "Seller", { is_pro: seller.seller_is_pro, role: seller.seller_role })}</strong>
         <small>${escapeHtml(seller.variant || "Normal")} - ${escapeHtml(seller.card_condition || "Near Mint")}</small>
       </span>
       <b>${integer.format(seller.sale_quantity || 0)}</b>
@@ -3600,7 +3651,7 @@ function renderAdminUsers() {
     const row = document.createElement("article");
     row.className = `admin-user-row ${user.is_banned ? "is-banned" : ""}`;
     row.dataset.userId = user.id;
-    const roleOptions = ["admin", "paid", "normal"].map((role) => (
+    const roleOptions = ["admin", "pro", "normal"].map((role) => (
       `<option value="${role}" ${user.role === role ? "selected" : ""}>${roleLabel(role)}</option>`
     )).join("");
     const protectedAdmin = Boolean(user.protected_admin);
@@ -4042,7 +4093,7 @@ async function resolveAdminReport(button, action) {
 
 function roleLabel(role) {
   if (role === "admin") return "Admin";
-  if (role === "paid") return "Paid";
+  if (role === "pro" || role === "paid") return "Pro";
   return "Normal";
 }
 
@@ -5455,6 +5506,50 @@ function renderSettingsPage() {
   if (els.settingsAppVersion) {
     els.settingsAppVersion.textContent = state.appConfig?.app_version || "Unknown";
   }
+  renderBillingSettings();
+}
+
+function renderBillingSettings() {
+  if (!els.billingPlanStatus) return;
+  const user = state.user || {};
+  const configured = Boolean(state.appConfig?.stripe_configured);
+  const role = user.role || "normal";
+  const isPro = role === "pro" || role === "admin" || Boolean(user.is_pro);
+  const status = user.subscription_status || "";
+  els.billingPlanStatus.textContent = role === "admin" ? "Admin" : isPro ? "Pro" : "Normal";
+  if (!configured) {
+    els.billingHelpText.textContent = "Billing is not configured on this server.";
+  } else if (role === "admin") {
+    els.billingHelpText.textContent = "Admin accounts include Pro features.";
+  } else if (isPro) {
+    const renewal = user.subscription_current_period_end ? ` Current period ends ${formatCompactDate(user.subscription_current_period_end)}.` : "";
+    const canceling = user.subscription_cancel_at_period_end ? " Cancellation is scheduled at period end." : "";
+    els.billingHelpText.textContent = `Your Pro subscription is ${status || "active"}.${renewal}${canceling}`;
+  } else {
+    els.billingHelpText.textContent = "Upgrade to Pro for unlimited decks, containers, and wishlists.";
+  }
+  const canCheckout = configured && role !== "admin";
+  els.billingMonthlyButton.disabled = !canCheckout;
+  els.billingYearlyButton.disabled = !canCheckout;
+  els.billingPortalButton.disabled = !configured || !user.has_stripe_customer;
+}
+
+async function startBillingCheckout(plan) {
+  const result = await api("/api/billing/checkout", {
+    method: "POST",
+    body: JSON.stringify({ plan }),
+  });
+  if (!result.url) throw new Error("Stripe did not return a checkout URL.");
+  window.location.href = result.url;
+}
+
+async function openBillingPortal() {
+  const result = await api("/api/billing/portal", {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+  if (!result.url) throw new Error("Stripe did not return a billing portal URL.");
+  window.location.href = result.url;
 }
 
 async function openChangelogModal() {
@@ -5473,6 +5568,18 @@ async function openChangelogModal() {
 function closeChangelogModal() {
   if (!els.changelogOverlay) return;
   els.changelogOverlay.hidden = true;
+  document.body.classList.remove("modal-open");
+}
+
+function openMembershipBenefitsModal() {
+  if (!els.membershipBenefitsOverlay) return;
+  els.membershipBenefitsOverlay.hidden = false;
+  document.body.classList.add("modal-open");
+}
+
+function closeMembershipBenefitsModal() {
+  if (!els.membershipBenefitsOverlay) return;
+  els.membershipBenefitsOverlay.hidden = true;
   document.body.classList.remove("modal-open");
 }
 
@@ -5673,7 +5780,7 @@ function renderBrowseDecks(decks) {
       ${deckPreviewImagesHtml(previewImages)}
       <div class="browse-deck-head">
         <div>
-          <p class="eyebrow">Public deck${deck.owner_name ? ` - ${escapeHtml(deck.owner_name)}` : ""}</p>
+          <p class="eyebrow">Public deck${deck.owner_name ? ` - ${displayNameHtml(deck.owner_name, { is_pro: deck.owner_is_pro, role: deck.owner_role })}` : ""}</p>
           <h3>${escapeHtml(deck.name || "Deck")}</h3>
         </div>
         <div class="browse-deck-actions" aria-label="Deck actions">
@@ -7822,6 +7929,27 @@ function escapeAttribute(value) {
   return escapeHtml(value).replaceAll("'", "&#39;");
 }
 
+function identityIsPro(identity) {
+  return Boolean(identity?.is_pro || identity?.owner_is_pro || identity?.seller_is_pro || identity?.role === "pro" || identity?.role === "admin" || identity?.owner_role === "pro" || identity?.owner_role === "admin");
+}
+
+function proBadgeHtml(identity) {
+  return identityIsPro(identity) ? '<span class="pro-badge" title="Pro member" aria-label="Pro member">PRO</span>' : "";
+}
+
+function displayNameHtml(name, identity = {}) {
+  const safeName = escapeHtml(name || "Arcane Ledger user");
+  const nameClass = identityIsPro(identity) ? "display-name pro-display-name" : "display-name";
+  return `<span class="display-name-wrap"><span class="${nameClass}">${safeName}</span>${proBadgeHtml(identity)}</span>`;
+}
+
+function profileActorLink(actor) {
+  const name = actor?.name || "Collector";
+  const href = actor?.profile_url || (actor?.profile_slug ? `/user/${encodeURIComponent(actor.profile_slug)}` : "");
+  const content = displayNameHtml(name, actor);
+  return href ? `<a href="${escapeHtml(href)}" class="profile-actor-link">${content}</a>` : `<span class="profile-actor-link">${content}</span>`;
+}
+
 function inlineMarkdownToHtml(value) {
   let text = escapeHtml(value);
   text = text.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>');
@@ -7947,6 +8075,7 @@ function renderMovementHistory(movements) {
             <b>${integer.format(movement.quantity || 0)} ${verb}</b>
             <span>${isAdjust ? escapeHtml(movement.note || "Manual inventory adjustment") : `${dollars.format(movement.total_amount ?? movement.total_price ?? 0)} ${amountLabel} - ${dollars.format(movement.price_each || 0)} each`}</span>
             ${!isSale && !isAdjust && purchaseSource ? `<small>${escapeHtml(purchaseSource)}</small>` : ""}
+            ${!isSale && !isAdjust && movement.notes ? `<small>${escapeHtml(movement.notes)}</small>` : ""}
           </div>
           ${movement.movement_id ? `
             <button class="delete-movement-button" type="button" aria-label="${deleteLabel}" title="${deleteLabel}" data-movement-type="${escapeHtml(movement.movement_type)}" data-movement-id="${escapeHtml(movement.movement_id)}">
@@ -8028,7 +8157,7 @@ function renderCardComments(card) {
       ${comments.length ? comments.map((comment) => `
         <article class="card-comment-row">
           <div class="card-comment-meta">
-            <a href="${escapeHtml(comment.author?.profile_url || "#")}" class="card-comment-author">${escapeHtml(comment.author?.name || "Arcane Ledger user")}</a>
+            <a href="${escapeHtml(comment.author?.profile_url || "#")}" class="card-comment-author">${displayNameHtml(comment.author?.name || "Arcane Ledger user", comment.author)}</a>
             <span>${escapeHtml(formatDate(comment.created_at))}</span>
           </div>
           <p>${escapeHtml(comment.body || "")}</p>
@@ -8433,7 +8562,7 @@ async function openCardDeckReferencesModal(card) {
       <a class="card-meta-drilldown-row" href="${escapeHtml(deck.deck_url || `/decks/${encodeURIComponent(deck.share_id || "")}`)}" target="_blank" rel="noreferrer">
         <span>
           <strong>${escapeHtml(deck.name || "Deck")}</strong>
-          <span>${escapeHtml(deck.owner_name || "Arcane Ledger user")} - ${integer.format(deck.deck_quantity || 0)} in deck</span>
+          <span>${displayNameHtml(deck.owner_name || "Arcane Ledger user", { is_pro: deck.owner_is_pro, role: deck.owner_role })} - ${integer.format(deck.deck_quantity || 0)} in deck</span>
         </span>
         <b>&#8599;</b>
       </a>
@@ -8462,7 +8591,7 @@ async function openCardSaleSellersModal(card) {
       return `
         <a class="card-meta-drilldown-row" href="${escapeHtml(seller.store_url || `/stores/${encodeURIComponent(seller.store_share_id || "")}`)}" target="_blank" rel="noreferrer">
           <span>
-            <strong>${escapeHtml(seller.seller_name || "Seller")}</strong>
+            <strong>${displayNameHtml(seller.seller_name || "Seller", { is_pro: seller.seller_is_pro, role: seller.seller_role })}</strong>
             <span>${integer.format(seller.sale_quantity || 0)} for sale - ${priceLabel}</span>
           </span>
           <b>&#8599;</b>
@@ -9181,7 +9310,7 @@ function renderSharedDeck(deck) {
         <div>
           <p class="eyebrow">Shared deck</p>
           <h2>${escapeHtml(deck.name || "Deck")}</h2>
-          <span>${integer.format(cardCount)} cards${deck.owner_name ? ` - ${escapeHtml(deck.owner_name)}` : ""}</span>
+          <span>${integer.format(cardCount)} cards${deck.owner_name ? ` - ${displayNameHtml(deck.owner_name, { is_pro: deck.owner_is_pro, role: deck.owner_role })}` : ""}</span>
         </div>
         ${actionHtml}
       </div>
@@ -9282,7 +9411,7 @@ function renderSharedStore(store) {
       <div class="shared-deck-head">
         <div>
           <p class="eyebrow">Arcane Ledger store</p>
-          <h2>${escapeHtml(store.seller_name || "Seller")}</h2>
+          <h2>${displayNameHtml(store.seller_name || "Seller", { is_pro: store.seller_is_pro, role: store.seller_role })}</h2>
           <span>${integer.format(store.card_count || cards.length)} listing${Number(store.card_count || cards.length) === 1 ? "" : "s"} - ${integer.format(store.sale_quantity || 0)} card${Number(store.sale_quantity || 0) === 1 ? "" : "s"} for sale</span>
           ${contactHtml}
         </div>
@@ -9300,12 +9429,6 @@ function profileAvatarHtml(actor, className = "profile-mini-avatar") {
     return `<span class="${className}"><img src="${escapeHtml(actor.profile_image)}" alt="${escapeHtml(name)} profile picture"></span>`;
   }
   return `<span class="${className}">${escapeHtml(name.slice(0, 1).toUpperCase())}</span>`;
-}
-
-function profileActorLink(actor) {
-  const name = escapeHtml(actor?.name || "Collector");
-  const href = actor?.profile_url || (actor?.profile_slug ? `/user/${encodeURIComponent(actor.profile_slug)}` : "");
-  return href ? `<a href="${escapeHtml(href)}">${name}</a>` : `<span>${name}</span>`;
 }
 
 function formatActivityDate(value) {
@@ -9395,7 +9518,7 @@ function renderUserProfile(profile) {
       ${friends.map((friend) => `
         <a class="profile-friend-row" href="${escapeHtml(friend.profile_url || `/user/${encodeURIComponent(friend.profile_slug || "")}`)}">
           ${profileAvatarHtml(friend)}
-          <span>${escapeHtml(friend.name || "Collector")}</span>
+          <span>${displayNameHtml(friend.name || "Collector", friend)}</span>
         </a>
       `).join("")}
     </div>
@@ -9418,7 +9541,7 @@ function renderUserProfile(profile) {
       <div class="profile-feed-author">
         ${profileAvatarHtml(profile)}
         <div>
-          <strong>${escapeHtml(profile.name || "Collector")}</strong>
+          <strong>${displayNameHtml(profile.name || "Collector", profile)}</strong>
           <span>${escapeHtml(formatActivityDate(post.created_at))}</span>
         </div>
       </div>
@@ -9445,7 +9568,7 @@ function renderUserProfile(profile) {
         <div class="user-profile-avatar">${profileImage}</div>
         <div>
           <p class="eyebrow">Arcane Ledger profile</p>
-          <h2>${escapeHtml(profile.name || "Collector")}</h2>
+          <h2>${displayNameHtml(profile.name || "Collector", profile)}</h2>
           <span>Member since ${escapeHtml(formatDate(profile.member_since || ""))}</span>
           ${profile.about_me ? `<p>${escapeHtml(profile.about_me)}</p>` : ""}
           ${contactHtml}
@@ -9604,7 +9727,7 @@ function renderSharedFavorites(payload) {
           <span class="deck-icon" aria-hidden="true"></span>
           <div>
             <strong>${escapeHtml(deck.name || "Deck")}</strong>
-            <span>${escapeHtml(deck.owner_name || "Arcane Ledger user")} - ${integer.format(deck.card_count || 0)} cards</span>
+          <span>${displayNameHtml(deck.owner_name || "Arcane Ledger user", { is_pro: deck.owner_is_pro, role: deck.owner_role })} - ${integer.format(deck.card_count || 0)} cards</span>
           </div>
           <a class="share-button" href="${escapeHtml(deck.deck_url || `/decks/${encodeURIComponent(deck.share_id || "")}`)}" target="_blank" rel="noreferrer" aria-label="Open deck" title="Open deck">&#8599;</a>
         </article>
@@ -9618,7 +9741,7 @@ function renderSharedFavorites(payload) {
           <img src="${escapeHtml(listing.image_small || listing.image_normal || "")}" alt="">
           <div>
             <strong>${escapeHtml(cardTitle(listing))}</strong>
-            <span>${escapeHtml(listing.seller_name || "Seller")} - ${escapeHtml(listing.variant || "Normal")} - ${escapeHtml(listing.card_condition || "Near Mint")}</span>
+            <span>${displayNameHtml(listing.seller_name || "Seller", { is_pro: listing.seller_is_pro, role: listing.seller_role })} - ${escapeHtml(listing.variant || "Normal")} - ${escapeHtml(listing.card_condition || "Near Mint")}</span>
           </div>
           <a class="share-button" href="${escapeHtml(listing.store_url || "#")}" target="_blank" rel="noreferrer" aria-label="Open store" title="Open store">&#8599;</a>
         </article>
@@ -10000,6 +10123,23 @@ function wireEvents() {
   });
   els.openChangelogButton?.addEventListener("click", () => {
     openChangelogModal().catch((error) => setStatus(error.message, "error", els.settingsPageStatus));
+  });
+  els.membershipBenefitsButton?.addEventListener("click", openMembershipBenefitsModal);
+  els.closeMembershipBenefitsButton?.addEventListener("click", closeMembershipBenefitsModal);
+  els.dismissMembershipBenefitsButton?.addEventListener("click", closeMembershipBenefitsModal);
+  els.membershipBenefitsOverlay?.addEventListener("click", (event) => {
+    if (event.target === els.membershipBenefitsOverlay) {
+      closeMembershipBenefitsModal();
+    }
+  });
+  els.billingMonthlyButton?.addEventListener("click", () => {
+    startBillingCheckout("monthly").catch((error) => setStatus(error.message, "error", els.settingsPageStatus));
+  });
+  els.billingYearlyButton?.addEventListener("click", () => {
+    startBillingCheckout("yearly").catch((error) => setStatus(error.message, "error", els.settingsPageStatus));
+  });
+  els.billingPortalButton?.addEventListener("click", () => {
+    openBillingPortal().catch((error) => setStatus(error.message, "error", els.settingsPageStatus));
   });
   els.closeChangelogButton?.addEventListener("click", closeChangelogModal);
   els.dismissChangelogButton?.addEventListener("click", closeChangelogModal);
@@ -10539,6 +10679,9 @@ function wireEvents() {
     if (event.key === "Escape" && els.changelogOverlay && !els.changelogOverlay.hidden) {
       closeChangelogModal();
     }
+    if (event.key === "Escape" && els.membershipBenefitsOverlay && !els.membershipBenefitsOverlay.hidden) {
+      closeMembershipBenefitsModal();
+    }
     if (event.key === "Escape" && !els.authOverlay.hidden) {
       closeAuthModal();
     }
@@ -10682,6 +10825,7 @@ function wireEvents() {
       scryfall_id: formValues.scryfall_id,
       store_name: formValues.store_name || "",
       store_location: formValues.store_location || "",
+      notes: formValues.notes || "",
       purchases,
     };
     payload.expected_name = state.selectedAddCard.name || "";

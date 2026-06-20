@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.2.5 beta
+
+### Added
+- Added Stripe Billing configuration and checkout/portal support for Pro subscriptions.
+- Added Pro account support, including active/trialing Stripe subscriptions granting Pro features.
+- Added Normal account creation limits for decks, containers, and wishlists, with Admin and Pro accounts remaining unlimited.
+- Added a Billing section in Settings with monthly/yearly upgrade buttons, billing portal access, and Whispering Yak billing disclosure.
+- Added a Membership Benefits modal comparing Normal and Pro limits.
+- Added optional purchase notes to the unified Add Card/Add Purchase workflow and surfaced purchase notes in card ledger history.
+- Added compact collection-card imagery to the Search page header using cards already cataloged in Arcane Ledger.
+- Added Pro visual identity treatment: Pro/Admin display names now render in rainbow text with a compact PRO badge across profiles, comments, decks, favorites, stores, and account chrome.
+- Added Stripe environment variables to the example configuration.
+
+### Changed
+- Renamed the former Paid role to Pro throughout account role handling.
+- Improved the Search page header to use less vertical space while keeping a more welcoming catalog entry point.
+- Updated public/profile/deck/store identity payloads so Pro status can render consistently across social and marketplace views.
+- Updated Settings with a direct support/request link to the Arcane Ledger help site.
+- Bumped frontend asset versions for the billing, search, notes, and Pro identity updates.
+
+### Fixed
+- Fixed role migration so legacy `paid` users are normalized to `pro`.
+- Fixed role-based feature checks to use effective account role, including subscription-backed Pro access.
+- Fixed public profile, comment, deck, favorite, and store seller displays that previously lacked enough role metadata to show Pro status.
+- Fixed purchase journal display so optional purchase notes are visible on card history rows.
+
 ## 0.2.0 beta
 
 ### Added

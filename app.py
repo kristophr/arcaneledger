@@ -77,6 +77,11 @@ MAILGUN_API_KEY = os.environ.get("MAILGUN_API_KEY", "")
 MAILGUN_DOMAIN = os.environ.get("MAILGUN_DOMAIN", "")
 MAILGUN_FROM_EMAIL = os.environ.get("MAILGUN_FROM_EMAIL", "")
 MAILGUN_FROM_NAME = os.environ.get("MAILGUN_FROM_NAME", "Arcane Ledger")
+STRIPE_API_BASE = os.environ.get("STRIPE_API_BASE", "https://api.stripe.com").rstrip("/")
+STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY", "")
+STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
+STRIPE_PRICE_MONTHLY = os.environ.get("STRIPE_PRICE_MONTHLY", "")
+STRIPE_PRICE_YEARLY = os.environ.get("STRIPE_PRICE_YEARLY", "")
 MAIL_DRIVER = os.environ.get("MAIL_DRIVER", "")
 MAIL_ENCRYPTION = os.environ.get("MAIL_ENCRYPTION", "").strip().lower()
 SMTP_HOST = os.environ.get("SMTP_HOST") or os.environ.get("MAIL_HOST", "")
@@ -101,8 +106,8 @@ SESSION_IDLE_MINUTES = int(os.environ.get("SESSION_IDLE_MINUTES", "30") or 30)
 EMAIL_VERIFICATION_MINUTES = int(os.environ.get("EMAIL_VERIFICATION_MINUTES", "30") or 30)
 PASSWORD_RESET_MINUTES = int(os.environ.get("PASSWORD_RESET_MINUTES", str(EMAIL_VERIFICATION_MINUTES)) or EMAIL_VERIFICATION_MINUTES)
 SUPPORTED_SCRYFALL_LANGUAGES = {"en"}
-APP_VERSION = "0.2.0 beta"
-USER_AGENT = "arcaneledger/0.2.0"
+APP_VERSION = "0.2.5 beta"
+USER_AGENT = "arcaneledger/0.2.5"
 PROCESS_STARTED_AT = datetime.now(timezone.utc).replace(microsecond=0)
 COLOR_ORDER = ("W", "U", "B", "R", "G")
 CARD_CONDITIONS = (
@@ -120,7 +125,15 @@ THEMES = {
     "light", "dark", "retro", "neon", "red", "blue", "black", "green", "pride",
     "final-fantasy", "spider-man", "airbender",
 }
-USER_ROLES = {"admin", "paid", "normal"}
+USER_ROLES = {"admin", "pro", "normal"}
+PRO_SUBSCRIPTION_STATUSES = {"active", "trialing"}
+ROLE_LIMITS = {
+    "normal": {
+        "containers": 4,
+        "decks": 10,
+        "wishlists": 10,
+    }
+}
 ADMIN_EMAILS = {
     email.strip().lower()
     for email in re.split(r"[,;\s]+", os.environ.get("ADMIN_EMAILS", ""))
@@ -325,7 +338,46 @@ def role_for_email(email):
 
 def clean_user_role(value):
     role = (value or "normal").strip().lower()
+    if role == "paid":
+        return "pro"
     return role if role in USER_ROLES else "normal"
+
+
+def subscription_grants_pro(status):
+    return (status or "").strip().lower() in PRO_SUBSCRIPTION_STATUSES
+
+
+def effective_user_role(row):
+    if not row:
+        return "normal"
+    if isinstance(row, sqlite3.Row):
+        role = clean_user_role(row["role"] if "role" in row.keys() else role_for_email(row["email"]))
+        status = row["subscription_status"] if "subscription_status" in row.keys() else ""
+    else:
+        role = clean_user_role(row.get("role"))
+        status = row.get("subscription_status", "")
+    if role == "admin":
+        return "admin"
+    if role == "pro" or subscription_grants_pro(status):
+        return "pro"
+    return "normal"
+
+
+def user_role(conn, user_id):
+    row = conn.execute("SELECT role, email, subscription_status FROM users WHERE id = ?", (user_id,)).fetchone()
+    if not row:
+        return "normal"
+    return effective_user_role(row)
+
+
+def enforce_role_limit(conn, user_id, table, label, limit_key, incoming=1):
+    role = user_role(conn, user_id)
+    limit = ROLE_LIMITS.get(role, {}).get(limit_key)
+    if not limit:
+        return
+    current = conn.execute(f"SELECT COUNT(*) AS count FROM {table} WHERE user_id = ?", (user_id,)).fetchone()["count"] or 0
+    if current + max(0, int(incoming or 0)) > limit:
+        raise ValueError(f"Normal accounts can create up to {limit} {label}. Upgrade to Pro for unlimited {label}.")
 
 
 def clean_contact_handle(value, field_name, max_length=80):
@@ -1260,6 +1312,13 @@ def init_db(conn):
             role TEXT NOT NULL DEFAULT 'normal',
             is_banned INTEGER NOT NULL DEFAULT 0,
             last_login_at TEXT,
+            stripe_customer_id TEXT,
+            stripe_subscription_id TEXT,
+            stripe_price_id TEXT,
+            subscription_status TEXT NOT NULL DEFAULT '',
+            subscription_current_period_end TEXT,
+            subscription_cancel_at_period_end INTEGER NOT NULL DEFAULT 0,
+            subscription_updated_at TEXT,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         );
@@ -1270,6 +1329,13 @@ def init_db(conn):
             created_at TEXT NOT NULL,
             expires_at TEXT NOT NULL,
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS stripe_events (
+            id TEXT PRIMARY KEY,
+            type TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            processed_at TEXT NOT NULL
         );
 
         CREATE TABLE IF NOT EXISTS email_verifications (
@@ -1391,6 +1457,7 @@ def init_db(conn):
             graded INTEGER NOT NULL DEFAULT 0,
             store_name TEXT NOT NULL DEFAULT '',
             store_location TEXT NOT NULL DEFAULT '',
+            notes TEXT NOT NULL DEFAULT '',
             created_at TEXT NOT NULL,
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
             FOREIGN KEY (card_id) REFERENCES cards(scryfall_id) ON DELETE CASCADE
@@ -1817,6 +1884,8 @@ def migrate_purchases_schema(conn):
         conn.execute("ALTER TABLE card_purchases ADD COLUMN store_name TEXT NOT NULL DEFAULT ''")
     if "store_location" not in columns:
         conn.execute("ALTER TABLE card_purchases ADD COLUMN store_location TEXT NOT NULL DEFAULT ''")
+    if "notes" not in columns:
+        conn.execute("ALTER TABLE card_purchases ADD COLUMN notes TEXT NOT NULL DEFAULT ''")
     conn.execute(
         f"""
         UPDATE card_purchases
@@ -2544,6 +2613,17 @@ def migrate_user_schema(conn):
         conn.execute("ALTER TABLE users ADD COLUMN is_banned INTEGER NOT NULL DEFAULT 0")
     if "last_login_at" not in user_columns:
         conn.execute("ALTER TABLE users ADD COLUMN last_login_at TEXT")
+    for column, definition in {
+        "stripe_customer_id": "TEXT",
+        "stripe_subscription_id": "TEXT",
+        "stripe_price_id": "TEXT",
+        "subscription_status": "TEXT NOT NULL DEFAULT ''",
+        "subscription_current_period_end": "TEXT",
+        "subscription_cancel_at_period_end": "INTEGER NOT NULL DEFAULT 0",
+        "subscription_updated_at": "TEXT",
+    }.items():
+        if column not in user_columns:
+            conn.execute(f"ALTER TABLE users ADD COLUMN {column} {definition}")
     for column in (
         "public_email", "contact_whatsapp", "contact_signal", "contact_telegram", "contact_discord",
         "contact_website", "contact_instagram", "contact_bluesky", "contact_threads", "about_me", "profile_image",
@@ -2559,7 +2639,8 @@ def migrate_user_schema(conn):
     for row in rows:
         if not row["profile_slug"]:
             conn.execute("UPDATE users SET profile_slug = ? WHERE id = ?", (unique_profile_slug(conn, row["name"] or row["email"], row["id"]), row["id"]))
-    conn.execute("UPDATE users SET role = 'normal' WHERE role NOT IN ('admin', 'paid', 'normal') OR trim(COALESCE(role, '')) = ''")
+    conn.execute("UPDATE users SET role = 'pro' WHERE role = 'paid'")
+    conn.execute("UPDATE users SET role = 'normal' WHERE role NOT IN ('admin', 'pro', 'normal') OR trim(COALESCE(role, '')) = ''")
     for email in ADMIN_EMAILS:
         conn.execute("UPDATE users SET role = 'admin', is_banned = 0 WHERE lower(email) = ?", (email,))
     rows = conn.execute("SELECT id FROM users WHERE store_share_id IS NULL OR store_share_id = ''").fetchall()
@@ -2590,6 +2671,8 @@ def migrate_user_schema(conn):
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_name_unique ON users(lower(name))")
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_profile_slug ON users(profile_slug)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_users_role ON users(role, is_banned)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_users_stripe_customer ON users(stripe_customer_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_users_stripe_subscription ON users(stripe_subscription_id)")
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_store_share_id ON users(store_share_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id, expires_at)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_email_verifications_email ON email_verifications(email, expires_at)")
@@ -2630,6 +2713,8 @@ def ensure_unique_user_display_names(conn):
 def user_payload(row):
     if not row:
         return None
+    role = effective_user_role(row)
+    subscription_status = row["subscription_status"] if "subscription_status" in row.keys() else ""
     return {
         "id": row["id"],
         "name": row["name"] if "name" in row.keys() else row["email"],
@@ -2637,8 +2722,14 @@ def user_payload(row):
         "language": scryfall_language(row["language"]),
         "theme": clean_theme(row["theme"]),
         "email_verified": bool(row["email_verified"]),
-        "role": clean_user_role(row["role"] if "role" in row.keys() else role_for_email(row["email"])),
-        "is_admin": clean_user_role(row["role"] if "role" in row.keys() else role_for_email(row["email"])) == "admin",
+        "role": role,
+        "account_role": clean_user_role(row["role"] if "role" in row.keys() else role_for_email(row["email"])),
+        "is_admin": role == "admin",
+        "is_pro": role in {"admin", "pro"},
+        "subscription_status": subscription_status,
+        "subscription_current_period_end": row["subscription_current_period_end"] if "subscription_current_period_end" in row.keys() else "",
+        "subscription_cancel_at_period_end": bool(row["subscription_cancel_at_period_end"]) if "subscription_cancel_at_period_end" in row.keys() else False,
+        "has_stripe_customer": bool(row["stripe_customer_id"]) if "stripe_customer_id" in row.keys() else False,
         "is_banned": bool(row["is_banned"]) if "is_banned" in row.keys() else False,
         "public_email": row["public_email"] if "public_email" in row.keys() else "",
         "contact_whatsapp": row["contact_whatsapp"] if "contact_whatsapp" in row.keys() else "",
@@ -2740,6 +2831,7 @@ def public_app_config(conn):
         "app_base_url": APP_BASE_URL,
         "app_version": APP_VERSION,
         "email_configured": smtp_configured() or mailgun_configured(),
+        "stripe_configured": stripe_checkout_configured(),
         "server_claimed": app_has_users(conn),
     }
 
@@ -2750,6 +2842,266 @@ def changelog_payload():
     else:
         text = f"# Changelog\n\n## {APP_VERSION}\n\n- Release notes have not been written yet."
     return {"version": APP_VERSION, "changelog": text}
+
+
+def stripe_checkout_configured():
+    return bool(STRIPE_SECRET_KEY and (STRIPE_PRICE_MONTHLY or STRIPE_PRICE_YEARLY))
+
+
+def stripe_webhook_configured():
+    return bool(STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET)
+
+
+def stripe_price_for_plan(plan):
+    plan = (plan or "").strip().lower()
+    if plan in {"month", "monthly"}:
+        return STRIPE_PRICE_MONTHLY, "monthly"
+    if plan in {"year", "yearly", "annual", "annually"}:
+        return STRIPE_PRICE_YEARLY, "yearly"
+    raise ValueError("Choose monthly or yearly billing.")
+
+
+def stripe_api_request(method, path, params=None):
+    if not STRIPE_SECRET_KEY:
+        raise ValueError("Stripe is not configured on this server.")
+    method = method.upper()
+    url = f"{STRIPE_API_BASE}{path}"
+    data = None
+    headers = {
+        "Authorization": f"Bearer {STRIPE_SECRET_KEY}",
+        "User-Agent": USER_AGENT,
+    }
+    if params:
+        encoded = urllib.parse.urlencode(params)
+        if method == "GET":
+            url = f"{url}?{encoded}"
+        else:
+            data = encoded.encode("utf-8")
+            headers["Content-Type"] = "application/x-www-form-urlencoded"
+    req = urllib.request.Request(url, data=data, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=30) as response:
+            body = response.read().decode("utf-8")
+            return json.loads(body) if body else {}
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        try:
+            payload = json.loads(detail)
+            message = payload.get("error", {}).get("message") or detail
+        except json.JSONDecodeError:
+            message = detail or exc.reason
+        raise ValueError(f"Stripe error {exc.code}: {message}") from exc
+
+
+def stripe_customer_for_user(conn, user):
+    customer_id = user["stripe_customer_id"] if "stripe_customer_id" in user.keys() else ""
+    if customer_id:
+        return customer_id
+    payload = stripe_api_request("POST", "/v1/customers", [
+        ("email", user["email"]),
+        ("name", user["name"] or user["email"]),
+        ("metadata[user_id]", str(user["id"])),
+    ])
+    customer_id = payload.get("id")
+    if not customer_id:
+        raise ValueError("Stripe did not return a customer id.")
+    timestamp = now_iso()
+    conn.execute(
+        "UPDATE users SET stripe_customer_id = ?, subscription_updated_at = ?, updated_at = ? WHERE id = ?",
+        (customer_id, timestamp, timestamp, user["id"]),
+    )
+    conn.commit()
+    return customer_id
+
+
+def billing_return_url(kind):
+    base = verification_base_url()
+    return f"{base}/settings?billing={urllib.parse.quote(kind)}"
+
+
+def create_stripe_checkout_session(conn, user, payload):
+    if not stripe_checkout_configured():
+        raise ValueError("Stripe Checkout is not configured on this server.")
+    price_id, plan = stripe_price_for_plan((payload or {}).get("plan"))
+    if not price_id:
+        raise ValueError(f"The Stripe {plan} price is not configured.")
+    customer_id = stripe_customer_for_user(conn, user)
+    session = stripe_api_request("POST", "/v1/checkout/sessions", [
+        ("mode", "subscription"),
+        ("customer", customer_id),
+        ("client_reference_id", str(user["id"])),
+        ("line_items[0][price]", price_id),
+        ("line_items[0][quantity]", "1"),
+        ("success_url", billing_return_url("success")),
+        ("cancel_url", billing_return_url("cancelled")),
+        ("allow_promotion_codes", "true"),
+        ("metadata[user_id]", str(user["id"])),
+        ("metadata[plan]", plan),
+        ("subscription_data[metadata][user_id]", str(user["id"])),
+        ("subscription_data[metadata][plan]", plan),
+    ])
+    return {"ok": True, "url": session.get("url"), "session_id": session.get("id")}
+
+
+def create_stripe_portal_session(conn, user):
+    if not STRIPE_SECRET_KEY:
+        raise ValueError("Stripe is not configured on this server.")
+    customer_id = user["stripe_customer_id"] if "stripe_customer_id" in user.keys() else ""
+    if not customer_id:
+        raise ValueError("No billing profile found yet. Choose an upgrade plan first.")
+    session = stripe_api_request("POST", "/v1/billing_portal/sessions", [
+        ("customer", customer_id),
+        ("return_url", billing_return_url("portal")),
+    ])
+    return {"ok": True, "url": session.get("url")}
+
+
+def unix_to_iso(value):
+    try:
+        timestamp = int(value or 0)
+    except (TypeError, ValueError):
+        return ""
+    if timestamp <= 0:
+        return ""
+    return datetime.fromtimestamp(timestamp, timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def stripe_subscription_price_id(subscription):
+    items = ((subscription or {}).get("items") or {}).get("data") or []
+    if not items:
+        return ""
+    price = (items[0] or {}).get("price") or {}
+    return price.get("id") or ""
+
+
+def update_user_from_stripe_subscription(conn, subscription):
+    subscription = subscription or {}
+    subscription_id = subscription.get("id") or ""
+    customer_id = subscription.get("customer") or ""
+    metadata = subscription.get("metadata") or {}
+    user_id = metadata.get("user_id")
+    row = None
+    if user_id:
+        row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+    if not row and subscription_id:
+        row = conn.execute("SELECT * FROM users WHERE stripe_subscription_id = ?", (subscription_id,)).fetchone()
+    if not row and customer_id:
+        row = conn.execute("SELECT * FROM users WHERE stripe_customer_id = ?", (customer_id,)).fetchone()
+    if not row:
+        LOGGER.warning("Stripe subscription %s did not match a user.", subscription_id)
+        return None
+    status = (subscription.get("status") or "").strip().lower()
+    timestamp = now_iso()
+    conn.execute(
+        """
+        UPDATE users
+        SET stripe_customer_id = COALESCE(NULLIF(?, ''), stripe_customer_id),
+            stripe_subscription_id = COALESCE(NULLIF(?, ''), stripe_subscription_id),
+            stripe_price_id = ?,
+            subscription_status = ?,
+            subscription_current_period_end = ?,
+            subscription_cancel_at_period_end = ?,
+            subscription_updated_at = ?,
+            updated_at = ?
+        WHERE id = ?
+        """,
+        (
+            customer_id,
+            subscription_id,
+            stripe_subscription_price_id(subscription),
+            status,
+            unix_to_iso(subscription.get("current_period_end")),
+            1 if subscription.get("cancel_at_period_end") else 0,
+            timestamp,
+            timestamp,
+            row["id"],
+        ),
+    )
+    return row["id"]
+
+
+def update_user_from_checkout_session(conn, session):
+    session = session or {}
+    user_id = (session.get("metadata") or {}).get("user_id") or session.get("client_reference_id")
+    if not user_id:
+        LOGGER.warning("Stripe checkout session %s did not include a user id.", session.get("id"))
+        return None
+    timestamp = now_iso()
+    conn.execute(
+        """
+        UPDATE users
+        SET stripe_customer_id = COALESCE(NULLIF(?, ''), stripe_customer_id),
+            stripe_subscription_id = COALESCE(NULLIF(?, ''), stripe_subscription_id),
+            subscription_status = CASE
+                WHEN COALESCE(subscription_status, '') = '' THEN 'active'
+                ELSE subscription_status
+            END,
+            subscription_updated_at = ?,
+            updated_at = ?
+        WHERE id = ?
+        """,
+        (session.get("customer") or "", session.get("subscription") or "", timestamp, timestamp, user_id),
+    )
+    subscription_id = session.get("subscription")
+    if subscription_id:
+        try:
+            subscription = stripe_api_request("GET", f"/v1/subscriptions/{urllib.parse.quote(subscription_id)}")
+            update_user_from_stripe_subscription(conn, subscription)
+        except ValueError as exc:
+            LOGGER.warning("Could not retrieve Stripe subscription %s: %s", subscription_id, exc)
+    return user_id
+
+
+def verify_stripe_signature(raw_body, signature_header):
+    if not STRIPE_WEBHOOK_SECRET:
+        raise ForbiddenError("Stripe webhook secret is not configured.")
+    parts = {}
+    for item in (signature_header or "").split(","):
+        if "=" in item:
+            key, value = item.split("=", 1)
+            parts.setdefault(key, []).append(value)
+    timestamp_values = parts.get("t") or []
+    signatures = parts.get("v1") or []
+    if not timestamp_values or not signatures:
+        raise ForbiddenError("Stripe webhook signature is missing.")
+    timestamp = int(timestamp_values[0])
+    if abs(int(time.time()) - timestamp) > 300:
+        raise ForbiddenError("Stripe webhook signature timestamp is outside the allowed tolerance.")
+    signed_payload = str(timestamp).encode("utf-8") + b"." + raw_body
+    expected = hmac.new(STRIPE_WEBHOOK_SECRET.encode("utf-8"), signed_payload, hashlib.sha256).hexdigest()
+    if not any(hmac.compare_digest(expected, signature) for signature in signatures):
+        raise ForbiddenError("Stripe webhook signature verification failed.")
+
+
+def handle_stripe_webhook(conn, raw_body, signature_header):
+    verify_stripe_signature(raw_body, signature_header)
+    event = json.loads(raw_body.decode("utf-8"))
+    event_id = event.get("id")
+    event_type = event.get("type") or ""
+    if not event_id:
+        raise ValueError("Stripe webhook event is missing an id.")
+    if conn.execute("SELECT 1 FROM stripe_events WHERE id = ?", (event_id,)).fetchone():
+        return {"ok": True, "duplicate": True}
+    data_object = ((event.get("data") or {}).get("object") or {})
+    if event_type == "checkout.session.completed":
+        update_user_from_checkout_session(conn, data_object)
+    elif event_type in {"customer.subscription.created", "customer.subscription.updated", "customer.subscription.deleted"}:
+        update_user_from_stripe_subscription(conn, data_object)
+    elif event_type == "invoice.paid":
+        subscription_id = data_object.get("subscription")
+        if subscription_id:
+            try:
+                subscription = stripe_api_request("GET", f"/v1/subscriptions/{urllib.parse.quote(subscription_id)}")
+                update_user_from_stripe_subscription(conn, subscription)
+            except ValueError as exc:
+                LOGGER.warning("Could not refresh subscription after invoice.paid: %s", exc)
+    timestamp = now_iso()
+    conn.execute(
+        "INSERT INTO stripe_events (id, type, created_at, processed_at) VALUES (?, ?, ?, ?)",
+        (event_id, event_type, unix_to_iso(event.get("created")) or timestamp, timestamp),
+    )
+    conn.commit()
+    return {"ok": True, "event": event_type}
 
 
 def app_has_users(conn=None):
@@ -3416,10 +3768,10 @@ def list_admin_users(conn):
             FROM card_sales
             GROUP BY user_id
         ) s ON s.user_id = u.id
-        ORDER BY CASE lower(COALESCE(u.role, 'normal')) WHEN 'admin' THEN 0 WHEN 'paid' THEN 1 ELSE 2 END, lower(u.email)
+        ORDER BY CASE lower(COALESCE(u.role, 'normal')) WHEN 'admin' THEN 0 WHEN 'pro' THEN 1 ELSE 2 END, lower(u.email)
         """
     ).fetchall()
-    return {"users": [admin_user_payload(row) for row in rows], "roles": sorted(USER_ROLES)}
+    return {"users": [admin_user_payload(row) for row in rows], "roles": ["admin", "pro", "normal"]}
 
 
 def update_admin_user(conn, acting_user_id, target_user_id, payload):
@@ -4164,17 +4516,20 @@ def validate_selected_card(card, payload):
             raise ValueError("Selected Scryfall card changed before save. Please search and choose the card again.")
 
 
-def record_card_purchase(conn, user_id, card_id, variant, quantity, condition, purchase_date, total_price, store_name="", store_location="", graded=0):
+def record_card_purchase(conn, user_id, card_id, variant, quantity, condition, purchase_date, total_price, store_name="", store_location="", graded=0, notes=""):
     quantity = max(1, int(quantity or 1))
     total_price = money(total_price, fallback=0.01)
     if total_price <= 0:
         total_price = 0.01
     store_name = clean_purchase_detail(store_name, "Store name")
     store_location = clean_purchase_detail(store_location, "Store location")
+    notes = (notes or "").strip()
+    if len(notes) > 1000:
+        raise ValueError("Purchase notes must be 1,000 characters or fewer.")
     conn.execute(
         """
-        INSERT INTO card_purchases (user_id, card_id, variant, quantity, card_condition, purchase_date, total_price, graded, store_name, store_location, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO card_purchases (user_id, card_id, variant, quantity, card_condition, purchase_date, total_price, graded, store_name, store_location, notes, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             user_id,
@@ -4187,6 +4542,7 @@ def record_card_purchase(conn, user_id, card_id, variant, quantity, condition, p
             bool_int(graded),
             store_name,
             store_location,
+            notes,
             now_iso(),
         ),
     )
@@ -4211,7 +4567,7 @@ def rollup_collection_from_purchases(conn, user_id, card_id, variant):
         return None
     latest = conn.execute(
         """
-        SELECT card_condition
+        SELECT card_condition, notes
         FROM card_purchases
         WHERE user_id = ? AND card_id = ? AND variant = ?
         ORDER BY purchase_date DESC, id DESC
@@ -4229,7 +4585,7 @@ def rollup_collection_from_purchases(conn, user_id, card_id, variant):
     ).fetchone()
     share_id = (existing["share_id"] if existing and existing["share_id"] else new_share_id(conn))
     graded = int(aggregate["graded"] or 0)
-    notes = existing["notes"] if existing else ""
+    notes = (existing["notes"] if existing and existing["notes"] else (latest["notes"] if latest and "notes" in latest.keys() else "")) or ""
     average_paid = money(aggregate["total_paid"], fallback=0.01) / quantity
     conn.execute(
         """
@@ -4296,6 +4652,9 @@ def add_card_to_collection(conn, user_id, payload):
 
     global_store_name = payload.get("store_name") or ""
     global_store_location = payload.get("store_location") or ""
+    global_notes = (payload.get("notes") or "").strip()
+    if len(global_notes) > 1000:
+        raise ValueError("Purchase notes must be 1,000 characters or fewer.")
     normalized_rows = []
     for row in purchase_rows:
         if not isinstance(row, dict):
@@ -4316,6 +4675,7 @@ def add_card_to_collection(conn, user_id, payload):
             "graded": bool_int(row.get("graded")),
             "store_name": row.get("store_name") or global_store_name,
             "store_location": row.get("store_location") or global_store_location,
+            "notes": (row.get("notes") or global_notes).strip(),
         })
     if not normalized_rows:
         raise ValueError("No quantity detected.")
@@ -4336,6 +4696,7 @@ def add_card_to_collection(conn, user_id, payload):
             row["store_name"],
             row["store_location"],
             row["graded"],
+            row["notes"],
         )
         if row["variant"] not in variants:
             variants.append(row["variant"])
@@ -5413,6 +5774,26 @@ def home_stats(conn):
     }
 
 
+def search_hero_cards(conn, limit=5):
+    rows = conn.execute(
+        """
+        SELECT c.scryfall_id, c.name, c.flavor_name, c.set_code, c.set_name,
+               c.collector_number, c.image_small, c.image_normal, c.scryfall_uri,
+               COALESCE(NULLIF(col.variant, ''), 'Normal') AS variant,
+               COALESCE(SUM(col.quantity), 0) AS quantity
+        FROM collection col
+        JOIN cards c ON c.scryfall_id = col.card_id
+        WHERE COALESCE(col.quantity, 0) > 0
+          AND COALESCE(c.image_normal, c.image_small, '') != ''
+        GROUP BY col.card_id, COALESCE(NULLIF(col.variant, ''), 'Normal')
+        ORDER BY RANDOM()
+        LIMIT ?
+        """,
+        (max(1, min(5, int(limit or 5))),),
+    ).fetchall()
+    return [with_value_aliases(dict(row)) for row in rows]
+
+
 def rows_to_dicts(rows):
     return [with_value_aliases(dict(row)) for row in rows]
 
@@ -5475,6 +5856,7 @@ def create_deck(conn, user_id, payload):
     name = validate_user_content_name(payload.get("name"), "Deck name", 20)
     if name_exists(conn, "decks", name, user_id):
         raise ValueError("Deck name must be unique across your decks, containers, and wishlists.")
+    enforce_role_limit(conn, user_id, "decks", "decks", "decks")
     description = clean_deck_text(payload.get("description"), 500, "Description")
     internal_notes = clean_deck_text(payload.get("internal_notes"), 2000, "Internal notes")
     external_notes = clean_deck_text(payload.get("external_notes"), 2000, "External notes")
@@ -6008,6 +6390,7 @@ def commit_deck_import(conn, user_id, payload):
     issues_by_index = deck_import_name_issues(conn, user_id, decks)
     if issues_by_index:
         raise ValueError("Resolve duplicate or invalid deck names before importing.")
+    enforce_role_limit(conn, user_id, "decks", "decks", "decks", len(decks))
     timestamp = now_iso()
     imported = []
     for deck in decks:
@@ -6062,6 +6445,7 @@ def commit_wishlist_import(conn, user_id, payload):
     issues_by_index = wishlist_import_name_issues(conn, user_id, wishlists)
     if issues_by_index:
         raise ValueError("Resolve duplicate or invalid wishlist names before importing.")
+    enforce_role_limit(conn, user_id, "wishlists", "wishlists", "wishlists", len(wishlists))
     timestamp = now_iso()
     imported = []
     skipped = []
@@ -6137,6 +6521,7 @@ def import_deck_json(conn, user_id, payload):
     name = validate_user_content_name(deck_source.get("name") or source.get("name"), "Deck name", 20)
     if name_exists(conn, "decks", name, user_id):
         raise ValueError("Deck name must be unique across your decks, containers, and wishlists.")
+    enforce_role_limit(conn, user_id, "decks", "decks", "decks")
     description = clean_deck_text(deck_source.get("description"), 500, "Description")
     internal_notes = clean_deck_text(deck_source.get("internal_notes"), 2000, "Internal notes")
     external_notes = clean_deck_text(deck_source.get("external_notes"), 2000, "External notes")
@@ -6186,7 +6571,8 @@ def shared_deck(conn, share_id, viewer_user_id=None):
         """
         SELECT d.id, d.user_id, d.name, d.share_id,
                COALESCE(d.is_private, 0) AS is_private,
-               COALESCE(u.name, u.email, 'Arcane Ledger user') AS owner_name
+               COALESCE(u.name, u.email, 'Arcane Ledger user') AS owner_name,
+               u.email AS owner_email, u.role AS owner_role, u.subscription_status AS owner_subscription_status
         FROM decks d
         LEFT JOIN users u ON u.id = d.user_id
         WHERE d.share_id = ?
@@ -6200,6 +6586,13 @@ def shared_deck(conn, share_id, viewer_user_id=None):
     payload["readonly"] = True
     payload["owner_user_id"] = deck["user_id"]
     payload["owner_name"] = deck["owner_name"]
+    owner_role = effective_user_role({
+        "email": deck["owner_email"],
+        "role": deck["owner_role"],
+        "subscription_status": deck["owner_subscription_status"],
+    })
+    payload["owner_role"] = owner_role
+    payload["owner_is_pro"] = owner_role in {"admin", "pro"}
     return payload
 
 
@@ -6258,15 +6651,26 @@ def list_favorite_decks(conn, user_id):
         SELECT fd.share_id, fd.deck_name AS name, fd.deck_url, fd.owner_name,
                fd.card_count, fd.created_at, fd.updated_at,
                d.id AS deck_id,
+               u.email AS owner_email, u.role AS owner_role, u.subscription_status AS owner_subscription_status,
                CASE WHEN d.id IS NULL THEN 1 ELSE 0 END AS unavailable
         FROM favorite_decks fd
         LEFT JOIN decks d ON d.share_id = fd.share_id
+        LEFT JOIN users u ON u.id = d.user_id
         WHERE fd.user_id = ?
         ORDER BY fd.updated_at DESC, fd.deck_name COLLATE NOCASE
         """,
         (user_id,),
     ).fetchall()
-    return rows_to_dicts(rows)
+    decks = rows_to_dicts(rows)
+    for deck in decks:
+        owner_role = effective_user_role({
+            "email": deck.get("owner_email"),
+            "role": deck.get("owner_role"),
+            "subscription_status": deck.get("owner_subscription_status"),
+        })
+        deck["owner_role"] = owner_role
+        deck["owner_is_pro"] = owner_role in {"admin", "pro"}
+    return decks
 
 
 def sale_listing_key(seller_user_id, card_id, variant, condition):
@@ -6309,7 +6713,9 @@ def list_favorite_store_listings(conn, user_id):
                sale.quantity * ({price_expr}) AS market_total,
                COALESCE(u.name, '') AS seller_name,
                COALESCE(u.email, '') AS seller_email,
-               COALESCE(u.store_share_id, '') AS store_share_id
+               COALESCE(u.store_share_id, '') AS store_share_id,
+               u.role AS seller_role,
+               u.subscription_status AS seller_subscription_status
         FROM favorite_store_listings fav
         JOIN card_sales sale
           ON sale.user_id = fav.seller_user_id
@@ -6338,6 +6744,13 @@ def list_favorite_store_listings(conn, user_id):
             },
             "Seller",
         )
+        seller_role = effective_user_role({
+            "email": listing.get("seller_email"),
+            "role": listing.get("seller_role"),
+            "subscription_status": listing.get("seller_subscription_status"),
+        })
+        listing["seller_role"] = seller_role
+        listing["seller_is_pro"] = seller_role in {"admin", "pro"}
         listing["store_url"] = store_share_url(listing["store_share_id"])
         listing["favorite_store"] = True
         listing["listing_key"] = sale_listing_key(
@@ -6552,6 +6965,7 @@ def list_public_decks(conn, viewer_user_id=None):
                COALESCE(d.description, '') AS description,
                COALESCE(d.external_notes, '') AS external_notes,
                COALESCE(u.name, u.email, 'Arcane Ledger user') AS owner_name,
+               u.email AS owner_email, u.role AS owner_role, u.subscription_status AS owner_subscription_status,
                d.created_at, d.updated_at,
                COALESCE(SUM(dc.quantity), 0) AS card_count,
                COUNT(dc.card_id) AS unique_card_count,
@@ -6578,6 +6992,13 @@ def list_public_decks(conn, viewer_user_id=None):
     ).fetchall()
     decks = rows_to_dicts(rows)
     for deck in decks:
+        owner_role = effective_user_role({
+            "email": deck.get("owner_email"),
+            "role": deck.get("owner_role"),
+            "subscription_status": deck.get("owner_subscription_status"),
+        })
+        deck["owner_role"] = owner_role
+        deck["owner_is_pro"] = owner_role in {"admin", "pro"}
         deck["preview_images"] = [image for image in (deck.get("preview_images") or "").split("|||") if image][:5]
         deck["cards"] = public_deck_preview_cards(conn, deck["id"], viewer_user_id, 10)
         deck["viewer_is_owner"] = bool(viewer_user_id and int(viewer_user_id) == int(deck.get("user_id") or 0))
@@ -6659,6 +7080,8 @@ def import_shared_deck_to_deck(conn, user_id, share_id, payload=None):
         return {"ok": False, "duplicate": True, "name": name}
     if not existing_deck and cross_entity_name_exists(conn, user_id, name):
         raise ValueError("Deck name must be unique across your decks, containers, and wishlists.")
+    if not existing_deck:
+        enforce_role_limit(conn, user_id, "decks", "decks", "decks")
     timestamp = now_iso()
     imported = 0
     if existing_deck:
@@ -6917,6 +7340,7 @@ def create_container(conn, user_id, payload):
     name = validate_user_content_name(payload.get("name"), "Container name", 30)
     if name_exists(conn, "containers", name, user_id):
         raise ValueError("Container name must be unique across your decks, containers, and wishlists.")
+    enforce_role_limit(conn, user_id, "containers", "containers", "containers")
     storage_type = clean_container_type(payload.get("storage_type"))
     capacity = clean_container_capacity(payload.get("capacity"))
     location = clean_limited_text(payload, "location", "Container location", 30)
@@ -7502,6 +7926,7 @@ def create_wishlist(conn, user_id, payload):
     name = validate_user_content_name(payload.get("name"), "Wishlist name", 30)
     if name_exists(conn, "wishlists", name, user_id):
         raise ValueError("Wishlist name must be unique across your decks, containers, and wishlists.")
+    enforce_role_limit(conn, user_id, "wishlists", "wishlists", "wishlists")
     timestamp = now_iso()
     share_id = new_wishlist_share_id(conn)
     cursor = conn.execute(
@@ -8190,6 +8615,7 @@ def card_deck_references(conn, card_id):
     rows = conn.execute(
         """
         SELECT d.id, d.share_id, d.name, COALESCE(u.name, '') AS owner_name,
+               u.email AS owner_email, u.role AS owner_role, u.subscription_status AS owner_subscription_status,
                COALESCE(u.store_share_id, '') AS store_share_id,
                COALESCE(SUM(dc.quantity), 0) AS deck_quantity,
                COUNT(DISTINCT COALESCE(NULLIF(dc.variant, ''), 'Normal')) AS variant_count
@@ -8206,6 +8632,13 @@ def card_deck_references(conn, card_id):
     for row in rows:
         deck = dict(row)
         deck["owner_name"] = public_display_name(row, "User")
+        owner_role = effective_user_role({
+            "email": deck.get("owner_email"),
+            "role": deck.get("owner_role"),
+            "subscription_status": deck.get("owner_subscription_status"),
+        })
+        deck["owner_role"] = owner_role
+        deck["owner_is_pro"] = owner_role in {"admin", "pro"}
         deck["deck_url"] = deck_share_url(deck)
         decks.append(deck)
     return {"decks": decks}
@@ -8214,7 +8647,8 @@ def card_deck_references(conn, card_id):
 def card_sale_sellers(conn, card_id):
     rows = conn.execute(
         """
-        SELECT u.id, COALESCE(u.name, '') AS name, COALESCE(u.store_share_id, '') AS store_share_id,
+        SELECT u.id, COALESCE(u.name, '') AS name, COALESCE(u.email, '') AS email,
+               COALESCE(u.store_share_id, '') AS store_share_id, u.role, u.subscription_status,
                COALESCE(SUM(sale.quantity), 0) AS sale_quantity,
                MIN(sale.asking_price) AS min_asking_price,
                MAX(sale.asking_price) AS max_asking_price,
@@ -8234,6 +8668,9 @@ def card_sale_sellers(conn, card_id):
             seller["store_share_id"] = new_store_share_id(conn)
             conn.execute("UPDATE users SET store_share_id = ? WHERE id = ?", (seller["store_share_id"], row["id"]))
         seller["seller_name"] = public_display_name(row, "Seller")
+        seller_role = effective_user_role(row)
+        seller["seller_role"] = seller_role
+        seller["seller_is_pro"] = seller_role in {"admin", "pro"}
         seller["store_url"] = store_share_url(seller["store_share_id"])
         sellers.append(seller)
     conn.commit()
@@ -8390,7 +8827,8 @@ def store_front_card_detail(conn, card_id, current_user_id=None):
     card_payload["variant_summaries"] = store_front_variant_summaries(conn, card_id)
     seller_rows = conn.execute(
         """
-        SELECT u.id AS user_id, COALESCE(u.name, '') AS name, COALESCE(u.store_share_id, '') AS store_share_id,
+        SELECT u.id AS user_id, COALESCE(u.name, '') AS name, COALESCE(u.email, '') AS email,
+               COALESCE(u.store_share_id, '') AS store_share_id, u.role, u.subscription_status,
                COALESCE(NULLIF(sale.variant, ''), 'Normal') AS variant,
                COALESCE(NULLIF(sale.card_condition, ''), ?) AS card_condition,
                COALESCE(sale.quantity, 0) AS sale_quantity,
@@ -8409,6 +8847,9 @@ def store_front_card_detail(conn, card_id, current_user_id=None):
             seller["store_share_id"] = new_store_share_id(conn)
             conn.execute("UPDATE users SET store_share_id = ? WHERE id = ?", (seller["store_share_id"], row["user_id"]))
         seller["seller_name"] = public_display_name(row, "Seller")
+        seller_role = effective_user_role(row)
+        seller["seller_role"] = seller_role
+        seller["seller_is_pro"] = seller_role in {"admin", "pro"}
         seller["store_url"] = store_share_url(seller["store_share_id"])
         seller["is_current_user"] = bool(current_user_id and int(current_user_id) == int(row["user_id"]))
         seller["favorite_store"] = False
@@ -8540,7 +8981,7 @@ def profile_user_by_slug(conn, slug):
         """
         SELECT id, name, email, created_at, store_share_id, public_email, contact_whatsapp, contact_signal,
                contact_telegram, contact_discord, contact_website, contact_instagram, contact_bluesky,
-               contact_threads, about_me, profile_image, profile_slug
+               contact_threads, about_me, profile_image, profile_slug, role, subscription_status
         FROM users
         WHERE profile_slug = ? AND COALESCE(is_banned, 0) = 0
         """,
@@ -8552,19 +8993,22 @@ def profile_user_by_slug(conn, slug):
 
 
 def profile_actor_payload(row):
+    role = effective_user_role(row)
     return {
         "id": row["id"],
         "name": row["name"],
         "profile_slug": row["profile_slug"],
         "profile_url": f"/user/{urllib.parse.quote(row['profile_slug'])}" if row["profile_slug"] else "",
         "profile_image": row["profile_image"] if "profile_image" in row.keys() else "",
+        "role": role,
+        "is_pro": role in {"admin", "pro"},
     }
 
 
 def profile_friend_rows(conn, user_id):
     rows = conn.execute(
         """
-        SELECT u.id, u.name, u.profile_slug, u.profile_image, f.created_at
+        SELECT u.id, u.name, u.email, u.profile_slug, u.profile_image, u.role, u.subscription_status, f.created_at
         FROM profile_friends f
         JOIN users u ON u.id = f.friend_user_id
         WHERE f.user_id = ? AND COALESCE(u.is_banned, 0) = 0
@@ -8584,7 +9028,8 @@ def profile_wall_rows(conn, profile_user_id):
     rows = conn.execute(
         """
         SELECT m.id, m.body, m.created_at,
-               u.id AS author_id, u.name, u.profile_slug, u.profile_image
+               u.id AS author_id, u.name, u.email, u.profile_slug, u.profile_image,
+               u.role, u.subscription_status
         FROM profile_wall_messages m
         JOIN users u ON u.id = m.author_user_id
         WHERE m.profile_user_id = ? AND COALESCE(u.is_banned, 0) = 0
@@ -8593,8 +9038,10 @@ def profile_wall_rows(conn, profile_user_id):
         """,
         (profile_user_id,),
     ).fetchall()
-    return [
-        {
+    messages = []
+    for row in rows:
+        role = effective_user_role(row)
+        messages.append({
             "id": row["id"],
             "body": row["body"],
             "created_at": row["created_at"],
@@ -8604,10 +9051,11 @@ def profile_wall_rows(conn, profile_user_id):
                 "profile_slug": row["profile_slug"],
                 "profile_url": f"/user/{urllib.parse.quote(row['profile_slug'])}" if row["profile_slug"] else "",
                 "profile_image": row["profile_image"],
+                "role": role,
+                "is_pro": role in {"admin", "pro"},
             },
-        }
-        for row in rows
-    ]
+        })
+    return messages
 
 
 def profile_post_rows(conn, profile_user_id):
@@ -8697,7 +9145,8 @@ def profile_post_rows(conn, profile_user_id):
     comment_rows = conn.execute(
         f"""
         SELECT c.id, c.post_id, c.parent_comment_id, c.body, c.created_at,
-               u.id AS author_id, u.name, u.profile_slug, u.profile_image
+               u.id AS author_id, u.name, u.email, u.profile_slug, u.profile_image,
+               u.role, u.subscription_status
         FROM profile_post_comments c
         JOIN users u ON u.id = c.author_user_id
         WHERE c.post_id IN ({placeholders}) AND COALESCE(u.is_banned, 0) = 0
@@ -8707,6 +9156,7 @@ def profile_post_rows(conn, profile_user_id):
     ).fetchall()
     comments_by_post = {post["id"]: [] for post in posts}
     for row in comment_rows:
+        role = effective_user_role(row)
         comments_by_post.setdefault(row["post_id"], []).append({
             "id": row["id"],
             "post_id": row["post_id"],
@@ -8719,6 +9169,8 @@ def profile_post_rows(conn, profile_user_id):
                 "profile_slug": row["profile_slug"],
                 "profile_url": f"/user/{urllib.parse.quote(row['profile_slug'])}" if row["profile_slug"] else "",
                 "profile_image": row["profile_image"],
+                "role": role,
+                "is_pro": role in {"admin", "pro"},
             },
         })
     for post in posts:
@@ -8738,7 +9190,8 @@ def profile_posts_for_card(conn, card_id, variant=None):
     rows = conn.execute(
         f"""
         SELECT p.id, p.body, p.variant, p.created_at,
-               u.id AS author_id, u.name, u.profile_slug, u.profile_image
+               u.id AS author_id, u.name, u.email, u.profile_slug, u.profile_image,
+               u.role, u.subscription_status
         FROM profile_posts p
         JOIN users u ON u.id = p.user_id
         WHERE p.card_id = ? {variant_filter} AND COALESCE(u.is_banned, 0) = 0
@@ -8750,29 +9203,33 @@ def profile_posts_for_card(conn, card_id, variant=None):
     card_payload = dict(card)
     card_payload["variant"] = variant or "Normal"
     card_payload["display_price"] = price_for_variant_from_row(card, variant or "Normal")
+    posts = []
+    for row in rows:
+        role = effective_user_role(row)
+        posts.append({
+            "id": row["id"],
+            "body": row["body"],
+            "variant": row["variant"] or "Normal",
+            "created_at": row["created_at"],
+            "author": {
+                "id": row["author_id"],
+                "name": row["name"],
+                "profile_slug": row["profile_slug"],
+                "profile_url": f"/user/{urllib.parse.quote(row['profile_slug'])}" if row["profile_slug"] else "",
+                "profile_image": row["profile_image"],
+                "role": role,
+                "is_pro": role in {"admin", "pro"},
+            },
+        })
     return {
         "card": card_payload,
-        "posts": [
-            {
-                "id": row["id"],
-                "body": row["body"],
-                "variant": row["variant"] or "Normal",
-                "created_at": row["created_at"],
-                "author": {
-                    "id": row["author_id"],
-                    "name": row["name"],
-                    "profile_slug": row["profile_slug"],
-                    "profile_url": f"/user/{urllib.parse.quote(row['profile_slug'])}" if row["profile_slug"] else "",
-                    "profile_image": row["profile_image"],
-                },
-            }
-            for row in rows
-        ],
+        "posts": posts,
     }
 
 
 def public_user_profile(conn, slug, viewer_user_id=None):
     user = profile_user_by_slug(conn, slug)
+    role = effective_user_role(user)
     is_self = bool(viewer_user_id and int(viewer_user_id) == int(user["id"]))
     is_friend = False
     if viewer_user_id and not is_self:
@@ -8788,6 +9245,8 @@ def public_user_profile(conn, slug, viewer_user_id=None):
         "profile_slug": user["profile_slug"],
         "profile_url": profile_url_from_slug(user["profile_slug"]),
         "profile_image": user["profile_image"],
+        "role": role,
+        "is_pro": role in {"admin", "pro"},
         "about_me": user["about_me"],
         "member_since": user["created_at"],
         "contacts": public_profile_contacts(user),
@@ -8905,7 +9364,7 @@ def shared_store(conn, share_id):
     user = conn.execute(
         """
         SELECT id, name, email, store_share_id, public_email, contact_whatsapp, contact_signal,
-               contact_telegram, contact_discord, contact_website
+               contact_telegram, contact_discord, contact_website, role, subscription_status
         FROM users
         WHERE store_share_id = ?
         """,
@@ -8923,9 +9382,12 @@ def shared_store(conn, share_id):
         {"label": "Discord", "value": user["contact_discord"], "href": ""},
         {"label": "Website", "value": user["contact_website"], "href": user["contact_website"]},
     ]
+    seller_role = effective_user_role(user)
     return {
         "share_id": share_id,
         "seller_name": public_display_name(user, "Seller"),
+        "seller_role": seller_role,
+        "seller_is_pro": seller_role in {"admin", "pro"},
         "contact_email": contact_email,
         "contacts": [contact for contact in contacts if contact["value"]],
         "cards": cards,
@@ -9078,6 +9540,7 @@ def purchase_history(conn, user_id, card_id, variant):
                COALESCE(graded, 0) AS graded,
                store_name,
                store_location,
+               GROUP_CONCAT(DISTINCT NULLIF(notes, '')) AS notes,
                SUM(quantity) AS quantity,
                SUM(total_price) AS total_price,
                ROUND(SUM(total_price) / SUM(quantity), 2) AS price_each,
@@ -9106,6 +9569,7 @@ def movement_history(conn, user_id, card_id, variant):
                created_at,
                store_name,
                store_location,
+               notes,
                NULL AS asking_price_each
         FROM card_purchases
         WHERE user_id = ? AND card_id = ? AND variant = ?
@@ -9143,6 +9607,7 @@ def movement_history(conn, user_id, card_id, variant):
                created_at,
                '' AS store_name,
                '' AS store_location,
+               '' AS note,
                asking_price_each
         FROM card_sale_journal
         WHERE user_id = ? AND card_id = ? AND variant = ?
@@ -9400,7 +9865,8 @@ def card_comments(conn, user_id, card_id):
     rows = conn.execute(
         """
         SELECT cc.id, cc.card_id, cc.body, cc.created_at, cc.updated_at,
-               u.id AS author_id, u.name, u.profile_slug, u.profile_image,
+               u.id AS author_id, u.name, u.email, u.profile_slug, u.profile_image,
+               u.role, u.subscription_status,
                COUNT(v.user_id) AS upvote_count,
                MAX(CASE WHEN v.user_id = ? THEN 1 ELSE 0 END) AS user_upvoted
         FROM card_comments cc
@@ -9413,8 +9879,10 @@ def card_comments(conn, user_id, card_id):
         """,
         (user_id, card_id),
     ).fetchall()
-    return [
-        {
+    comments = []
+    for row in rows:
+        role = effective_user_role(row)
+        comments.append({
             "id": row["id"],
             "card_id": row["card_id"],
             "body": row["body"],
@@ -9429,10 +9897,11 @@ def card_comments(conn, user_id, card_id):
                 "profile_slug": row["profile_slug"],
                 "profile_url": f"/user/{urllib.parse.quote(row['profile_slug'])}" if row["profile_slug"] else "",
                 "profile_image": row["profile_image"],
+                "role": role,
+                "is_pro": role in {"admin", "pro"},
             },
-        }
-        for row in rows
-    ]
+        })
+    return comments
 
 
 def add_card_comment(conn, user_id, card_id, payload):
@@ -9602,6 +10071,8 @@ def add_card_purchase(conn, user_id, card_id, payload):
         total_price,
         payload.get("store_name"),
         payload.get("store_location"),
+        payload.get("graded", 0),
+        payload.get("notes"),
     )
     rollup_collection_from_purchases(conn, user_id, card_id, variant)
     conn.commit()
@@ -10077,6 +10548,7 @@ def create_set_missing_wishlist(conn, user_id, set_code):
     wishlist_name = set_missing_wishlist_name(set_row["set_name"])
     if cross_entity_name_exists(conn, user_id, wishlist_name):
         raise ValueError(f'A wishlist named "{wishlist_name}" already exists.')
+    enforce_role_limit(conn, user_id, "wishlists", "wishlists", "wishlists")
     rows = conn.execute(
         """
         SELECT c.scryfall_id
@@ -10829,6 +11301,10 @@ class Handler(SimpleHTTPRequestHandler):
             return {}
         return json.loads(self.rfile.read(length).decode("utf-8"))
 
+    def read_body(self):
+        length = int(self.headers.get("Content-Length") or 0)
+        return self.rfile.read(length) if length else b""
+
     def session_token(self):
         return parse_cookies(self.headers.get("Cookie", "")).get(SESSION_COOKIE)
 
@@ -10873,6 +11349,8 @@ class Handler(SimpleHTTPRequestHandler):
                     return self.send_json(verify_password_reset_token(conn, params.get("token", [""])[0]))
                 if parsed.path == "/api/home":
                     return self.send_json(home_stats(conn))
+                if parsed.path == "/api/search/hero-cards":
+                    return self.send_json({"cards": search_hero_cards(conn)})
                 if parsed.path == "/api/dashboard":
                     user = self.require_user(conn)
                     return self.send_json(dashboard(conn, user["id"]))
@@ -11152,6 +11630,14 @@ class Handler(SimpleHTTPRequestHandler):
                 if parsed.path == "/api/user/clear-data":
                     user = self.require_user(conn)
                     return self.send_json(clear_user_data(conn, user["id"]))
+                if parsed.path == "/api/billing/checkout":
+                    user = self.require_user(conn)
+                    return self.send_json(create_stripe_checkout_session(conn, user, self.read_json()))
+                if parsed.path == "/api/billing/portal":
+                    user = self.require_user(conn)
+                    return self.send_json(create_stripe_portal_session(conn, user))
+                if parsed.path == "/api/stripe/webhook":
+                    return self.send_json(handle_stripe_webhook(conn, self.read_body(), self.headers.get("Stripe-Signature", "")))
                 if parsed.path == "/api/reports":
                     user = self.require_user(conn)
                     return self.send_json(create_content_report(conn, user["id"], self.read_json()), HTTPStatus.CREATED)

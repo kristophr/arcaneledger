@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Arcane Ledger</title>
-    <link rel="stylesheet" href="/styles.css?v=152">
+    <link rel="stylesheet" href="/styles.css?v=153">
   </head>
   <body>
     <header class="topbar">
@@ -447,24 +447,12 @@
         <div class="catalog-welcome">
           <div class="catalog-welcome-copy">
             <p class="eyebrow">Welcome to Arcane Ledger</p>
-            <h2>A Magic: The Gathering cataloging app for collectors.</h2>
-            <p>Search the Magic catalog, find the exact printing you care about, and start building a collection that remembers what you own, what you paid, and what you are still hunting.</p>
+            <h2>Search the Magic catalog.</h2>
+            <p>Find exact printings, check what you own, and add new cards without leaving the flow.</p>
             <span>Powered by <a href="https://scryfall.com" target="_blank" rel="noreferrer">Scryfall</a></span>
           </div>
-          <div class="catalog-welcome-stack" aria-hidden="true">
-            <div class="welcome-card welcome-card-back"></div>
-            <div class="welcome-card welcome-card-mid"></div>
-            <div class="welcome-card welcome-card-front">
-              <span></span>
-              <strong>Arcane Ledger</strong>
-              <small>Search. Collect. Track.</small>
-            </div>
-          </div>
-        </div>
-        <div class="section-head catalog-search-heading">
-          <div>
-            <p class="eyebrow">Scryfall catalog</p>
-            <h2>Find a card</h2>
+          <div id="catalogHeroCards" class="catalog-hero-cards" aria-label="Cards from Arcane Ledger collections">
+            <div class="catalog-hero-card-placeholder">Search. Collect. Track.</div>
           </div>
         </div>
         <form id="catalogSearchForm" class="catalog-search-panel">
@@ -626,6 +614,7 @@
             <p class="eyebrow">Profile</p>
             <h2>Settings</h2>
           </div>
+          <a class="secondary-button settings-support-link" href="https://help.arcaneledgr.app" target="_blank" rel="noopener noreferrer">Have an issue or want to request a feature?</a>
         </div>
         <div class="settings-page-grid">
           <section class="panel">
@@ -704,6 +693,20 @@
               <button id="openChangelogButton" class="secondary-button compact-button" type="button">Change Log</button>
             </div>
             <div id="settingsPageStatus" class="status" aria-live="polite"></div>
+          </section>
+          <section class="panel billing-panel">
+            <div class="panel-head">
+              <h2>Billing</h2>
+              <span id="billingPlanStatus">Normal</span>
+            </div>
+            <p id="billingHelpText" class="settings-help">Upgrade to Pro for unlimited decks, containers, and wishlists.</p>
+            <p class="settings-help billing-disclosure">Arcane Ledger is owned and operated by Whispering Yak. Billing statements should show a charge from Whispering Yak, LLC.</p>
+            <div class="settings-danger-actions billing-actions">
+              <button id="membershipBenefitsButton" class="secondary-button" type="button">Membership Benefits</button>
+              <button id="billingMonthlyButton" class="primary-button" type="button">Upgrade Monthly</button>
+              <button id="billingYearlyButton" class="secondary-button" type="button">Upgrade Yearly</button>
+              <button id="billingPortalButton" class="secondary-button" type="button">Manage Billing</button>
+            </div>
           </section>
           <section class="panel danger-panel">
             <div class="panel-head">
@@ -1068,6 +1071,10 @@
             City Purchased From
             <input name="store_location" type="text" maxlength="120" placeholder="Raleigh, NC">
           </label>
+          <label class="add-purchase-detail add-purchase-notes">
+            Notes
+            <textarea name="notes" maxlength="1000" rows="3" placeholder="Optional purchase notes, grading context, order number, or anything useful later"></textarea>
+          </label>
           <div class="modal-actions">
             <button id="cancelAddCardButton" class="secondary-button" type="button">Cancel</button>
             <button id="confirmAddNewCardButton" class="primary-button" type="submit" title="Add and New" disabled>Add +</button>
@@ -1211,6 +1218,50 @@
       </section>
     </div>
 
+    <div id="membershipBenefitsOverlay" class="modal-overlay" hidden>
+      <section class="settings-modal membership-benefits-modal" role="dialog" aria-modal="true" aria-labelledby="membershipBenefitsTitle">
+        <header class="edit-modal-head">
+          <div>
+            <p class="eyebrow">Membership</p>
+            <h2 id="membershipBenefitsTitle">Membership Benefits</h2>
+          </div>
+          <button id="closeMembershipBenefitsButton" class="modal-close" type="button" aria-label="Close membership benefits dialog">x</button>
+        </header>
+        <div class="membership-benefits-content">
+          <p>This site will always be ad free. If you would like to subscribe to help with server costs and continual updates, there are two Pro plans: $5/month or $50/year.</p>
+          <table class="membership-benefits-table">
+            <thead>
+              <tr>
+                <th>Feature</th>
+                <th>Normal</th>
+                <th>Pro</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <th scope="row">Decks</th>
+                <td>10</td>
+                <td>Unlimited</td>
+              </tr>
+              <tr>
+                <th scope="row">Containers</th>
+                <td>4</td>
+                <td>Unlimited</td>
+              </tr>
+              <tr>
+                <th scope="row">Wishlists</th>
+                <td>10</td>
+                <td>Unlimited</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="modal-actions membership-benefits-actions">
+          <button id="dismissMembershipBenefitsButton" class="secondary-button" type="button">Close</button>
+        </div>
+      </section>
+    </div>
+
     <div id="authOverlay" class="modal-overlay" hidden>
       <section class="settings-modal" role="dialog" aria-modal="true" aria-labelledby="authTitle">
         <header class="edit-modal-head">
@@ -1293,6 +1344,10 @@
           <label>
             Store location
             <input name="store_location" type="text" maxlength="120" placeholder="Raleigh, NC">
+          </label>
+          <label class="edit-form-wide">
+            Notes
+            <textarea name="notes" maxlength="1000" rows="3" placeholder="Optional purchase notes"></textarea>
           </label>
           <div class="modal-actions">
             <button id="cancelAddPurchaseButton" class="secondary-button" type="button">Cancel</button>
@@ -2108,6 +2163,6 @@
       </section>
     </div>
 
-    <script src="/app.js?v=172"></script>
+    <script src="/app.js?v=173"></script>
   </body>
 </html>
