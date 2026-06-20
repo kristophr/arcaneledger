@@ -371,6 +371,7 @@ const els = {
   settingsPageStatus: document.querySelector("#settingsPageStatus"),
   billingPlanStatus: document.querySelector("#billingPlanStatus"),
   billingHelpText: document.querySelector("#billingHelpText"),
+  billingMetaList: document.querySelector("#billingMetaList"),
   billingMonthlyButton: document.querySelector("#billingMonthlyButton"),
   billingYearlyButton: document.querySelector("#billingYearlyButton"),
   billingPortalButton: document.querySelector("#billingPortalButton"),
@@ -5519,15 +5520,40 @@ function renderBillingSettings() {
   const role = user.role || "normal";
   const isPro = role === "pro" || role === "admin" || Boolean(user.is_pro);
   const status = user.subscription_status || "";
-  els.billingPlanStatus.textContent = role === "admin" ? "Admin" : isPro ? "Pro" : "Normal";
+  const planLabel = user.subscription_plan_label || (user.subscription_plan === "yearly" ? "Pro Yearly" : user.subscription_plan === "monthly" ? "Pro Monthly" : "Pro");
+  const periodDate = user.subscription_current_period_end ? formatCompactDate(user.subscription_current_period_end) : "";
+  const canceledDate = user.subscription_canceled_at ? formatCompactDate(user.subscription_canceled_at) : "";
+  const endedDate = user.subscription_ended_at ? formatCompactDate(user.subscription_ended_at) : "";
+  els.billingPlanStatus.textContent = role === "admin" ? "Admin" : isPro ? planLabel : "Normal";
+  const hasSubscriptionHistory = Boolean(status || user.subscription_plan || user.stripe_price_id || periodDate || canceledDate || endedDate);
+  if (els.billingMetaList) {
+    if (hasSubscriptionHistory) {
+      const periodLabel = user.subscription_cancel_at_period_end || endedDate || status === "canceled" ? "Ends" : "Renews";
+      els.billingMetaList.hidden = false;
+      els.billingMetaList.innerHTML = `
+        <div><dt>Plan</dt><dd>${escapeHtml(planLabel)}</dd></div>
+        <div><dt>Status</dt><dd>${escapeHtml(status || (isPro ? "active" : "normal"))}</dd></div>
+        ${periodDate ? `<div><dt>${periodLabel}</dt><dd>${escapeHtml(periodDate)}</dd></div>` : ""}
+        ${canceledDate ? `<div><dt>Canceled</dt><dd>${escapeHtml(canceledDate)}</dd></div>` : ""}
+        ${endedDate ? `<div><dt>Ended</dt><dd>${escapeHtml(endedDate)}</dd></div>` : ""}
+      `;
+    } else {
+      els.billingMetaList.hidden = true;
+      els.billingMetaList.innerHTML = "";
+    }
+  }
   if (!configured) {
     els.billingHelpText.textContent = "Billing is not configured on this server.";
   } else if (role === "admin") {
     els.billingHelpText.textContent = "Admin accounts include Pro features.";
   } else if (isPro) {
-    const renewal = user.subscription_current_period_end ? ` Current period ends ${formatCompactDate(user.subscription_current_period_end)}.` : "";
-    const canceling = user.subscription_cancel_at_period_end ? " Cancellation is scheduled at period end." : "";
-    els.billingHelpText.textContent = `Your Pro subscription is ${status || "active"}.${renewal}${canceling}`;
+    const schedule = user.subscription_cancel_at_period_end
+      ? `${canceledDate ? ` Canceled ${canceledDate}.` : ""}${periodDate ? ` Access ends ${periodDate}.` : " Access ends at the end of the current billing period."}`
+      : `${periodDate ? ` Renews ${periodDate}.` : ""}`;
+    els.billingHelpText.textContent = `Your ${planLabel} subscription is ${status || "active"}.${schedule}`;
+  } else if (status) {
+    const ended = endedDate || periodDate;
+    els.billingHelpText.textContent = `Your ${planLabel} subscription is ${status}.${ended ? ` Membership ended ${ended}.` : ""} Upgrade to restore Pro benefits.`;
   } else {
     els.billingHelpText.textContent = "Upgrade to Pro for unlimited decks, containers, and wishlists.";
   }

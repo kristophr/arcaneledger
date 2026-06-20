@@ -106,8 +106,8 @@ SESSION_IDLE_MINUTES = int(os.environ.get("SESSION_IDLE_MINUTES", "30") or 30)
 EMAIL_VERIFICATION_MINUTES = int(os.environ.get("EMAIL_VERIFICATION_MINUTES", "30") or 30)
 PASSWORD_RESET_MINUTES = int(os.environ.get("PASSWORD_RESET_MINUTES", str(EMAIL_VERIFICATION_MINUTES)) or EMAIL_VERIFICATION_MINUTES)
 SUPPORTED_SCRYFALL_LANGUAGES = {"en"}
-APP_VERSION = "0.2.5 beta"
-USER_AGENT = "arcaneledger/0.2.5"
+APP_VERSION = "0.2.6 beta"
+USER_AGENT = "arcaneledger/0.2.6"
 PROCESS_STARTED_AT = datetime.now(timezone.utc).replace(microsecond=0)
 COLOR_ORDER = ("W", "U", "B", "R", "G")
 CARD_CONDITIONS = (
@@ -343,8 +343,16 @@ def clean_user_role(value):
     return role if role in USER_ROLES else "normal"
 
 
-def subscription_grants_pro(status):
-    return (status or "").strip().lower() in PRO_SUBSCRIPTION_STATUSES
+def subscription_period_has_ended(period_end):
+    ending = parse_iso_datetime(period_end)
+    return bool(ending and ending <= datetime.now(timezone.utc))
+
+
+def subscription_grants_pro(status, period_end="", cancel_at_period_end=False):
+    normalized = (status or "").strip().lower()
+    if normalized not in PRO_SUBSCRIPTION_STATUSES:
+        return False
+    return not (cancel_at_period_end and subscription_period_has_ended(period_end))
 
 
 def effective_user_role(row):
@@ -353,18 +361,29 @@ def effective_user_role(row):
     if isinstance(row, sqlite3.Row):
         role = clean_user_role(row["role"] if "role" in row.keys() else role_for_email(row["email"]))
         status = row["subscription_status"] if "subscription_status" in row.keys() else ""
+        period_end = row["subscription_current_period_end"] if "subscription_current_period_end" in row.keys() else ""
+        cancel_at_period_end = bool(row["subscription_cancel_at_period_end"]) if "subscription_cancel_at_period_end" in row.keys() else False
     else:
         role = clean_user_role(row.get("role"))
         status = row.get("subscription_status", "")
+        period_end = row.get("subscription_current_period_end", "")
+        cancel_at_period_end = bool(row.get("subscription_cancel_at_period_end", False))
     if role == "admin":
         return "admin"
-    if role == "pro" or subscription_grants_pro(status):
+    if role == "pro" or subscription_grants_pro(status, period_end, cancel_at_period_end):
         return "pro"
     return "normal"
 
 
 def user_role(conn, user_id):
-    row = conn.execute("SELECT role, email, subscription_status FROM users WHERE id = ?", (user_id,)).fetchone()
+    row = conn.execute(
+        """
+        SELECT role, email, subscription_status, subscription_current_period_end, subscription_cancel_at_period_end
+        FROM users
+        WHERE id = ?
+        """,
+        (user_id,),
+    ).fetchone()
     if not row:
         return "normal"
     return effective_user_role(row)
@@ -1315,9 +1334,12 @@ def init_db(conn):
             stripe_customer_id TEXT,
             stripe_subscription_id TEXT,
             stripe_price_id TEXT,
+            subscription_plan TEXT NOT NULL DEFAULT '',
             subscription_status TEXT NOT NULL DEFAULT '',
             subscription_current_period_end TEXT,
             subscription_cancel_at_period_end INTEGER NOT NULL DEFAULT 0,
+            subscription_canceled_at TEXT,
+            subscription_ended_at TEXT,
             subscription_updated_at TEXT,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
@@ -1336,6 +1358,18 @@ def init_db(conn):
             type TEXT NOT NULL,
             created_at TEXT NOT NULL,
             processed_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS stripe_subscription_receipts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            stripe_subscription_id TEXT NOT NULL,
+            stripe_invoice_id TEXT NOT NULL DEFAULT '',
+            period_end TEXT NOT NULL DEFAULT '',
+            plan TEXT NOT NULL DEFAULT '',
+            sent_at TEXT NOT NULL,
+            UNIQUE(user_id, stripe_subscription_id, stripe_invoice_id, period_end),
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
         );
 
         CREATE TABLE IF NOT EXISTS email_verifications (
@@ -2617,9 +2651,12 @@ def migrate_user_schema(conn):
         "stripe_customer_id": "TEXT",
         "stripe_subscription_id": "TEXT",
         "stripe_price_id": "TEXT",
+        "subscription_plan": "TEXT NOT NULL DEFAULT ''",
         "subscription_status": "TEXT NOT NULL DEFAULT ''",
         "subscription_current_period_end": "TEXT",
         "subscription_cancel_at_period_end": "INTEGER NOT NULL DEFAULT 0",
+        "subscription_canceled_at": "TEXT",
+        "subscription_ended_at": "TEXT",
         "subscription_updated_at": "TEXT",
     }.items():
         if column not in user_columns:
@@ -2715,6 +2752,9 @@ def user_payload(row):
         return None
     role = effective_user_role(row)
     subscription_status = row["subscription_status"] if "subscription_status" in row.keys() else ""
+    stripe_price_id = row["stripe_price_id"] if "stripe_price_id" in row.keys() else ""
+    subscription_plan = row["subscription_plan"] if "subscription_plan" in row.keys() else ""
+    subscription_plan = subscription_plan or stripe_plan_for_price_id(stripe_price_id)
     return {
         "id": row["id"],
         "name": row["name"] if "name" in row.keys() else row["email"],
@@ -2727,8 +2767,13 @@ def user_payload(row):
         "is_admin": role == "admin",
         "is_pro": role in {"admin", "pro"},
         "subscription_status": subscription_status,
+        "stripe_price_id": stripe_price_id,
+        "subscription_plan": subscription_plan,
+        "subscription_plan_label": stripe_plan_label(subscription_plan),
         "subscription_current_period_end": row["subscription_current_period_end"] if "subscription_current_period_end" in row.keys() else "",
         "subscription_cancel_at_period_end": bool(row["subscription_cancel_at_period_end"]) if "subscription_cancel_at_period_end" in row.keys() else False,
+        "subscription_canceled_at": row["subscription_canceled_at"] if "subscription_canceled_at" in row.keys() else "",
+        "subscription_ended_at": row["subscription_ended_at"] if "subscription_ended_at" in row.keys() else "",
         "has_stripe_customer": bool(row["stripe_customer_id"]) if "stripe_customer_id" in row.keys() else False,
         "is_banned": bool(row["is_banned"]) if "is_banned" in row.keys() else False,
         "public_email": row["public_email"] if "public_email" in row.keys() else "",
@@ -2966,12 +3011,136 @@ def unix_to_iso(value):
     return datetime.fromtimestamp(timestamp, timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+def format_email_date(value):
+    parsed = parse_iso_datetime(value)
+    if not parsed:
+        return ""
+    return parsed.astimezone(timezone.utc).strftime("%b %-d, %Y")
+
+
 def stripe_subscription_price_id(subscription):
     items = ((subscription or {}).get("items") or {}).get("data") or []
     if not items:
         return ""
     price = (items[0] or {}).get("price") or {}
     return price.get("id") or ""
+
+
+def stripe_plan_for_price_id(price_id, fallback=""):
+    if price_id and STRIPE_PRICE_MONTHLY and price_id == STRIPE_PRICE_MONTHLY:
+        return "monthly"
+    if price_id and STRIPE_PRICE_YEARLY and price_id == STRIPE_PRICE_YEARLY:
+        return "yearly"
+    clean_fallback = (fallback or "").strip().lower()
+    return clean_fallback if clean_fallback in {"monthly", "yearly"} else ""
+
+
+def stripe_plan_label(plan):
+    return {"monthly": "Pro Monthly", "yearly": "Pro Yearly"}.get((plan or "").strip().lower(), "Pro")
+
+
+def stripe_subscription_receipt_details(subscription, plan=""):
+    subscription = subscription or {}
+    price_id = stripe_subscription_price_id(subscription)
+    plan = stripe_plan_for_price_id(price_id, plan or (subscription.get("metadata") or {}).get("plan"))
+    latest_invoice = subscription.get("latest_invoice") or ""
+    if isinstance(latest_invoice, dict):
+        latest_invoice = latest_invoice.get("id") or ""
+    return {
+        "subscription_id": subscription.get("id") or "",
+        "invoice_id": latest_invoice,
+        "plan": plan,
+        "plan_label": stripe_plan_label(plan),
+        "status": (subscription.get("status") or "").strip().lower() or "active",
+        "period_start": unix_to_iso(subscription.get("current_period_start")),
+        "period_end": unix_to_iso(subscription.get("current_period_end")),
+        "cancel_at_period_end": bool(subscription.get("cancel_at_period_end")),
+    }
+
+
+def subscription_receipt_text(user, details):
+    display_name = user["name"] if "name" in user.keys() and user["name"] else user["email"]
+    purchased = format_email_date(details.get("period_start")) or format_email_date(now_iso())
+    renews = format_email_date(details.get("period_end")) or "the end of your current billing period"
+    renewal_label = "Membership access ends" if details.get("cancel_at_period_end") else "Membership renews"
+    return "\n".join([
+        f"Hi {display_name},",
+        "",
+        "Thanks for supporting Arcane Ledger.",
+        "",
+        f"Subscription: {details.get('plan_label') or 'Pro'}",
+        f"Status: {details.get('status') or 'active'}",
+        f"Purchase date: {purchased}",
+        f"{renewal_label}: {renews}",
+        "",
+        f"Manage your membership from Settings: {verification_base_url()}/settings",
+        "",
+        "This receipt was sent to your Arcane Ledger account email.",
+    ])
+
+
+def subscription_receipt_html(user, details):
+    display_name = html_lib.escape(user["name"] if "name" in user.keys() and user["name"] else user["email"])
+    plan_label = html_lib.escape(details.get("plan_label") or "Pro")
+    status = html_lib.escape(details.get("status") or "active")
+    purchased = html_lib.escape(format_email_date(details.get("period_start")) or format_email_date(now_iso()))
+    renews = html_lib.escape(format_email_date(details.get("period_end")) or "the end of your current billing period")
+    renewal_label = "Membership access ends" if details.get("cancel_at_period_end") else "Membership renews"
+    settings_url = html_lib.escape(f"{verification_base_url()}/settings")
+    return f"""
+    <div style="font-family:Inter,Arial,sans-serif;max-width:620px;margin:0 auto;color:#17211f;">
+      <h1 style="font-size:24px;margin:0 0 12px;">Arcane Ledger membership receipt</h1>
+      <p style="line-height:1.5;">Hi {display_name}, thanks for supporting Arcane Ledger.</p>
+      <table style="width:100%;border-collapse:collapse;margin:18px 0;border:1px solid #dbe2df;border-radius:10px;overflow:hidden;">
+        <tr><th align="left" style="padding:10px 12px;background:#eef5f1;">Subscription</th><td style="padding:10px 12px;">{plan_label}</td></tr>
+        <tr><th align="left" style="padding:10px 12px;background:#eef5f1;">Status</th><td style="padding:10px 12px;">{status}</td></tr>
+        <tr><th align="left" style="padding:10px 12px;background:#eef5f1;">Purchase date</th><td style="padding:10px 12px;">{purchased}</td></tr>
+        <tr><th align="left" style="padding:10px 12px;background:#eef5f1;">{html_lib.escape(renewal_label)}</th><td style="padding:10px 12px;">{renews}</td></tr>
+      </table>
+      <p style="line-height:1.5;">You can manage your membership from <a href="{settings_url}">Arcane Ledger Settings</a>.</p>
+      <p style="font-size:12px;color:#66706d;">This receipt was sent to your Arcane Ledger account email.</p>
+    </div>
+    """
+
+
+def send_subscription_receipt(conn, user_id, subscription, plan=""):
+    user = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+    if not user:
+        return {"ok": False, "skipped": "user_not_found"}
+    details = stripe_subscription_receipt_details(subscription, plan)
+    if not details["subscription_id"]:
+        return {"ok": False, "skipped": "missing_subscription_id"}
+    receipt_key = (
+        user["id"],
+        details["subscription_id"],
+        details["invoice_id"],
+        details["period_end"],
+    )
+    if conn.execute(
+        """
+        SELECT 1
+        FROM stripe_subscription_receipts
+        WHERE user_id = ? AND stripe_subscription_id = ? AND stripe_invoice_id = ? AND period_end = ?
+        """,
+        receipt_key,
+    ).fetchone():
+        return {"ok": True, "skipped": "already_sent"}
+    result = send_email(
+        user["email"],
+        f"Arcane Ledger receipt: {details['plan_label']}",
+        text=subscription_receipt_text(user, details),
+        html=subscription_receipt_html(user, details),
+        tags=["arcane-ledger", "subscription-receipt"],
+    )
+    conn.execute(
+        """
+        INSERT INTO stripe_subscription_receipts
+            (user_id, stripe_subscription_id, stripe_invoice_id, period_end, plan, sent_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (*receipt_key, details["plan"], now_iso()),
+    )
+    return {"ok": True, "email": user["email"], "provider": result.get("provider"), "status": result.get("status")}
 
 
 def update_user_from_stripe_subscription(conn, subscription):
@@ -2991,16 +3160,21 @@ def update_user_from_stripe_subscription(conn, subscription):
         LOGGER.warning("Stripe subscription %s did not match a user.", subscription_id)
         return None
     status = (subscription.get("status") or "").strip().lower()
+    price_id = stripe_subscription_price_id(subscription)
+    plan = stripe_plan_for_price_id(price_id, metadata.get("plan"))
     timestamp = now_iso()
     conn.execute(
         """
         UPDATE users
         SET stripe_customer_id = COALESCE(NULLIF(?, ''), stripe_customer_id),
             stripe_subscription_id = COALESCE(NULLIF(?, ''), stripe_subscription_id),
-            stripe_price_id = ?,
+            stripe_price_id = COALESCE(NULLIF(?, ''), stripe_price_id),
+            subscription_plan = COALESCE(NULLIF(?, ''), subscription_plan),
             subscription_status = ?,
             subscription_current_period_end = ?,
             subscription_cancel_at_period_end = ?,
+            subscription_canceled_at = ?,
+            subscription_ended_at = ?,
             subscription_updated_at = ?,
             updated_at = ?
         WHERE id = ?
@@ -3008,10 +3182,13 @@ def update_user_from_stripe_subscription(conn, subscription):
         (
             customer_id,
             subscription_id,
-            stripe_subscription_price_id(subscription),
+            price_id,
+            plan,
             status,
             unix_to_iso(subscription.get("current_period_end")),
             1 if subscription.get("cancel_at_period_end") else 0,
+            unix_to_iso(subscription.get("canceled_at")),
+            unix_to_iso(subscription.get("ended_at")),
             timestamp,
             timestamp,
             row["id"],
@@ -3047,6 +3224,10 @@ def update_user_from_checkout_session(conn, session):
         try:
             subscription = stripe_api_request("GET", f"/v1/subscriptions/{urllib.parse.quote(subscription_id)}")
             update_user_from_stripe_subscription(conn, subscription)
+            try:
+                send_subscription_receipt(conn, int(user_id), subscription, (session.get("metadata") or {}).get("plan"))
+            except Exception as exc:
+                LOGGER.warning("Could not send Stripe subscription receipt for user %s: %s", user_id, exc)
         except ValueError as exc:
             LOGGER.warning("Could not retrieve Stripe subscription %s: %s", subscription_id, exc)
     return user_id

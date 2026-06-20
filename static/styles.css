@@ -6131,6 +6131,34 @@ body:not(.is-authenticated) .nav-bottom {
   margin: 0 18px 14px;
 }
 
+.billing-meta-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0 18px 14px;
+}
+
+.billing-meta-list div {
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--detail-bg);
+}
+
+.billing-meta-list dt {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 850;
+}
+
+.billing-meta-list dd {
+  margin: 3px 0 0;
+  color: var(--ink);
+  font-weight: 850;
+  overflow-wrap: anywhere;
+}
+
 .billing-disclosure {
   border: 1px solid var(--line);
   border-radius: 8px;
