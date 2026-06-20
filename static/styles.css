@@ -4578,6 +4578,10 @@ body:not(.is-authenticated) .nav-bottom {
   background: var(--detail-bg);
 }
 
+.shared-card-details .detail-wide {
+  grid-column: 1 / -1;
+}
+
 .shared-card-details dt {
   color: var(--muted);
   font-size: 0.72rem;

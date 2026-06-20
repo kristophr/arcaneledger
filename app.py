@@ -4516,6 +4516,43 @@ def aggregate_variant_market_value(card, variant_summaries):
     )
 
 
+def card_collection_financial_summary(conn, user_id, card_id):
+    row = conn.execute(
+        """
+        SELECT COALESCE(SUM(quantity), 0) AS quantity,
+               COALESCE(SUM(quantity * paid_price), 0) AS total_paid,
+               MIN(NULLIF(acquired_date, '')) AS first_obtained
+        FROM collection
+        WHERE user_id = ? AND card_id = ? AND COALESCE(quantity, 0) > 0
+        """,
+        (user_id, card_id),
+    ).fetchone()
+    quantity = int(row["quantity"] or 0) if row else 0
+    total_paid = float(row["total_paid"] or 0) if row else 0.0
+    return {
+        "owned_quantity": quantity,
+        "total_paid": total_paid,
+        "average_paid": (total_paid / quantity) if quantity > 0 else 0,
+        "first_obtained": row["first_obtained"] if row else "",
+    }
+
+
+def apply_card_collection_financials(card, conn, user_id, card_id):
+    summary = card_collection_financial_summary(conn, user_id, card_id)
+    total_value = aggregate_variant_market_value(card, card.get("variant_summaries") or [])
+    if card.get("variant_summaries"):
+        card["owned_value"] = total_value
+        card["total_value"] = total_value
+    else:
+        total_value = float(card.get("total_value") or card.get("owned_value") or 0)
+    card["owned_quantity"] = summary["owned_quantity"]
+    card["total_paid"] = summary["total_paid"]
+    card["average_paid"] = summary["average_paid"]
+    card["first_obtained"] = summary["first_obtained"] or card.get("acquired_date") or ""
+    card["gain_loss"] = total_value - summary["total_paid"]
+    return card
+
+
 def validate_selected_card(card, payload):
     expected = {
         "name": payload.get("expected_name"),
@@ -10003,10 +10040,7 @@ def card_detail(conn, user_id, card_id, variant="Normal"):
         scryfall_card = request_json(SCRYFALL_ID_URL.format(card_id=urllib.parse.quote(card_id)))
         card = scryfall_card_detail_payload(scryfall_card, variant, user_id=user_id, conn=conn)
         card["variant_summaries"] = variant_summaries_for_cards(conn, [card_id], user_id).get(card_id, [])
-        if card["variant_summaries"]:
-            aggregate_value = aggregate_variant_market_value(card, card["variant_summaries"])
-            card["owned_value"] = aggregate_value
-            card["total_value"] = aggregate_value
+        apply_card_collection_financials(card, conn, user_id, card_id)
         card["price_history"] = card_price_history(conn, card_id, variant)
         variants = [item.get("variant") for item in card.get("variant_summaries") or []] or [variant]
         card["price_histories"] = card_price_histories(conn, card_id, variants)
@@ -10019,10 +10053,7 @@ def card_detail(conn, user_id, card_id, variant="Normal"):
     card["movements"] = movement_history(conn, user_id, card_id, variant)
     card["condition_inventory"] = condition_inventory_for_card(conn, user_id, card_id)
     card["variant_summaries"] = variant_summaries_for_cards(conn, [card_id], user_id).get(card_id, [])
-    if card["variant_summaries"]:
-        aggregate_value = aggregate_variant_market_value(card, card["variant_summaries"])
-        card["owned_value"] = aggregate_value
-        card["total_value"] = aggregate_value
+    apply_card_collection_financials(card, conn, user_id, card_id)
     card["deck_memberships"] = card_deck_memberships(conn, user_id, card_id, variant)
     card["container_memberships"] = card_container_memberships(conn, user_id, card_id)
     sale = conn.execute(

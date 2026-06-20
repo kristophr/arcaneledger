@@ -8616,26 +8616,38 @@ function renderCardDetail(card) {
   const hasDecks = deckMemberships(card).length > 0;
   const hasContainers = containerMemberships(card).length > 0;
   const listedForSale = Number(card.sale_quantity || 0) > 0;
+  const totalValue = Number(card.total_value ?? card.owned_value ?? totalVariantMarketValue(card) ?? 0);
+  const totalPaid = Number(card.total_paid ?? (Number(card.paid_price || 0) * ownedQuantity) ?? 0);
+  const averagePaid = Number(card.average_paid ?? card.paid_price ?? 0);
+  const totalDelta = totalValue - totalPaid;
   const detailsHtml = owned ? `
           <div>
             <dt>Owned</dt>
             <dd>${integer.format(ownedQuantity)}</dd>
           </div>
           <div>
-            <dt>Average Paid</dt>
-            <dd>${dollars.format(card.paid_price || 0)}</dd>
+            <dt>First Obtained</dt>
+            <dd>${escapeHtml(formatDate(card.first_obtained || card.acquired_date || ""))}</dd>
           </div>
           <div>
             <dt>Market Price</dt>
             <dd>${dollars.format(card.market_price ?? card.display_price ?? 0)}</dd>
           </div>
           <div>
-            <dt>Total Value</dt>
-            <dd>${dollars.format(totalVariantMarketValue(card))}</dd>
+            <dt>Average Paid</dt>
+            <dd>${dollars.format(averagePaid)}</dd>
           </div>
           <div>
-            <dt>Total Delta</dt>
-            <dd class="${valueClass(card.gain_loss || 0)}">${dollars.format(card.gain_loss || 0)}</dd>
+            <dt>Total Paid</dt>
+            <dd>${dollars.format(totalPaid)}</dd>
+          </div>
+          <div>
+            <dt>Total Value</dt>
+            <dd>${dollars.format(totalValue)}</dd>
+          </div>
+          <div class="detail-wide">
+            <dt>Delta</dt>
+            <dd class="${valueClass(totalDelta)}">${dollars.format(totalDelta)}</dd>
           </div>
   ` : `
           <div>
