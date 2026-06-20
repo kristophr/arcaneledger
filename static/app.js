@@ -5188,9 +5188,12 @@ function todayValue() {
 function priceForVariant(card, variant) {
   const prices = card.prices || {};
   const variantText = String(variant || "").toLowerCase();
-  if (variantText.includes("etched") && prices.usd_etched) return prices.usd_etched;
-  if (variantText.includes("foil") && prices.usd_foil) return prices.usd_foil;
-  return prices.usd || prices.usd_foil || prices.usd_etched || 0;
+  const normal = Number(prices.usd ?? card.current_usd ?? 0);
+  const foil = Number(prices.usd_foil ?? card.current_usd_foil ?? 0);
+  const etched = Number(prices.usd_etched ?? card.current_usd_etched ?? 0);
+  if (variantText.includes("etched") && etched > 0) return etched;
+  if (variantText.includes("foil") && foil > 0) return foil;
+  return normal || foil || etched || 0;
 }
 
 function variantsForCard(card) {

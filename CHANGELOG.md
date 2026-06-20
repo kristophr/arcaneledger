@@ -25,6 +25,7 @@
 - Fixed role-based feature checks to use effective account role, including subscription-backed Pro access.
 - Fixed public profile, comment, deck, favorite, and store seller displays that previously lacked enough role metadata to show Pro status.
 - Fixed purchase journal display so optional purchase notes are visible on card history rows.
+- Fixed card detail Total Value so mixed variants sum each owned variant quantity against that variant's current market value.
 
 ## 0.2.0 beta
 

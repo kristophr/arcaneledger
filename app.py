@@ -4490,12 +4490,30 @@ def scryfall_card_by_id(conn, card_id, user_id=None):
 
 
 def variant_price_from_row(card, variant):
+    def card_value(key):
+        if isinstance(card, sqlite3.Row):
+            return card[key] if key in card.keys() else 0
+        return card.get(key, 0) if isinstance(card, dict) else 0
+
+    prices = card_value("prices") or {}
+    if not isinstance(prices, dict):
+        prices = {}
+    current_usd = card_value("current_usd") or prices.get("usd") or 0
+    current_usd_foil = card_value("current_usd_foil") or prices.get("usd_foil") or 0
+    current_usd_etched = card_value("current_usd_etched") or prices.get("usd_etched") or 0
     variant_text = (variant or "").lower()
-    if "etched" in variant_text and card["current_usd_etched"]:
-        return card["current_usd_etched"]
-    if "foil" in variant_text and card["current_usd_foil"]:
-        return card["current_usd_foil"]
-    return card["current_usd"] or card["current_usd_foil"] or card["current_usd_etched"] or 0
+    if "etched" in variant_text and current_usd_etched:
+        return current_usd_etched
+    if "foil" in variant_text and current_usd_foil:
+        return current_usd_foil
+    return current_usd or current_usd_foil or current_usd_etched or 0
+
+
+def aggregate_variant_market_value(card, variant_summaries):
+    return sum(
+        int(summary.get("quantity") or 0) * float(variant_price_from_row(card, summary.get("variant") or "Normal") or 0)
+        for summary in variant_summaries or []
+    )
 
 
 def validate_selected_card(card, payload):
@@ -9985,6 +10003,10 @@ def card_detail(conn, user_id, card_id, variant="Normal"):
         scryfall_card = request_json(SCRYFALL_ID_URL.format(card_id=urllib.parse.quote(card_id)))
         card = scryfall_card_detail_payload(scryfall_card, variant, user_id=user_id, conn=conn)
         card["variant_summaries"] = variant_summaries_for_cards(conn, [card_id], user_id).get(card_id, [])
+        if card["variant_summaries"]:
+            aggregate_value = aggregate_variant_market_value(card, card["variant_summaries"])
+            card["owned_value"] = aggregate_value
+            card["total_value"] = aggregate_value
         card["price_history"] = card_price_history(conn, card_id, variant)
         variants = [item.get("variant") for item in card.get("variant_summaries") or []] or [variant]
         card["price_histories"] = card_price_histories(conn, card_id, variants)
@@ -9997,6 +10019,10 @@ def card_detail(conn, user_id, card_id, variant="Normal"):
     card["movements"] = movement_history(conn, user_id, card_id, variant)
     card["condition_inventory"] = condition_inventory_for_card(conn, user_id, card_id)
     card["variant_summaries"] = variant_summaries_for_cards(conn, [card_id], user_id).get(card_id, [])
+    if card["variant_summaries"]:
+        aggregate_value = aggregate_variant_market_value(card, card["variant_summaries"])
+        card["owned_value"] = aggregate_value
+        card["total_value"] = aggregate_value
     card["deck_memberships"] = card_deck_memberships(conn, user_id, card_id, variant)
     card["container_memberships"] = card_container_memberships(conn, user_id, card_id)
     sale = conn.execute(
