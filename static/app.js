@@ -17,6 +17,7 @@ const state = {
   adminReports: [],
   adminEmailTemplates: [],
   adminAnnouncements: [],
+  adminWallpapers: [],
   homeAnnouncements: [],
   editingAdminEmailTemplateId: null,
   editingAdminAnnouncementId: null,
@@ -239,6 +240,11 @@ const els = {
   cancelAdminAnnouncementButton: document.querySelector("#cancelAdminAnnouncementButton"),
   draftAdminAnnouncementButton: document.querySelector("#draftAdminAnnouncementButton"),
   publishAdminAnnouncementButton: document.querySelector("#publishAdminAnnouncementButton"),
+  adminWallpaperCount: document.querySelector("#adminWallpaperCount"),
+  adminWallpaperInput: document.querySelector("#adminWallpaperInput"),
+  uploadAdminWallpaperButton: document.querySelector("#uploadAdminWallpaperButton"),
+  adminWallpaperStatus: document.querySelector("#adminWallpaperStatus"),
+  adminWallpapersList: document.querySelector("#adminWallpapersList"),
   refreshAdminButton: document.querySelector("#refreshAdminButton"),
   refreshAdminLogsButton: document.querySelector("#refreshAdminLogsButton"),
   reportOverlay: document.querySelector("#reportOverlay"),
@@ -678,6 +684,19 @@ async function loadAppConfig() {
   } catch {
     state.appConfig = {};
   }
+  applySiteWallpaper();
+}
+
+function applySiteWallpaper() {
+  const wallpaper = state.appConfig?.wallpaper;
+  const url = wallpaper?.url || "";
+  if (url) {
+    document.documentElement.style.setProperty("--site-wallpaper-image", `url("${String(url).replace(/"/g, "%22")}")`);
+    document.body.classList.add("has-site-wallpaper");
+  } else {
+    document.documentElement.style.removeProperty("--site-wallpaper-image");
+    document.body.classList.remove("has-site-wallpaper");
+  }
 }
 
 function hostFromBaseUrl(value) {
@@ -1001,6 +1020,7 @@ async function logout() {
   state.adminReports = [];
   state.adminEmailTemplates = [];
   state.adminAnnouncements = [];
+  state.adminWallpapers = [];
   state.editingAdminEmailTemplateId = null;
   state.editingAdminAnnouncementId = null;
   state.ownedSetCards = [];
@@ -3607,12 +3627,13 @@ async function loadAdmin() {
     setStatus("Admin access required.", "error", els.adminStatus);
     return;
   }
-  const [users, server, reports, templates, announcements, logs] = await Promise.all([
+  const [users, server, reports, templates, announcements, wallpapers, logs] = await Promise.all([
     api("/api/admin/users"),
     api("/api/admin/server"),
     api("/api/admin/reports"),
     api("/api/admin/email-templates"),
     api("/api/admin/announcements"),
+    api("/api/admin/wallpapers"),
     loadAdminLogs(false),
   ]);
   state.adminUsers = users.users || [];
@@ -3620,12 +3641,16 @@ async function loadAdmin() {
   state.adminReports = reports.reports || [];
   state.adminEmailTemplates = templates.templates || [];
   state.adminAnnouncements = announcements.announcements || [];
+  state.adminWallpapers = wallpapers.wallpapers || [];
+  state.appConfig = { ...(state.appConfig || {}), wallpaper: wallpapers.current || null };
+  applySiteWallpaper();
   renderAdminUsers();
   renderAdminServer();
   renderAdminReports();
   renderAdminLogs();
   renderAdminEmailTemplates();
   renderAdminAnnouncements();
+  renderAdminWallpapers();
 }
 
 async function loadAdminLogs(render = true) {
@@ -4054,6 +4079,99 @@ async function saveAdminAnnouncement(status) {
   } finally {
     if (button) button.disabled = false;
   }
+}
+
+function renderAdminWallpapers() {
+  if (!els.adminWallpapersList) return;
+  const wallpapers = state.adminWallpapers || [];
+  const currentUrl = state.appConfig?.wallpaper?.url || "";
+  if (els.adminWallpaperCount) {
+    els.adminWallpaperCount.textContent = `${integer.format(wallpapers.length)} wallpaper${wallpapers.length === 1 ? "" : "s"}`;
+  }
+  if (!wallpapers.length) {
+    els.adminWallpapersList.innerHTML = '<div class="empty-state">No wallpapers uploaded yet.</div>';
+    return;
+  }
+  els.adminWallpapersList.innerHTML = wallpapers.map((wallpaper) => {
+    const isCurrent = currentUrl && wallpaper.url === currentUrl;
+    return `
+      <article class="admin-wallpaper-row ${isCurrent ? "is-current" : ""}" data-wallpaper-id="${escapeHtml(wallpaper.id)}">
+        <img src="${escapeHtml(wallpaper.url)}" alt="${escapeHtml(wallpaper.original_name || "Site wallpaper")}">
+        <div class="admin-wallpaper-main">
+          <strong>${escapeHtml(wallpaper.original_name || wallpaper.filename || "Wallpaper")}</strong>
+          <span>${escapeHtml(formatBytes(wallpaper.size_bytes || 0))} · Uploaded ${escapeHtml(formatDate(wallpaper.created_at || ""))}${isCurrent ? " · Today's background" : ""}</span>
+        </div>
+        <button class="danger-action-button compact-button admin-delete-wallpaper-button" type="button">
+          <span class="trash-icon" aria-hidden="true"></span>Delete
+        </button>
+      </article>
+    `;
+  }).join("");
+  els.adminWallpapersList.querySelectorAll(".admin-delete-wallpaper-button").forEach((button) => {
+    button.addEventListener("click", () => deleteAdminWallpaper(button).catch((error) => setStatus(`Wallpaper delete failed: ${error.message}`, "error", els.adminWallpaperStatus || els.adminStatus)));
+  });
+}
+
+async function readAdminWallpaperFile(file) {
+  if (!file) {
+    throw new Error("Choose a wallpaper image first.");
+  }
+  if (!/^image\/(png|jpe?g|webp|gif)$/i.test(file.type || "")) {
+    throw new Error("Choose a PNG, JPG, WebP, or GIF image.");
+  }
+  if (file.size > 5 * 1024 * 1024) {
+    throw new Error("Choose an image under 5 MB.");
+  }
+  const image = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener("load", () => resolve(String(reader.result || "")));
+    reader.addEventListener("error", () => reject(new Error("Could not read that image.")));
+    reader.readAsDataURL(file);
+  });
+  return { image, name: file.name || "Wallpaper" };
+}
+
+async function uploadAdminWallpaper() {
+  if (!isAdminUser()) return;
+  const file = els.adminWallpaperInput?.files?.[0];
+  const button = els.uploadAdminWallpaperButton;
+  if (button) button.disabled = true;
+  setStatus("Uploading wallpaper...", "", els.adminWallpaperStatus || els.adminStatus);
+  try {
+    const payload = await readAdminWallpaperFile(file);
+    const result = await api("/api/admin/wallpapers", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    state.adminWallpapers = result.wallpapers || [];
+    state.appConfig = { ...(state.appConfig || {}), wallpaper: result.current || null };
+    applySiteWallpaper();
+    renderAdminWallpapers();
+    if (els.adminWallpaperInput) els.adminWallpaperInput.value = "";
+    setStatus("Wallpaper uploaded. It will join the daily rotation.", "success", els.adminWallpaperStatus || els.adminStatus);
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+async function deleteAdminWallpaper(button) {
+  if (!isAdminUser()) return;
+  const row = button?.closest(".admin-wallpaper-row");
+  const wallpaperId = row?.dataset.wallpaperId;
+  if (!wallpaperId) return;
+  const name = row.querySelector("strong")?.textContent || "this wallpaper";
+  const confirmed = window.confirm(`Delete ${name}? It will be removed from the daily rotation.`);
+  if (!confirmed) return;
+  button.disabled = true;
+  const result = await api(`/api/admin/wallpapers/${encodeURIComponent(wallpaperId)}`, {
+    method: "DELETE",
+    body: "{}",
+  });
+  state.adminWallpapers = result.wallpapers || [];
+  state.appConfig = { ...(state.appConfig || {}), wallpaper: result.current || null };
+  applySiteWallpaper();
+  renderAdminWallpapers();
+  setStatus("Wallpaper deleted.", "success", els.adminWallpaperStatus || els.adminStatus);
 }
 
 function insertAnnouncementMarkdown(action) {
@@ -10155,6 +10273,9 @@ function wireEvents() {
   });
   els.adminAnnouncementOverlay?.querySelectorAll("[data-markdown-action]")?.forEach((button) => {
     button.addEventListener("click", () => insertAnnouncementMarkdown(button.dataset.markdownAction));
+  });
+  els.uploadAdminWallpaperButton?.addEventListener("click", () => {
+    uploadAdminWallpaper().catch((error) => setStatus(`Wallpaper upload failed: ${error.message}`, "error", els.adminWallpaperStatus || els.adminStatus));
   });
   els.closeHomeAnnouncementDetailButton?.addEventListener("click", closeHomeAnnouncementDetail);
   els.homeAnnouncementDetailOverlay?.addEventListener("click", (event) => {

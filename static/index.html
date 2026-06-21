@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Arcane Ledger</title>
-    <link rel="stylesheet" href="/styles.css?v=157">
+    <link rel="stylesheet" href="/styles.css?v=158">
   </head>
   <body>
     <header class="topbar">
@@ -814,6 +814,21 @@
             </div>
             <div id="adminAnnouncementStatus" class="status admin-announcement-status" aria-live="polite"></div>
             <div id="adminAnnouncementsList" class="admin-announcements-list"></div>
+          </section>
+          <section class="panel admin-panel admin-wallpaper-panel">
+            <div class="panel-head">
+              <div>
+                <h3>Wallpapers</h3>
+                <span id="adminWallpaperCount"></span>
+              </div>
+            </div>
+            <p class="settings-help">Upload site wallpapers and Arcane Ledger will rotate one into the background each day.</p>
+            <div class="admin-wallpaper-upload">
+              <input id="adminWallpaperInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif">
+              <button id="uploadAdminWallpaperButton" class="primary-button compact-button" type="button">Upload Wallpaper</button>
+            </div>
+            <div id="adminWallpaperStatus" class="status admin-wallpaper-status" aria-live="polite"></div>
+            <div id="adminWallpapersList" class="admin-wallpapers-list"></div>
           </section>
           <section class="panel admin-panel admin-email-panel">
             <div class="panel-head">

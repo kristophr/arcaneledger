@@ -56,6 +56,7 @@ load_env_file()
 DATA_DIR = Path(os.environ.get("DATA_DIR", ROOT / "data"))
 DB_PATH = Path(os.environ.get("DB_PATH", DATA_DIR / "mtg_collection.sqlite"))
 LOG_DIR = Path(os.environ.get("LOG_DIR", DATA_DIR / "logs"))
+WALLPAPER_DIR = Path(os.environ.get("WALLPAPER_DIR", DATA_DIR / "wallpapers"))
 LOG_FILE = Path(os.environ.get("LOG_FILE", LOG_DIR / "arcaneledger.log"))
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
 LOG_MAX_BYTES = int(os.environ.get("LOG_MAX_BYTES", str(2 * 1024 * 1024)) or (2 * 1024 * 1024))
@@ -118,6 +119,14 @@ CARD_CONDITIONS = (
     "Damaged",
 )
 DEFAULT_CARD_CONDITION = "Near Mint"
+WALLPAPER_MIME_TYPES = {
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/jpg": ".jpg",
+    "image/webp": ".webp",
+    "image/gif": ".gif",
+}
+MAX_WALLPAPER_BYTES = 5 * 1024 * 1024
 CONDITION_ORDER = {condition: index for index, condition in enumerate(CARD_CONDITIONS)}
 CONTAINER_TYPES = ("binder", "box", "other")
 DEFAULT_CONTAINER_TYPE = "other"
@@ -1642,6 +1651,17 @@ def init_db(conn):
             FOREIGN KEY (admin_user_id) REFERENCES users(id) ON DELETE SET NULL
         );
 
+        CREATE TABLE IF NOT EXISTS site_wallpapers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            filename TEXT NOT NULL UNIQUE,
+            original_name TEXT NOT NULL DEFAULT '',
+            mime_type TEXT NOT NULL,
+            size_bytes INTEGER NOT NULL DEFAULT 0,
+            admin_user_id INTEGER,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (admin_user_id) REFERENCES users(id) ON DELETE SET NULL
+        );
+
         CREATE TABLE IF NOT EXISTS card_sale_journal (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER,
@@ -2896,6 +2916,7 @@ def public_app_config(conn):
         "email_configured": smtp_configured() or mailgun_configured(),
         "stripe_configured": stripe_checkout_configured(),
         "server_claimed": app_has_users(conn),
+        "wallpaper": current_site_wallpaper(conn),
     }
 
 
@@ -3559,6 +3580,128 @@ def save_home_announcement(conn, admin_user_id, payload):
         "ok": True,
         "announcement": announcement_row(row),
         "announcements": list_admin_announcements(conn)["announcements"],
+    }
+
+
+def wallpaper_url(filename):
+    return f"/media/wallpapers/{urllib.parse.quote(filename)}"
+
+
+def site_wallpaper_row(row):
+    return {
+        "id": str(row["id"]),
+        "filename": row["filename"],
+        "original_name": row["original_name"] or row["filename"],
+        "mime_type": row["mime_type"],
+        "size_bytes": int(row["size_bytes"] or 0),
+        "url": wallpaper_url(row["filename"]),
+        "created_at": row["created_at"],
+    }
+
+
+def list_site_wallpapers(conn):
+    rows = conn.execute(
+        """
+        SELECT id, filename, original_name, mime_type, size_bytes, created_at
+        FROM site_wallpapers
+        ORDER BY created_at DESC, id DESC
+        """
+    ).fetchall()
+    return {"wallpapers": [site_wallpaper_row(row) for row in rows]}
+
+
+def current_site_wallpaper(conn):
+    rows = conn.execute(
+        """
+        SELECT id, filename, original_name, mime_type, size_bytes, created_at
+        FROM site_wallpapers
+        ORDER BY created_at ASC, id ASC
+        """
+    ).fetchall()
+    if not rows:
+        return None
+    index = date.today().toordinal() % len(rows)
+    return site_wallpaper_row(rows[index])
+
+
+def clean_wallpaper_original_name(value):
+    text = re.sub(r"\s+", " ", (value or "").strip())
+    text = text.replace("/", "").replace("\\", "")
+    return text[:120] or "Wallpaper"
+
+
+def decode_wallpaper_data_url(data_url):
+    text = (data_url or "").strip()
+    match = re.match(r"^data:(image/(?:png|jpe?g|webp|gif));base64,([A-Za-z0-9+/=\s]+)$", text, flags=re.I)
+    if not match:
+        raise ValueError("Wallpaper must be a PNG, JPG, WebP, or GIF image.")
+    mime_type = match.group(1).lower()
+    extension = WALLPAPER_MIME_TYPES.get(mime_type)
+    if not extension:
+        raise ValueError("Wallpaper must be a PNG, JPG, WebP, or GIF image.")
+    try:
+        image_bytes = base64.b64decode(re.sub(r"\s+", "", match.group(2)), validate=True)
+    except Exception as exc:
+        raise ValueError("Wallpaper image data could not be decoded.") from exc
+    if not image_bytes:
+        raise ValueError("Wallpaper image is empty.")
+    if len(image_bytes) > MAX_WALLPAPER_BYTES:
+        raise ValueError("Wallpaper is too large. Use an image under 5 MB.")
+    return mime_type, extension, image_bytes
+
+
+def add_site_wallpaper(conn, admin_user_id, payload):
+    mime_type, extension, image_bytes = decode_wallpaper_data_url(payload.get("image"))
+    original_name = clean_wallpaper_original_name(payload.get("name") or payload.get("original_name"))
+    WALLPAPER_DIR.mkdir(parents=True, exist_ok=True)
+    filename = f"{int(time.time())}-{secrets.token_hex(8)}{extension}"
+    path = WALLPAPER_DIR / filename
+    path.write_bytes(image_bytes)
+    timestamp = now_iso()
+    cursor = conn.execute(
+        """
+        INSERT INTO site_wallpapers (filename, original_name, mime_type, size_bytes, admin_user_id, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (filename, original_name, mime_type, len(image_bytes), admin_user_id, timestamp),
+    )
+    conn.commit()
+    row = conn.execute(
+        """
+        SELECT id, filename, original_name, mime_type, size_bytes, created_at
+        FROM site_wallpapers
+        WHERE id = ?
+        """,
+        (cursor.lastrowid,),
+    ).fetchone()
+    return {
+        "ok": True,
+        "wallpaper": site_wallpaper_row(row),
+        "wallpapers": list_site_wallpapers(conn)["wallpapers"],
+        "current": current_site_wallpaper(conn),
+    }
+
+
+def delete_site_wallpaper(conn, wallpaper_id):
+    row = conn.execute(
+        "SELECT id, filename FROM site_wallpapers WHERE id = ?",
+        (wallpaper_id,),
+    ).fetchone()
+    if not row:
+        raise KeyError("Wallpaper not found")
+    conn.execute("DELETE FROM site_wallpapers WHERE id = ?", (wallpaper_id,))
+    conn.commit()
+    try:
+        path = (WALLPAPER_DIR / row["filename"]).resolve()
+        if WALLPAPER_DIR.resolve() in path.parents and path.exists():
+            path.unlink()
+    except OSError:
+        LOGGER.warning("Could not delete wallpaper file %s", row["filename"], exc_info=True)
+    return {
+        "ok": True,
+        "deleted": str(wallpaper_id),
+        "wallpapers": list_site_wallpapers(conn)["wallpapers"],
+        "current": current_site_wallpaper(conn),
     }
 
 
@@ -11561,6 +11704,32 @@ class Handler(SimpleHTTPRequestHandler):
         length = int(self.headers.get("Content-Length") or 0)
         return self.rfile.read(length) if length else b""
 
+    def send_wallpaper_file(self, filename):
+        filename = urllib.parse.unquote(filename or "")
+        if not re.match(r"^[A-Za-z0-9._-]+$", filename):
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+        path = (WALLPAPER_DIR / filename).resolve()
+        wallpaper_root = WALLPAPER_DIR.resolve()
+        if wallpaper_root not in path.parents or not path.exists() or not path.is_file():
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+        suffix = path.suffix.lower()
+        content_type = {
+            ".png": "image/png",
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".webp": "image/webp",
+            ".gif": "image/gif",
+        }.get(suffix, "application/octet-stream")
+        data = path.read_bytes()
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Cache-Control", "public, max-age=86400")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
     def session_token(self):
         return parse_cookies(self.headers.get("Cookie", "")).get(SESSION_COOKIE)
 
@@ -11585,6 +11754,9 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
+        media_match = re.match(r"^/media/wallpapers/([^/]+)$", parsed.path)
+        if media_match:
+            return self.send_wallpaper_file(media_match.group(1))
         try:
             with connect() as conn:
                 init_db(conn)
@@ -11635,6 +11807,11 @@ class Handler(SimpleHTTPRequestHandler):
                 if parsed.path == "/api/admin/announcements":
                     self.require_admin(conn)
                     return self.send_json(list_admin_announcements(conn))
+                if parsed.path == "/api/admin/wallpapers":
+                    self.require_admin(conn)
+                    payload = list_site_wallpapers(conn)
+                    payload["current"] = current_site_wallpaper(conn)
+                    return self.send_json(payload)
                 if parsed.path == "/api/cards/for-sale":
                     user = self.require_user(conn)
                     return self.send_json({"cards": list_sale_cards(conn, parsed.query, user["id"])})
@@ -11906,6 +12083,9 @@ class Handler(SimpleHTTPRequestHandler):
                 if parsed.path == "/api/admin/announcements":
                     user = self.require_admin(conn)
                     return self.send_json(save_home_announcement(conn, user["id"], self.read_json()))
+                if parsed.path == "/api/admin/wallpapers":
+                    user = self.require_admin(conn)
+                    return self.send_json(add_site_wallpaper(conn, user["id"], self.read_json()), HTTPStatus.CREATED)
                 if parsed.path == "/api/sync":
                     return self.send_json(sync_catalog(conn))
                 if parsed.path == "/api/import":
@@ -12154,6 +12334,10 @@ class Handler(SimpleHTTPRequestHandler):
                 if match:
                     user = self.require_admin(conn)
                     return self.send_json(admin_delete_user(conn, user["id"], int(match.group(1))))
+                match = re.match(r"^/api/admin/wallpapers/([0-9]+)$", parsed.path)
+                if match:
+                    self.require_admin(conn)
+                    return self.send_json(delete_site_wallpaper(conn, int(match.group(1))))
                 if parsed.path == "/api/user/profile":
                     user = self.require_user(conn)
                     result = delete_user_profile(conn, user["id"])

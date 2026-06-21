@@ -3,12 +3,17 @@
 ## 0.2.6 beta
 
 ### Added
+- Added Admin wallpaper management so site admins can upload and delete background images from the Admin area.
+- Added a daily wallpaper rotation that selects one uploaded image each day and applies it as a faint site-wide background.
+- Added local wallpaper storage under the app data directory with guarded media serving for uploaded wallpaper files.
 - Added detailed Stripe subscription tracking for purchased plan, Stripe price, subscription status, current period end, scheduled cancellation, canceled date, and ended date.
 - Added a Billing Details grid in Settings showing plan, status, renewal/end date, canceled date, and ended date when subscription history exists.
 - Added transactional subscription receipt emails after successful Stripe checkout, sent to the user's main account email address.
 - Added receipt duplicate protection so Stripe webhook retries do not send duplicate membership receipt emails.
 
 ### Changed
+- Updated the Admin page with a dedicated Wallpapers panel and thumbnail management controls.
+- Updated the public app configuration payload to include the currently selected daily wallpaper.
 - Updated billing copy to distinguish active renewals from subscriptions that are canceled but still active until the end of the billing period.
 - Updated Pro access checks so canceled subscriptions stop granting Pro after the current paid period has ended.
 - Preserved the last known Stripe price and plan when subscription events omit item pricing.
