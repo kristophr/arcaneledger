@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Arcane Ledger</title>
-    <link rel="stylesheet" href="/styles.css?v=156">
+    <link rel="stylesheet" href="/styles.css?v=157">
   </head>
   <body>
     <header class="topbar">
@@ -61,16 +61,45 @@
           </div>
         </div>
         <div class="home-dashboard-layout">
-          <div class="home-center-grid">
-            <section id="homeAnnouncementsPanel" class="home-announcements-panel" hidden>
-              <div class="panel-head">
-                <div>
-                  <p class="eyebrow">Announcements</p>
-                  <h3>Latest Updates</h3>
-                </div>
+          <section class="home-features-panel" aria-label="Arcane Ledger features">
+            <div class="panel-head">
+              <div>
+                <p class="eyebrow">What you can do</p>
+                <h3>Built for collectors who actually play with their cards.</h3>
               </div>
-              <div id="homeAnnouncementsList" class="home-announcements-list"></div>
-            </section>
+            </div>
+            <div class="home-features-list">
+              <article>
+                <strong>Catalog every card, every set</strong>
+                <span>Track your collection across Magic sets and exact card printings with Scryfall-backed detail.</span>
+              </article>
+              <article>
+                <strong>Organize owned and wanted cards</strong>
+                <span>Keep tabs on what you own, what you are hunting, and what belongs on a wishlist.</span>
+              </article>
+              <article>
+                <strong>Build and share virtual decks</strong>
+                <span>Design game-ready deck lists, even before every card is in your binder, then share them with friends.</span>
+              </article>
+              <article>
+                <strong>Know where everything lives</strong>
+                <span>Map cards into binders, boxes, and other containers so storage stops being a guessing game.</span>
+              </article>
+              <article>
+                <strong>Share wishlists and market extras</strong>
+                <span>Publish wishlists, list extra cards for sale, and give other collectors a clean way to browse.</span>
+              </article>
+              <article>
+                <strong>Show off the stories</strong>
+                <span>Write quick blurbs about favorite pulls, leave public card comments, and keep private notes for yourself.</span>
+              </article>
+              <article>
+                <strong>Track portfolio value</strong>
+                <span>See what you paid, what your cards are worth now, and how your collection changes over time.</span>
+              </article>
+            </div>
+          </section>
+          <div class="home-right-column">
             <section id="homeTodaysCardPanel" class="home-todays-card-panel" hidden>
               <div class="panel-head">
                 <div>
@@ -87,53 +116,62 @@
                 </div>
               </a>
             </section>
-          </div>
-          <aside class="home-server-stats-panel" aria-label="Overall server stats">
-            <div class="panel-head">
-              <div>
-                <p class="eyebrow">Overall Server Stats</p>
-                <h3>Community Snapshot</h3>
+            <section id="homeAnnouncementsPanel" class="home-announcements-panel" hidden>
+              <div class="panel-head">
+                <div>
+                  <p class="eyebrow">Announcements</p>
+                  <h3>Latest Updates</h3>
+                </div>
               </div>
-            </div>
-            <div class="home-meta-grid">
-              <article class="home-stat-card">
-                <span>Total value</span>
-                <strong id="homeTotalValue">$0.00</strong>
-              </article>
-              <article class="home-stat-card">
-                <span>Users</span>
-                <strong id="homeUserCount">0</strong>
-              </article>
-              <article class="home-stat-card">
-                <span>Cards cataloged</span>
-                <strong id="homeCatalogedCards">0</strong>
-              </article>
-              <article class="home-stat-card">
-                <span>Unique cards</span>
-                <strong id="homeUniqueCards">0</strong>
-              </article>
-              <article class="home-stat-card">
-                <span>Decks built</span>
-                <strong id="homeDeckCount">0</strong>
-              </article>
-              <article class="home-stat-card">
-                <span>Containers</span>
-                <strong id="homeContainerCount">0</strong>
-              </article>
-              <article class="home-stat-card">
-                <span>Wishlists</span>
-                <strong id="homeWishlistCount">0</strong>
-              </article>
-              <article class="home-stat-card">
-                <span>Cards for sale</span>
-                <strong id="homeSaleQuantity">0</strong>
-              </article>
-              <article class="home-stat-card">
-                <span>Store asking total</span>
-                <strong id="homeSaleAskingTotal">$0.00</strong>
-              </article>
-            </div>
-          </aside>
+              <div id="homeAnnouncementsList" class="home-announcements-list"></div>
+            </section>
+            <aside class="home-server-stats-panel" aria-label="Overall server stats">
+              <div class="panel-head">
+                <div>
+                  <p class="eyebrow">Overall Server Stats</p>
+                  <h3>Community Snapshot</h3>
+                </div>
+              </div>
+              <div class="home-meta-grid">
+                <article class="home-stat-card">
+                  <span>Total value</span>
+                  <strong id="homeTotalValue">$0.00</strong>
+                </article>
+                <article class="home-stat-card">
+                  <span>Users</span>
+                  <strong id="homeUserCount">0</strong>
+                </article>
+                <article class="home-stat-card">
+                  <span>Cards cataloged</span>
+                  <strong id="homeCatalogedCards">0</strong>
+                </article>
+                <article class="home-stat-card">
+                  <span>Unique cards</span>
+                  <strong id="homeUniqueCards">0</strong>
+                </article>
+                <article class="home-stat-card">
+                  <span>Decks built</span>
+                  <strong id="homeDeckCount">0</strong>
+                </article>
+                <article class="home-stat-card">
+                  <span>Containers</span>
+                  <strong id="homeContainerCount">0</strong>
+                </article>
+                <article class="home-stat-card">
+                  <span>Wishlists</span>
+                  <strong id="homeWishlistCount">0</strong>
+                </article>
+                <article class="home-stat-card">
+                  <span>Cards for sale</span>
+                  <strong id="homeSaleQuantity">0</strong>
+                </article>
+                <article class="home-stat-card">
+                  <span>Store asking total</span>
+                  <strong id="homeSaleAskingTotal">$0.00</strong>
+                </article>
+              </div>
+            </aside>
+          </div>
         </div>
       </section>
 

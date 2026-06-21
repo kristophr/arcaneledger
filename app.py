@@ -394,7 +394,15 @@ def enforce_role_limit(conn, user_id, table, label, limit_key, incoming=1):
     limit = ROLE_LIMITS.get(role, {}).get(limit_key)
     if not limit:
         return
-    current = conn.execute(f"SELECT COUNT(*) AS count FROM {table} WHERE user_id = ?", (user_id,)).fetchone()["count"] or 0
+    count_queries = {
+        "containers": "SELECT COUNT(*) AS count FROM containers WHERE user_id = ?",
+        "decks": "SELECT COUNT(*) AS count FROM decks WHERE user_id = ?",
+        "wishlists": "SELECT COUNT(*) AS count FROM wishlists WHERE user_id = ?",
+    }
+    query = count_queries.get(table)
+    if not query:
+        raise ValueError("Unsupported role-limit target.")
+    current = conn.execute(query, (user_id,)).fetchone()["count"] or 0
     if current + max(0, int(incoming or 0)) > limit:
         raise ValueError(f"Normal accounts can create up to {limit} {label}. Upgrade to Pro for unlimited {label}.")
 
@@ -698,9 +706,19 @@ def lookup_set_candidates(set_name, product_name):
     return candidates
 
 
+def safe_urlopen(req, timeout=30, allowed_schemes=("https",)):
+    url = req.full_url if isinstance(req, urllib.request.Request) else str(req)
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in allowed_schemes:
+        raise ValueError(f"Unsupported URL scheme for outbound request: {parsed.scheme or 'missing'}")
+    if not parsed.netloc:
+        raise ValueError("Outbound request URL must include a host.")
+    return urllib.request.urlopen(req, timeout=timeout)  # nosec B310 - scheme and host are validated above.
+
+
 def request_json(url):
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "application/json"})
-    with urllib.request.urlopen(req, timeout=SCRYFALL_TIMEOUT_SECONDS) as response:
+    with safe_urlopen(req, timeout=SCRYFALL_TIMEOUT_SECONDS) as response:
         return json.loads(response.read().decode("utf-8"))
 
 
@@ -834,7 +852,7 @@ def mailgun_trace():
     req.add_header("User-Agent", USER_AGENT)
     step("request", True, url=domain_url)
     try:
-        with urllib.request.urlopen(req, timeout=30) as response:
+        with safe_urlopen(req, timeout=30) as response:
             body = response.read().decode("utf-8", errors="replace")
             step("domain_lookup", 200 <= response.status < 300, f"{response.status} {response.reason}")
             try:
@@ -1087,7 +1105,7 @@ def send_mailgun_email(to_email, subject, text=None, html=None, tags=None, from_
     req.add_header("User-Agent", USER_AGENT)
 
     try:
-        with urllib.request.urlopen(req, timeout=30) as response:
+        with safe_urlopen(req, timeout=30) as response:
             status = response.status
             body = response.read().decode("utf-8")
     except urllib.error.HTTPError as exc:
@@ -2925,7 +2943,7 @@ def stripe_api_request(method, path, params=None):
             headers["Content-Type"] = "application/x-www-form-urlencoded"
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
-        with urllib.request.urlopen(req, timeout=30) as response:
+        with safe_urlopen(req, timeout=30) as response:
             body = response.read().decode("utf-8")
             return json.loads(body) if body else {}
     except urllib.error.HTTPError as exc:

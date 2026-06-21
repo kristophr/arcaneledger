@@ -1432,18 +1432,18 @@ body:not(.is-authenticated) .nav-bottom {
 
 .home-dashboard-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(260px, 340px);
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 420px);
   gap: 14px;
   align-items: start;
 }
 
-.home-center-grid {
+.home-right-column {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(280px, 0.85fr);
   gap: 14px;
-  align-items: stretch;
+  align-items: start;
 }
 
+.home-features-panel,
 .home-server-stats-panel,
 .home-todays-card-panel {
   border: 1px solid var(--line);
@@ -1453,14 +1453,49 @@ body:not(.is-authenticated) .nav-bottom {
   box-shadow: var(--shadow);
 }
 
+.home-features-panel .panel-head,
 .home-server-stats-panel .panel-head,
 .home-todays-card-panel .panel-head {
   margin-bottom: 10px;
 }
 
+.home-features-panel h3,
 .home-server-stats-panel h3,
 .home-todays-card-panel h3 {
   margin: 0;
+}
+
+.home-features-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.home-features-list article {
+  min-width: 0;
+  min-height: 126px;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--panel) 94%, var(--accent) 6%), var(--panel));
+}
+
+.home-features-list strong {
+  color: var(--ink);
+  font-size: 1rem;
+  line-height: 1.18;
+  overflow-wrap: anywhere;
+}
+
+.home-features-list span {
+  color: var(--muted);
+  font-size: 0.9rem;
+  font-weight: 650;
+  line-height: 1.42;
 }
 
 .home-meta-grid {
@@ -1470,7 +1505,6 @@ body:not(.is-authenticated) .nav-bottom {
 }
 
 .home-announcements-panel {
-  min-height: 100%;
   margin-bottom: 0;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -8319,8 +8353,7 @@ body:not(.is-authenticated) .nav-bottom {
     grid-template-columns: 1fr;
   }
 
-  .home-dashboard-layout,
-  .home-center-grid {
+  .home-dashboard-layout {
     grid-template-columns: 1fr;
   }
 
@@ -8538,6 +8571,7 @@ body:not(.is-authenticated) .nav-bottom {
   }
 
   .home-meta-grid,
+  .home-features-list,
   .metric-grid,
   .dashboard-grid,
   .cards-grid,
