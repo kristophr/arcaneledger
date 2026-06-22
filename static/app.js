@@ -115,7 +115,8 @@ function formatPercent(value) {
 const cardConditions = ["Near Mint", "Lightly Played", "Moderately Played", "Heavily Played", "Damaged"];
 const reportFields = [
   { key: "card_name", label: "Card Name" },
-  { key: "flavor_name", label: "Flavor Name" },
+  { key: "rules_name", label: "Rules Name" },
+  { key: "flavor_name", label: "Printed Name" },
   { key: "set_name", label: "Set" },
   { key: "set_code", label: "Set Code" },
   { key: "collector_number", label: "Collector #" },

@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.2.7 beta
+
+### Added
+- Added a logged-in Reports page for building collection reports with selectable fields and spreadsheet-style previews.
+- Added report filters for search text, set, variant, condition, quantity range, favorites-only, and for-sale-only views.
+- Added CSV export, Excel-readable XLS export, and email delivery for collection reports.
+- Added bulk removal controls inside wishlist detail views so users can select and remove multiple wishlist cards at once.
+- Added consolidated variant inventory treatment on card detail pages so normal, foil, and etched copies are easier to review from one card view.
+- Added a clearer Admin Wallpaper Management panel near the top of the Admin page.
+
+### Changed
+- Bumped the app version and user agent to `0.2.7 beta`.
+- Updated report Card Name output to prefer printed/flavor names, while exposing the underlying Scryfall/oracle name as a separate Rules Name field.
+- Updated short set-code report filters like `fin` to match the exact set code case-insensitively instead of broadly matching every set name containing similar text.
+- Updated Admin wallpaper copy and placement so upload/delete controls are easier to find.
+- Bumped frontend asset versions for Reports and report field label fixes.
+
+### Fixed
+- Fixed Reports set filtering that returned all Final Fantasy-related sets when a user entered a specific short code like `fin`.
+- Fixed Reports card naming for reskinned cards such as `Stay with Me`, which previously appeared as the base rules card `Rhystic Study`.
+- Fixed card detail movement history so all variant ledger entries can be viewed together while still preserving selected-variant context.
+
 ## 0.2.6 beta
 
 ### Added

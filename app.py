@@ -107,8 +107,8 @@ SESSION_IDLE_MINUTES = int(os.environ.get("SESSION_IDLE_MINUTES", "30") or 30)
 EMAIL_VERIFICATION_MINUTES = int(os.environ.get("EMAIL_VERIFICATION_MINUTES", "30") or 30)
 PASSWORD_RESET_MINUTES = int(os.environ.get("PASSWORD_RESET_MINUTES", str(EMAIL_VERIFICATION_MINUTES)) or EMAIL_VERIFICATION_MINUTES)
 SUPPORTED_SCRYFALL_LANGUAGES = {"en"}
-APP_VERSION = "0.2.6 beta"
-USER_AGENT = "arcaneledger/0.2.6"
+APP_VERSION = "0.2.7 beta"
+USER_AGENT = "arcaneledger/0.2.7"
 PROCESS_STARTED_AT = datetime.now(timezone.utc).replace(microsecond=0)
 COLOR_ORDER = ("W", "U", "B", "R", "G")
 CARD_CONDITIONS = (
@@ -11724,7 +11724,8 @@ def export_json(conn, user_id):
 
 REPORT_FIELD_LABELS = {
     "card_name": "Card Name",
-    "flavor_name": "Flavor Name",
+    "rules_name": "Rules Name",
+    "flavor_name": "Printed Name",
     "set_name": "Set",
     "set_code": "Set Code",
     "collector_number": "Collector #",
@@ -11805,9 +11806,14 @@ def build_collection_report(conn, user_id, payload):
         params.extend([like] * 6)
     set_filter = str(filters.get("set") or "").strip()
     if set_filter:
-        like = f"%{set_filter.lower()}%"
-        where.append("(lower(c.set_code) LIKE ? OR lower(c.set_name) LIKE ?)")
-        params.extend([like, like])
+        normalized_set = set_filter.lower()
+        if re.fullmatch(r"[a-z0-9]{2,6}", normalized_set):
+            where.append("lower(c.set_code) = ?")
+            params.append(normalized_set)
+        else:
+            like = f"%{normalized_set}%"
+            where.append("(lower(c.set_code) LIKE ? OR lower(c.set_name) LIKE ?)")
+            params.extend([like, like])
     variant = str(filters.get("variant") or "").strip()
     if variant:
         where.append("lower(COALESCE(col.variant, 'Normal')) = lower(?)")
@@ -11873,7 +11879,8 @@ def build_collection_report(conn, user_id, payload):
             WHERE d.user_id = ?
             GROUP BY dc.card_id, COALESCE(NULLIF(dc.variant, ''), 'Normal')
         )
-        SELECT c.name AS card_name,
+        SELECT COALESCE(NULLIF(c.flavor_name, ''), c.name) AS card_name,
+               c.name AS rules_name,
                COALESCE(c.flavor_name, '') AS flavor_name,
                c.set_name,
                c.set_code,
