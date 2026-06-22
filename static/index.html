@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Arcane Ledger</title>
-    <link rel="stylesheet" href="/styles.css?v=158">
+    <link rel="stylesheet" href="/styles.css?v=161">
   </head>
   <body>
     <header class="topbar">
@@ -29,6 +29,7 @@
           <button class="nav-command" type="button" data-page-target="search"><span class="catalog-search-icon" aria-hidden="true"></span>Search</button>
           <button class="nav-command" type="button" data-page-target="favorites"><span class="favorites-icon" aria-hidden="true"></span>Favorites</button>
           <button class="nav-command" type="button" data-page-target="collection"><span class="collection-icon" aria-hidden="true"></span>Collection</button>
+          <button class="nav-command" type="button" data-page-target="reports"><span class="reports-icon" aria-hidden="true"></span>Reports</button>
           <button class="nav-command" type="button" data-page-target="sets"><span class="sets-icon" aria-hidden="true"></span>Sets</button>
           <button class="nav-command" type="button" data-page-target="decks"><span class="deck-icon" aria-hidden="true"></span>Decks</button>
           <button class="nav-command" type="button" data-page-target="browse-decks"><span class="browse-decks-icon" aria-hidden="true"></span>Browse Decks</button>
@@ -349,6 +350,96 @@
         </div>
         <div id="status" class="status" aria-live="polite"></div>
         <div id="cardsGrid" class="cards-grid"></div>
+      </section>
+
+      <section class="reports-band app-page" data-page="reports" hidden>
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Collection reporting</p>
+            <h2>Reports</h2>
+          </div>
+          <div class="report-actions">
+            <button id="runReportButton" class="primary-button" type="button">Run Report</button>
+            <button id="exportReportCsvButton" class="secondary-button" type="button">Export CSV</button>
+            <button id="exportReportXlsButton" class="secondary-button" type="button">Export XLS</button>
+            <button id="emailReportButton" class="secondary-button" type="button">Email</button>
+          </div>
+        </div>
+        <div id="reportsStatus" class="status" aria-live="polite"></div>
+        <div class="reports-builder">
+          <section class="reports-panel">
+            <div class="panel-head">
+              <div>
+                <p class="eyebrow">Fields</p>
+                <h3>Pick columns</h3>
+              </div>
+            </div>
+            <div id="reportFieldGrid" class="report-field-grid"></div>
+          </section>
+          <section class="reports-panel">
+            <div class="panel-head">
+              <div>
+                <p class="eyebrow">Filters</p>
+                <h3>Narrow the list</h3>
+              </div>
+            </div>
+            <div class="report-filter-grid">
+              <label>
+                Search
+                <input id="reportSearchInput" type="search" placeholder="Name, type, set, notes">
+              </label>
+              <label>
+                Set
+                <input id="reportSetInput" type="text" placeholder="FIN, FIC, Duskmourn">
+              </label>
+              <label>
+                Variant
+                <select id="reportVariantSelect">
+                  <option value="">All variants</option>
+                  <option value="Normal">Normal</option>
+                  <option value="Foil">Foil</option>
+                  <option value="Etched Foil">Etched Foil</option>
+                </select>
+              </label>
+              <label>
+                Condition
+                <select id="reportConditionSelect">
+                  <option value="">All conditions</option>
+                  <option value="Near Mint">Near Mint</option>
+                  <option value="Lightly Played">Lightly Played</option>
+                  <option value="Moderately Played">Moderately Played</option>
+                  <option value="Heavily Played">Heavily Played</option>
+                  <option value="Damaged">Damaged</option>
+                </select>
+              </label>
+              <label>
+                Min Qty
+                <input id="reportMinQuantityInput" type="number" min="0" step="1" placeholder="0">
+              </label>
+              <label>
+                Max Qty
+                <input id="reportMaxQuantityInput" type="number" min="0" step="1" placeholder="Any">
+              </label>
+              <label class="report-check-option">
+                <input id="reportFavoritesOnlyInput" type="checkbox">
+                <span>Favorites only</span>
+              </label>
+              <label class="report-check-option">
+                <input id="reportForSaleOnlyInput" type="checkbox">
+                <span>For sale only</span>
+              </label>
+            </div>
+          </section>
+        </div>
+        <div class="reports-result-card">
+          <div class="reports-result-head">
+            <strong id="reportsResultCount">No report run yet</strong>
+            <span>Preview results before exporting or emailing.</span>
+          </div>
+          <div class="reports-table-wrap">
+            <table id="reportsTable" class="reports-table"></table>
+          </div>
+        </div>
       </section>
 
       <section class="sets-band app-page" data-page="sets" hidden>
@@ -804,6 +895,21 @@
             </div>
             <div id="adminReportsList" class="admin-reports-list"></div>
           </section>
+          <section class="panel admin-panel admin-wallpaper-panel">
+            <div class="panel-head">
+              <div>
+                <h3>Wallpaper Management</h3>
+                <span id="adminWallpaperCount"></span>
+              </div>
+            </div>
+            <p class="settings-help">Upload, review, and delete site wallpapers. Arcane Ledger rotates one into the background each day.</p>
+            <div class="admin-wallpaper-upload">
+              <input id="adminWallpaperInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif">
+              <button id="uploadAdminWallpaperButton" class="primary-button compact-button" type="button">Upload Wallpaper</button>
+            </div>
+            <div id="adminWallpaperStatus" class="status admin-wallpaper-status" aria-live="polite"></div>
+            <div id="adminWallpapersList" class="admin-wallpapers-list"></div>
+          </section>
           <section class="panel admin-panel admin-home-panel">
             <div class="panel-head">
               <div>
@@ -814,21 +920,6 @@
             </div>
             <div id="adminAnnouncementStatus" class="status admin-announcement-status" aria-live="polite"></div>
             <div id="adminAnnouncementsList" class="admin-announcements-list"></div>
-          </section>
-          <section class="panel admin-panel admin-wallpaper-panel">
-            <div class="panel-head">
-              <div>
-                <h3>Wallpapers</h3>
-                <span id="adminWallpaperCount"></span>
-              </div>
-            </div>
-            <p class="settings-help">Upload site wallpapers and Arcane Ledger will rotate one into the background each day.</p>
-            <div class="admin-wallpaper-upload">
-              <input id="adminWallpaperInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif">
-              <button id="uploadAdminWallpaperButton" class="primary-button compact-button" type="button">Upload Wallpaper</button>
-            </div>
-            <div id="adminWallpaperStatus" class="status admin-wallpaper-status" aria-live="polite"></div>
-            <div id="adminWallpapersList" class="admin-wallpapers-list"></div>
           </section>
           <section class="panel admin-panel admin-email-panel">
             <div class="panel-head">
@@ -1739,6 +1830,16 @@
             <option value="price">Card price</option>
           </select>
         </div>
+        <div id="wishlistBulkBar" class="wishlist-bulk-bar" hidden>
+          <label>
+            <input id="wishlistSelectAllCheckbox" type="checkbox">
+            <span>Select all visible</span>
+          </label>
+          <button id="removeSelectedWishlistCardsButton" class="danger-action-button compact-button" type="button">
+            <span class="trash-icon" aria-hidden="true"></span>
+            <span>Remove Selected</span>
+          </button>
+        </div>
         <div id="wishlistGrid" class="missing-list-grid wishlist-detail-grid"></div>
         <div class="modal-actions deck-detail-footer">
           <button id="deleteWishlistButton" class="danger-action-button" type="button" aria-label="Delete wishlist" title="Delete wishlist">
@@ -2217,6 +2318,6 @@
       </section>
     </div>
 
-    <script src="/app.js?v=177"></script>
+    <script src="/app.js?v=180"></script>
   </body>
 </html>

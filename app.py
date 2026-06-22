@@ -8706,6 +8706,58 @@ def delete_wishlist(conn, user_id, wishlist_id):
     return {"ok": True, "deleted": wishlist_id}
 
 
+def remove_wishlist_items(conn, user_id, wishlist_id, payload):
+    if not conn.execute("SELECT 1 FROM wishlists WHERE id = ? AND user_id = ?", (wishlist_id, user_id)).fetchone():
+        raise KeyError("Wishlist not found")
+    cards = payload.get("cards") or []
+    if not isinstance(cards, list) or not cards:
+        raise ValueError("Choose at least one wishlist card.")
+    timestamp = now_iso()
+    removed = 0
+    touched = set()
+    for item in cards:
+        if not isinstance(item, dict):
+            continue
+        card_id = (item.get("card_id") or item.get("scryfall_id") or "").strip()
+        variant = item.get("variant") or "Normal"
+        if not card_id:
+            continue
+        cursor = conn.execute(
+            """
+            DELETE FROM wishlist_items
+            WHERE user_id = ? AND wishlist_id = ? AND card_id = ? AND variant = ?
+            """,
+            (user_id, wishlist_id, card_id, variant),
+        )
+        removed += cursor.rowcount
+        touched.add((card_id, variant))
+    for card_id, variant in touched:
+        still_wishlisted = conn.execute(
+            """
+            SELECT 1
+            FROM wishlist_items
+            WHERE user_id = ? AND card_id = ? AND variant = ?
+            LIMIT 1
+            """,
+            (user_id, card_id, variant),
+        ).fetchone()
+        conn.execute(
+            """
+            INSERT INTO card_meta (user_id, card_id, variant, favorite, missing_list, wishlist, updated_at)
+            VALUES (?, ?, ?, 0, 0, ?, ?)
+            ON CONFLICT(user_id, card_id, variant) DO UPDATE SET
+                wishlist = excluded.wishlist,
+                updated_at = excluded.updated_at
+            """,
+            (user_id, card_id, variant, 1 if still_wishlisted else 0, timestamp),
+        )
+        if not still_wishlisted:
+            conn.execute("DELETE FROM wishlist_cards WHERE user_id = ? AND card_id = ?", (user_id, card_id))
+    conn.execute("UPDATE wishlists SET updated_at = ? WHERE id = ? AND user_id = ?", (timestamp, wishlist_id, user_id))
+    conn.commit()
+    return {"ok": True, "removed": removed, "wishlist": wishlist_detail(conn, user_id, wishlist_id)}
+
+
 def list_wishlist_cards(conn, query, user_id, wishlist_id=None):
     params = urllib.parse.parse_qs(query)
     search = (params.get("search", [""])[0] or "").strip().lower()
@@ -9951,12 +10003,15 @@ def purchase_history(conn, user_id, card_id, variant):
     ).fetchall())
 
 
-def movement_history(conn, user_id, card_id, variant):
-    variant = variant or "Normal"
+def movement_history(conn, user_id, card_id, variant=None):
+    variant_filter = "" if variant in (None, "", "All") else (variant or "Normal")
+    variant_where = "AND variant = ?" if variant_filter else ""
+    params = (user_id, card_id, variant_filter) if variant_filter else (user_id, card_id)
     purchases = rows_to_dicts(conn.execute(
-        """
+        f"""
         SELECT 'buy' AS movement_type,
                id AS movement_id,
+               COALESCE(NULLIF(variant, ''), 'Normal') AS variant,
                purchase_date AS movement_date,
                card_condition,
                COALESCE(graded, 0) AS graded,
@@ -9969,14 +10024,15 @@ def movement_history(conn, user_id, card_id, variant):
                notes,
                NULL AS asking_price_each
         FROM card_purchases
-        WHERE user_id = ? AND card_id = ? AND variant = ?
+        WHERE user_id = ? AND card_id = ? {variant_where}
         """,
-        (user_id, card_id, variant),
+        params,
     ).fetchall())
     adjustments = rows_to_dicts(conn.execute(
-        """
+        f"""
         SELECT 'adjust' AS movement_type,
                id AS movement_id,
+               COALESCE(NULLIF(variant, ''), 'Normal') AS variant,
                adjustment_type,
                adjustment_date AS movement_date,
                card_condition,
@@ -9988,14 +10044,15 @@ def movement_history(conn, user_id, card_id, variant):
                '' AS store_location,
                note
         FROM inventory_adjustments
-        WHERE user_id = ? AND card_id = ? AND variant = ?
+        WHERE user_id = ? AND card_id = ? {variant_where}
         """,
-        (user_id, card_id, variant),
+        params,
     ).fetchall())
     sales = rows_to_dicts(conn.execute(
-        """
+        f"""
         SELECT 'sell' AS movement_type,
                id AS movement_id,
+               COALESCE(NULLIF(variant, ''), 'Normal') AS variant,
                sold_date AS movement_date,
                card_condition,
                quantity,
@@ -10007,9 +10064,9 @@ def movement_history(conn, user_id, card_id, variant):
                '' AS note,
                asking_price_each
         FROM card_sale_journal
-        WHERE user_id = ? AND card_id = ? AND variant = ?
+        WHERE user_id = ? AND card_id = ? {variant_where}
         """,
-        (user_id, card_id, variant),
+        params,
     ).fetchall())
     movements = purchases + sales + adjustments
     return sorted(
@@ -10392,7 +10449,8 @@ def card_detail(conn, user_id, card_id, variant="Normal"):
         return card
     card = dict(row)
     card["purchases"] = purchase_history(conn, user_id, card_id, variant)
-    card["movements"] = movement_history(conn, user_id, card_id, variant)
+    card["movements"] = movement_history(conn, user_id, card_id)
+    card["selected_variant_movements"] = movement_history(conn, user_id, card_id, variant)
     card["condition_inventory"] = condition_inventory_for_card(conn, user_id, card_id)
     card["variant_summaries"] = variant_summaries_for_cards(conn, [card_id], user_id).get(card_id, [])
     apply_card_collection_financials(card, conn, user_id, card_id)
@@ -11664,6 +11722,250 @@ def export_json(conn, user_id):
     ]
 
 
+REPORT_FIELD_LABELS = {
+    "card_name": "Card Name",
+    "flavor_name": "Flavor Name",
+    "set_name": "Set",
+    "set_code": "Set Code",
+    "collector_number": "Collector #",
+    "variant": "Variant",
+    "condition": "Condition",
+    "quantity": "Quantity",
+    "market_price": "Market Price",
+    "total_value": "Total Value",
+    "average_paid": "Average Paid",
+    "total_paid": "Total Paid",
+    "delta": "Delta",
+    "type_line": "Type",
+    "colors": "Colors",
+    "rarity": "Rarity",
+    "first_obtained": "First Obtained",
+    "favorite": "Favorite",
+    "for_sale_quantity": "For Sale Qty",
+    "asking_price": "Asking Price",
+    "container_quantity": "Container Qty",
+    "deck_quantity": "Deck Qty",
+    "notes": "Notes",
+}
+
+DEFAULT_REPORT_FIELDS = [
+    "card_name", "set_code", "variant", "condition", "quantity", "market_price", "total_value", "delta",
+]
+MONEY_REPORT_FIELDS = {"market_price", "total_value", "average_paid", "total_paid", "delta", "asking_price"}
+
+
+def selected_report_fields(payload):
+    requested = payload.get("fields") if isinstance(payload, dict) else []
+    fields = [field for field in requested if isinstance(field, str) and field in REPORT_FIELD_LABELS]
+    if not fields:
+        fields = list(DEFAULT_REPORT_FIELDS)
+    return [{"key": field, "label": REPORT_FIELD_LABELS[field]} for field in fields]
+
+
+def report_money(value):
+    try:
+        return f"${float(value or 0):,.2f}"
+    except (TypeError, ValueError):
+        return "$0.00"
+
+
+def report_display_value(key, value):
+    if value is None:
+        return ""
+    if key in MONEY_REPORT_FIELDS:
+        return report_money(value)
+    if key == "favorite":
+        return "Yes" if int(value or 0) else "No"
+    return str(value)
+
+
+def build_collection_report(conn, user_id, payload):
+    payload = payload or {}
+    filters = payload.get("filters") or {}
+    fields = selected_report_fields(payload)
+    price_expr = current_price_sql("c")
+    total_paid_expr = "COALESCE(purchase.total_paid, COALESCE(col.quantity, 0) * COALESCE(col.paid_price, 0), 0)"
+    where = ["col.user_id = ?", "col.quantity > 0"]
+    params = [user_id]
+    search = str(filters.get("search") or "").strip()
+    if search:
+        like = f"%{search.lower()}%"
+        where.append(
+            """
+            (
+                lower(c.name) LIKE ?
+                OR lower(COALESCE(c.flavor_name, '')) LIKE ?
+                OR lower(c.set_name) LIKE ?
+                OR lower(c.set_code) LIKE ?
+                OR lower(COALESCE(c.type_line, '')) LIKE ?
+                OR lower(COALESCE(col.notes, '')) LIKE ?
+            )
+            """
+        )
+        params.extend([like] * 6)
+    set_filter = str(filters.get("set") or "").strip()
+    if set_filter:
+        like = f"%{set_filter.lower()}%"
+        where.append("(lower(c.set_code) LIKE ? OR lower(c.set_name) LIKE ?)")
+        params.extend([like, like])
+    variant = str(filters.get("variant") or "").strip()
+    if variant:
+        where.append("lower(COALESCE(col.variant, 'Normal')) = lower(?)")
+        params.append(variant)
+    condition = str(filters.get("condition") or "").strip()
+    if condition:
+        where.append("lower(COALESCE(col.card_condition, ?)) = lower(?)")
+        params.extend([DEFAULT_CARD_CONDITION, condition])
+    try:
+        min_quantity = int(filters.get("min_quantity") or 0)
+    except (TypeError, ValueError):
+        min_quantity = 0
+    if min_quantity > 0:
+        where.append("COALESCE(col.quantity, 0) >= ?")
+        params.append(min_quantity)
+    try:
+        max_quantity = int(filters.get("max_quantity") or 0)
+    except (TypeError, ValueError):
+        max_quantity = 0
+    if max_quantity > 0:
+        where.append("COALESCE(col.quantity, 0) <= ?")
+        params.append(max_quantity)
+    if filters.get("favorites_only"):
+        where.append("COALESCE(meta.favorite, 0) = 1")
+    if filters.get("for_sale_only"):
+        where.append("COALESCE(sale.for_sale_quantity, 0) > 0")
+    rows = conn.execute(
+        f"""
+        WITH purchase AS (
+            SELECT card_id,
+                   COALESCE(NULLIF(variant, ''), 'Normal') AS variant,
+                   SUM(COALESCE(total_price, 0)) AS total_paid,
+                   SUM(COALESCE(quantity, 0)) AS purchase_quantity,
+                   MIN(purchase_date) AS first_obtained
+            FROM card_purchases
+            WHERE user_id = ?
+            GROUP BY card_id, COALESCE(NULLIF(variant, ''), 'Normal')
+        ),
+        sale AS (
+            SELECT card_id,
+                   COALESCE(NULLIF(variant, ''), 'Normal') AS variant,
+                   SUM(COALESCE(quantity, 0)) AS for_sale_quantity,
+                   AVG(COALESCE(asking_price, 0)) AS asking_price
+            FROM card_sales
+            WHERE user_id = ?
+            GROUP BY card_id, COALESCE(NULLIF(variant, ''), 'Normal')
+        ),
+        container_totals AS (
+            SELECT cc.card_id,
+                   COALESCE(NULLIF(cc.variant, ''), 'Normal') AS variant,
+                   SUM(COALESCE(cc.quantity, 0)) AS container_quantity
+            FROM container_cards cc
+            JOIN containers con ON con.id = cc.container_id
+            WHERE con.user_id = ?
+            GROUP BY cc.card_id, COALESCE(NULLIF(cc.variant, ''), 'Normal')
+        ),
+        deck_totals AS (
+            SELECT dc.card_id,
+                   COALESCE(NULLIF(dc.variant, ''), 'Normal') AS variant,
+                   SUM(COALESCE(dc.quantity, 0)) AS deck_quantity
+            FROM deck_cards dc
+            JOIN decks d ON d.id = dc.deck_id
+            WHERE d.user_id = ?
+            GROUP BY dc.card_id, COALESCE(NULLIF(dc.variant, ''), 'Normal')
+        )
+        SELECT c.name AS card_name,
+               COALESCE(c.flavor_name, '') AS flavor_name,
+               c.set_name,
+               c.set_code,
+               c.collector_number,
+               COALESCE(col.variant, 'Normal') AS variant,
+               COALESCE(col.card_condition, ?) AS condition,
+               COALESCE(col.quantity, 0) AS quantity,
+               ({price_expr}) AS market_price,
+               COALESCE(col.quantity, 0) * ({price_expr}) AS total_value,
+               CASE
+                   WHEN COALESCE(purchase.purchase_quantity, 0) > 0 THEN COALESCE(purchase.total_paid, 0) / purchase.purchase_quantity
+                   ELSE COALESCE(col.paid_price, 0)
+               END AS average_paid,
+               {total_paid_expr} AS total_paid,
+               (COALESCE(col.quantity, 0) * ({price_expr})) - ({total_paid_expr}) AS delta,
+               COALESCE(c.type_line, '') AS type_line,
+               COALESCE(c.colors, '') AS colors,
+               COALESCE(c.rarity, '') AS rarity,
+               COALESCE(purchase.first_obtained, col.acquired_date, '') AS first_obtained,
+               COALESCE(meta.favorite, 0) AS favorite,
+               COALESCE(sale.for_sale_quantity, 0) AS for_sale_quantity,
+               COALESCE(sale.asking_price, 0) AS asking_price,
+               COALESCE(container_totals.container_quantity, 0) AS container_quantity,
+               COALESCE(deck_totals.deck_quantity, 0) AS deck_quantity,
+               COALESCE(col.notes, '') AS notes
+        FROM collection col
+        JOIN cards c ON c.scryfall_id = col.card_id
+        LEFT JOIN card_meta meta ON meta.user_id = col.user_id AND meta.card_id = col.card_id AND meta.variant = col.variant
+        LEFT JOIN purchase ON purchase.card_id = col.card_id AND purchase.variant = COALESCE(col.variant, 'Normal')
+        LEFT JOIN sale ON sale.card_id = col.card_id AND sale.variant = COALESCE(col.variant, 'Normal')
+        LEFT JOIN container_totals ON container_totals.card_id = col.card_id AND container_totals.variant = COALESCE(col.variant, 'Normal')
+        LEFT JOIN deck_totals ON deck_totals.card_id = col.card_id AND deck_totals.variant = COALESCE(col.variant, 'Normal')
+        WHERE {" AND ".join(where)}
+        ORDER BY total_value DESC, c.name COLLATE NOCASE, col.variant COLLATE NOCASE
+        LIMIT 1000
+        """,
+        (user_id, user_id, user_id, user_id, DEFAULT_CARD_CONDITION, *params),
+    ).fetchall()
+    return {
+        "fields": fields,
+        "rows": [
+            {field["key"]: row[field["key"]] for field in fields}
+            for row in rows
+        ],
+    }
+
+
+def collection_report_html(report, title="Arcane Ledger Collection Report"):
+    fields = report.get("fields") or []
+    rows = report.get("rows") or []
+    header = "".join(f"<th>{html_lib.escape(field['label'])}</th>" for field in fields)
+    body = "".join(
+        "<tr>" + "".join(
+            f"<td>{html_lib.escape(report_display_value(field['key'], row.get(field['key'])))}</td>"
+            for field in fields
+        ) + "</tr>"
+        for row in rows
+    )
+    if not body:
+        body = f"<tr><td colspan=\"{len(fields) or 1}\">No rows matched this report.</td></tr>"
+    return f"""
+    <h2>{html_lib.escape(title)}</h2>
+    <p>{len(rows):,} row{'s' if len(rows) != 1 else ''} generated from your collection.</p>
+    <table border="1" cellspacing="0" cellpadding="6">
+      <thead><tr>{header}</tr></thead>
+      <tbody>{body}</tbody>
+    </table>
+    """
+
+
+def email_collection_report(conn, user, payload):
+    to_email = normalize_email((payload or {}).get("to_email") or user["email"])
+    if not to_email:
+        raise ValueError("Enter an email address.")
+    report = build_collection_report(conn, user["id"], payload or {})
+    html_body = collection_report_html(report)
+    text_lines = ["Arcane Ledger Collection Report", f"{len(report.get('rows') or []):,} rows"]
+    for row in report.get("rows", [])[:25]:
+        text_lines.append(" | ".join(
+            report_display_value(field["key"], row.get(field["key"]))
+            for field in report.get("fields", [])
+        ))
+    result = send_email(
+        to_email,
+        "Arcane Ledger Collection Report",
+        "\n".join(text_lines),
+        html_body,
+        tags=["arcane-ledger", "collection-report"],
+    )
+    return {"ok": True, "message": f"Report emailed to {to_email}.", "email": result}
+
+
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(STATIC_DIR), **kwargs)
@@ -12023,7 +12325,7 @@ class Handler(SimpleHTTPRequestHandler):
             or re.match(r"^/favorites/[^/]+/?$", parsed.path)
             or re.match(r"^/verify-email/[^/]+/?$", parsed.path)
             or re.match(r"^/reset-password/[^/]+/?$", parsed.path)
-            or re.match(r"^/(dashboard|favorites|collection|sets|decks|browse-decks|containers|missing-list|for-sale|store-front|wishlist|notifications|admin|settings|search|import)/?$", parsed.path)
+            or re.match(r"^/(dashboard|favorites|collection|reports|sets|decks|browse-decks|containers|missing-list|for-sale|store-front|wishlist|notifications|admin|settings|search|import)/?$", parsed.path)
         ):
             self.path = "/index.html"
         return super().do_GET()
@@ -12074,6 +12376,12 @@ class Handler(SimpleHTTPRequestHandler):
                 if parsed.path == "/api/reports":
                     user = self.require_user(conn)
                     return self.send_json(create_content_report(conn, user["id"], self.read_json()), HTTPStatus.CREATED)
+                if parsed.path == "/api/collection-report":
+                    user = self.require_user(conn)
+                    return self.send_json(build_collection_report(conn, user["id"], self.read_json()))
+                if parsed.path == "/api/collection-report/email":
+                    user = self.require_user(conn)
+                    return self.send_json(email_collection_report(conn, user, self.read_json()))
                 if parsed.path == "/api/admin/email-templates/test":
                     user = self.require_admin(conn)
                     return self.send_json(send_admin_email_template_test(conn, user, self.read_json()))
@@ -12350,6 +12658,10 @@ class Handler(SimpleHTTPRequestHandler):
                 if match:
                     user = self.require_user(conn)
                     return self.send_json(delete_wishlist(conn, user["id"], int(match.group(1))))
+                match = re.match(r"^/api/wishlists/([0-9]+)/cards$", parsed.path)
+                if match:
+                    user = self.require_user(conn)
+                    return self.send_json(remove_wishlist_items(conn, user["id"], int(match.group(1)), self.read_json()))
                 match = re.match(r"^/api/decks/([0-9]+)/cards$", parsed.path)
                 if match:
                     user = self.require_user(conn)

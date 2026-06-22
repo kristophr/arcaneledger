@@ -8,6 +8,7 @@ const state = {
   storeFrontCards: [],
   browseDecks: [],
   wishlistCards: [],
+  reportPayload: null,
   wishlists: [],
   notifications: [],
   unreadNotificationCount: 0,
@@ -54,6 +55,7 @@ const state = {
   deckEditorDirty: false,
   deckEditorSnapshot: "",
   activeWishlist: null,
+  selectedWishlistItems: new Set(),
   pendingWishlistCard: null,
   pendingWishlistOptions: null,
   emailingWishlist: null,
@@ -111,6 +113,34 @@ function formatPercent(value) {
   return `${Number.isFinite(percent) ? percent.toFixed(1) : "0.0"}%`;
 }
 const cardConditions = ["Near Mint", "Lightly Played", "Moderately Played", "Heavily Played", "Damaged"];
+const reportFields = [
+  { key: "card_name", label: "Card Name" },
+  { key: "flavor_name", label: "Flavor Name" },
+  { key: "set_name", label: "Set" },
+  { key: "set_code", label: "Set Code" },
+  { key: "collector_number", label: "Collector #" },
+  { key: "variant", label: "Variant" },
+  { key: "condition", label: "Condition" },
+  { key: "quantity", label: "Quantity" },
+  { key: "market_price", label: "Market Price" },
+  { key: "total_value", label: "Total Value" },
+  { key: "average_paid", label: "Average Paid" },
+  { key: "total_paid", label: "Total Paid" },
+  { key: "delta", label: "Delta" },
+  { key: "type_line", label: "Type" },
+  { key: "colors", label: "Colors" },
+  { key: "rarity", label: "Rarity" },
+  { key: "first_obtained", label: "First Obtained" },
+  { key: "favorite", label: "Favorite" },
+  { key: "for_sale_quantity", label: "For Sale Qty" },
+  { key: "asking_price", label: "Asking Price" },
+  { key: "container_quantity", label: "Container Qty" },
+  { key: "deck_quantity", label: "Deck Qty" },
+  { key: "notes", label: "Notes" },
+];
+const defaultReportFields = [
+  "card_name", "set_code", "variant", "condition", "quantity", "market_price", "total_value", "delta",
+];
 const disallowedNameWords = new Set([
   "fuck", "shit", "bitch", "cunt", "asshole", "whore", "slut",
   "nigger", "nigga", "fag", "faggot", "retard", "kike", "spic",
@@ -122,6 +152,7 @@ const pageRoutes = {
   search: "/search",
   favorites: "/favorites",
   collection: "/collection",
+  reports: "/reports",
   sets: "/sets",
   decks: "/decks",
   "browse-decks": "/browse-decks",
@@ -198,6 +229,22 @@ const els = {
   browseDecksStatus: document.querySelector("#browseDecksStatus"),
   saleModalStatus: document.querySelector("#saleModalStatus"),
   wishlistStatus: document.querySelector("#wishlistStatus"),
+  reportsStatus: document.querySelector("#reportsStatus"),
+  reportFieldGrid: document.querySelector("#reportFieldGrid"),
+  reportSearchInput: document.querySelector("#reportSearchInput"),
+  reportSetInput: document.querySelector("#reportSetInput"),
+  reportVariantSelect: document.querySelector("#reportVariantSelect"),
+  reportConditionSelect: document.querySelector("#reportConditionSelect"),
+  reportMinQuantityInput: document.querySelector("#reportMinQuantityInput"),
+  reportMaxQuantityInput: document.querySelector("#reportMaxQuantityInput"),
+  reportFavoritesOnlyInput: document.querySelector("#reportFavoritesOnlyInput"),
+  reportForSaleOnlyInput: document.querySelector("#reportForSaleOnlyInput"),
+  runReportButton: document.querySelector("#runReportButton"),
+  exportReportCsvButton: document.querySelector("#exportReportCsvButton"),
+  exportReportXlsButton: document.querySelector("#exportReportXlsButton"),
+  emailReportButton: document.querySelector("#emailReportButton"),
+  reportsResultCount: document.querySelector("#reportsResultCount"),
+  reportsTable: document.querySelector("#reportsTable"),
   notificationsStatus: document.querySelector("#notificationsStatus"),
   adminStatus: document.querySelector("#adminStatus"),
   adminEmailStatus: document.querySelector("#adminEmailStatus"),
@@ -277,6 +324,9 @@ const els = {
   saleSortSelect: document.querySelector("#saleSortSelect"),
   storeFrontSortSelect: document.querySelector("#storeFrontSortSelect"),
   wishlistSortSelect: document.querySelector("#wishlistSortSelect"),
+  wishlistBulkBar: document.querySelector("#wishlistBulkBar"),
+  wishlistSelectAllCheckbox: document.querySelector("#wishlistSelectAllCheckbox"),
+  removeSelectedWishlistCardsButton: document.querySelector("#removeSelectedWishlistCardsButton"),
   catalogSortSelect: document.querySelector("#catalogSortSelect"),
   tileViewButton: document.querySelector("#tileViewButton"),
   listViewButton: document.querySelector("#listViewButton"),
@@ -1185,23 +1235,56 @@ function conditionChipsHtml(conditions) {
   `).join("");
 }
 
-function variantSummaryHtml(card) {
+function variantSummaryHtml(card, options = {}) {
   const summaries = variantSummaries(card);
   if (!summaries.length) return "";
+  const selectedVariant = options.selectedVariant || card.variant || "Normal";
+  const title = options.title || "";
   return `
     <div class="variant-summary-table" aria-label="Card variants">
+      ${title ? `<div class="variant-summary-title">${escapeHtml(title)}</div>` : ""}
       <div class="variant-summary-header">
         <span>Variant</span>
         <span>Conditions</span>
         <span>Qty</span>
       </div>
       ${summaries.map((summary) => `
-        <div class="variant-summary-row ${isSpecialVariant(summary.variant) ? "is-special-variant" : ""}">
+        <div class="variant-summary-row ${isSpecialVariant(summary.variant) ? "is-special-variant" : ""} ${(summary.variant || "Normal") === selectedVariant ? "is-selected-variant" : ""}">
           <strong>${escapeHtml(summary.variant || "Normal")}</strong>
           <span class="variant-condition-list">${conditionChipsHtml(summary.conditions)}</span>
           <b>${integer.format(summary.quantity || 0)}</b>
         </div>
       `).join("")}
+    </div>
+  `;
+}
+
+function cardDetailVariantOptions(card) {
+  const variants = new Set();
+  for (const summary of variantSummaries(card)) {
+    variants.add(summary.variant || "Normal");
+  }
+  for (const variant of variantsForCard(card)) {
+    variants.add(variant || "Normal");
+  }
+  if (card.variant) variants.add(card.variant);
+  return Array.from(variants);
+}
+
+function cardDetailVariantSwitcherHtml(card) {
+  const variants = cardDetailVariantOptions(card);
+  if (variants.length <= 1) return "";
+  const activeVariant = card.variant || "Normal";
+  return `
+    <div class="card-variant-switcher" aria-label="Choose card variant">
+      <span>Viewing</span>
+      <div>
+        ${variants.map((variant) => `
+          <button class="${variant === activeVariant ? "is-active" : ""}" type="button" data-card-variant="${escapeAttribute(variant)}">
+            ${escapeHtml(variant)}
+          </button>
+        `).join("")}
+      </div>
     </div>
   `;
 }
@@ -1549,6 +1632,7 @@ async function deleteCardMovement(button) {
   if (!card) return;
   const movementType = button.dataset.movementType;
   const movementId = button.dataset.movementId;
+  const movementVariant = button.dataset.variant || card.variant || "Normal";
   const isSale = movementType === "sell";
   const isAdjust = movementType === "adjust";
   const confirmed = window.confirm(
@@ -1562,7 +1646,7 @@ async function deleteCardMovement(button) {
   const result = await api(`/api/cards/${encodeURIComponent(card.scryfall_id)}/movements`, {
     method: "DELETE",
     body: JSON.stringify({
-      variant: card.variant || "Normal",
+      variant: movementVariant,
       movement_type: movementType,
       movement_id: movementId,
     }),
@@ -1914,6 +1998,9 @@ function activatePage(pageName, options = {}) {
       renderCollection();
     });
   }
+  if (page === "reports") {
+    loadReports();
+  }
   if (page === "sets") {
     clearSelectedCards();
     loadOwnedSets().catch((error) => {
@@ -1979,6 +2066,7 @@ function activatePage(pageName, options = {}) {
 function activeStatusTarget() {
   const visiblePage = Array.from(els.pages).find((page) => !page.hidden)?.dataset.page || "";
   if (visiblePage === "favorites") return els.favoritesStatus;
+  if (visiblePage === "reports") return els.reportsStatus;
   if (visiblePage === "sets") return els.setsStatus;
   if (visiblePage === "missing-list") return els.missingStatus;
   if (visiblePage === "for-sale") return els.saleStatus;
@@ -1988,6 +2076,153 @@ function activeStatusTarget() {
   if (visiblePage === "admin") return els.adminStatus;
   if (visiblePage === "search") return els.catalogSearchStatus;
   return els.status;
+}
+
+function renderReportFieldPicker() {
+  if (!els.reportFieldGrid) return;
+  els.reportFieldGrid.innerHTML = reportFields.map((field) => `
+    <label class="report-field-option">
+      <input type="checkbox" value="${escapeHtml(field.key)}" ${defaultReportFields.includes(field.key) ? "checked" : ""}>
+      <span>${escapeHtml(field.label)}</span>
+    </label>
+  `).join("");
+}
+
+function selectedReportFields() {
+  const checked = Array.from(els.reportFieldGrid?.querySelectorAll("input:checked") || []).map((input) => input.value);
+  return checked.length ? checked : [...defaultReportFields];
+}
+
+function collectionReportPayload() {
+  return {
+    fields: selectedReportFields(),
+    filters: {
+      search: els.reportSearchInput?.value?.trim() || "",
+      set: els.reportSetInput?.value?.trim() || "",
+      variant: els.reportVariantSelect?.value || "",
+      condition: els.reportConditionSelect?.value || "",
+      min_quantity: els.reportMinQuantityInput?.value || "",
+      max_quantity: els.reportMaxQuantityInput?.value || "",
+      favorites_only: Boolean(els.reportFavoritesOnlyInput?.checked),
+      for_sale_only: Boolean(els.reportForSaleOnlyInput?.checked),
+    },
+  };
+}
+
+function reportDisplayValue(value, key) {
+  if (value === null || value === undefined || value === "") return "";
+  if (["market_price", "total_value", "average_paid", "total_paid", "delta", "asking_price"].includes(key)) {
+    return dollars.format(Number(value || 0));
+  }
+  if (["quantity", "for_sale_quantity", "container_quantity", "deck_quantity"].includes(key)) {
+    return integer.format(Number(value || 0));
+  }
+  if (key === "favorite") return Number(value || 0) ? "Yes" : "No";
+  return String(value);
+}
+
+function renderReportTable(payload) {
+  state.reportPayload = payload;
+  const fields = payload?.fields || [];
+  const rows = payload?.rows || [];
+  if (els.reportsResultCount) {
+    els.reportsResultCount.textContent = `${integer.format(rows.length)} row${rows.length === 1 ? "" : "s"}`;
+  }
+  if (!els.reportsTable) return;
+  if (!fields.length) {
+    els.reportsTable.innerHTML = "";
+    return;
+  }
+  els.reportsTable.innerHTML = `
+    <thead>
+      <tr>${fields.map((field) => `<th>${escapeHtml(field.label)}</th>`).join("")}</tr>
+    </thead>
+    <tbody>
+      ${rows.length ? rows.map((row) => `
+        <tr>
+          ${fields.map((field) => `<td>${escapeHtml(reportDisplayValue(row[field.key], field.key))}</td>`).join("")}
+        </tr>
+      `).join("") : `<tr><td colspan="${fields.length}">No cards matched those filters.</td></tr>`}
+    </tbody>
+  `;
+}
+
+async function runCollectionReport() {
+  setStatus("Building report...", "", els.reportsStatus);
+  const payload = await api("/api/collection-report", {
+    method: "POST",
+    body: JSON.stringify(collectionReportPayload()),
+  });
+  renderReportTable(payload);
+  setStatus("Report ready.", "success", els.reportsStatus);
+}
+
+function reportCsv(payload = state.reportPayload) {
+  const fields = payload?.fields || [];
+  const rows = payload?.rows || [];
+  const quote = (value) => {
+    const text = value === null || value === undefined ? "" : String(value);
+    return `"${text.replaceAll('"', '""')}"`;
+  };
+  return [
+    fields.map((field) => quote(field.label)).join(","),
+    ...rows.map((row) => fields.map((field) => quote(reportDisplayValue(row[field.key], field.key))).join(",")),
+  ].join("\n");
+}
+
+function reportXls(payload = state.reportPayload) {
+  const fields = payload?.fields || [];
+  const rows = payload?.rows || [];
+  return `<!doctype html><html><head><meta charset="utf-8"></head><body><table><thead><tr>${
+    fields.map((field) => `<th>${escapeHtml(field.label)}</th>`).join("")
+  }</tr></thead><tbody>${
+    rows.map((row) => `<tr>${fields.map((field) => `<td>${escapeHtml(reportDisplayValue(row[field.key], field.key))}</td>`).join("")}</tr>`).join("")
+  }</tbody></table></body></html>`;
+}
+
+function downloadTextFile(filename, mimeType, text) {
+  const blob = new Blob([text], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function exportCollectionReport(format) {
+  if (!state.reportPayload?.rows) {
+    setStatus("Run the report before exporting.", "error", els.reportsStatus);
+    return;
+  }
+  if (format === "xls") {
+    downloadTextFile("arcaneledger-collection-report.xls", "application/vnd.ms-excel;charset=utf-8", reportXls());
+  } else {
+    downloadTextFile("arcaneledger-collection-report.csv", "text/csv;charset=utf-8", reportCsv());
+  }
+}
+
+async function emailCollectionReport() {
+  const defaultEmail = state.user?.email || "";
+  const toEmail = window.prompt("Email report to:", defaultEmail);
+  if (!toEmail) return;
+  setStatus("Sending report...", "", els.reportsStatus);
+  const result = await api("/api/collection-report/email", {
+    method: "POST",
+    body: JSON.stringify({ ...collectionReportPayload(), to_email: toEmail }),
+  });
+  setStatus(result.message || "Report emailed.", "success", els.reportsStatus);
+}
+
+function loadReports() {
+  if (!els.reportFieldGrid?.children.length) {
+    renderReportFieldPicker();
+  }
+  if (!state.reportPayload) {
+    renderReportTable({ fields: reportFields.filter((field) => defaultReportFields.includes(field.key)), rows: [] });
+  }
 }
 
 async function reloadVisibleCardPages() {
@@ -2861,14 +3096,20 @@ function renderFavoriteStoreListings() {
 function renderWishlist() {
   els.wishlistGrid.className = "missing-list-grid wishlist-detail-grid";
   els.wishlistGrid.innerHTML = "";
+  updateWishlistBulkBar();
   if (!state.wishlistCards.length) {
     els.wishlistGrid.innerHTML = '<div class="empty-state">No cards are on this Wishlist yet.</div>';
     return;
   }
   for (const card of state.wishlistCards) {
+    const itemKey = wishlistItemKey(card);
     const row = document.createElement("article");
     row.className = `missing-card-row wishlist-card-row ${card.fulfilled ? "is-fulfilled" : ""}`;
+    row.dataset.wishlistItemKey = itemKey;
     row.innerHTML = `
+      <label class="wishlist-row-check" title="Select wishlist card">
+        <input type="checkbox" ${state.selectedWishlistItems.has(itemKey) ? "checked" : ""} aria-label="Select ${escapeAttribute(cardTitle(card))}">
+      </label>
       <a class="missing-card-art" href="${escapeHtml(cardDetailUrl(card))}">
         <img src="${escapeHtml(card.image_small || card.image_normal || "")}" alt="${escapeHtml(cardTitle(card))}">
       </a>
@@ -2900,8 +3141,55 @@ function renderWishlist() {
     row.querySelector(".remove-missing-button").addEventListener("click", () => {
       removeFromActiveWishlist(card).catch((error) => setStatus(error.message, "error", els.wishlistStatus));
     });
+    row.querySelector(".wishlist-row-check input")?.addEventListener("change", (event) => {
+      if (event.currentTarget.checked) {
+        state.selectedWishlistItems.add(itemKey);
+      } else {
+        state.selectedWishlistItems.delete(itemKey);
+      }
+      updateWishlistBulkBar();
+    });
     els.wishlistGrid.appendChild(row);
   }
+  updateWishlistBulkBar();
+}
+
+function wishlistItemKey(card) {
+  return `${card.scryfall_id || card.card_id || ""}::${card.variant || "Normal"}`;
+}
+
+function visibleWishlistItemKeys() {
+  return (state.wishlistCards || []).map(wishlistItemKey);
+}
+
+function updateWishlistBulkBar() {
+  if (!els.wishlistBulkBar) return;
+  const visibleKeys = visibleWishlistItemKeys();
+  const visibleSelected = visibleKeys.filter((key) => state.selectedWishlistItems.has(key));
+  els.wishlistBulkBar.hidden = !visibleKeys.length;
+  if (els.removeSelectedWishlistCardsButton) {
+    els.removeSelectedWishlistCardsButton.disabled = visibleSelected.length <= 0;
+    const label = els.removeSelectedWishlistCardsButton.querySelector("span:last-child");
+    if (label) label.textContent = visibleSelected.length ? `Remove Selected (${integer.format(visibleSelected.length)})` : "Remove Selected";
+  }
+  if (els.wishlistSelectAllCheckbox) {
+    els.wishlistSelectAllCheckbox.checked = visibleKeys.length > 0 && visibleSelected.length === visibleKeys.length;
+    els.wishlistSelectAllCheckbox.indeterminate = visibleSelected.length > 0 && visibleSelected.length < visibleKeys.length;
+  }
+}
+
+function setVisibleWishlistSelection(selected) {
+  for (const key of visibleWishlistItemKeys()) {
+    if (selected) {
+      state.selectedWishlistItems.add(key);
+    } else {
+      state.selectedWishlistItems.delete(key);
+    }
+  }
+  els.wishlistGrid.querySelectorAll(".wishlist-row-check input").forEach((input) => {
+    input.checked = selected;
+  });
+  updateWishlistBulkBar();
 }
 
 function renderWishlists() {
@@ -2941,6 +3229,7 @@ async function openWishlistDetailModal(wishlistId) {
   const data = await api(`/api/wishlists/${encodeURIComponent(wishlistId)}?${wishlistQuery()}`);
   state.activeWishlist = data;
   state.wishlistCards = data.cards || [];
+  state.selectedWishlistItems = new Set();
   els.wishlistDetailTitle.textContent = data.name || "Wishlist";
   renderWishlist();
   els.wishlistDetailOverlay.hidden = false;
@@ -2952,8 +3241,10 @@ function closeWishlistDetailModal() {
   document.body.classList.remove("modal-open");
   state.activeWishlist = null;
   state.wishlistCards = [];
+  state.selectedWishlistItems = new Set();
   els.wishlistGrid.innerHTML = "";
   els.wishlistSearchInput.value = "";
+  updateWishlistBulkBar();
 }
 
 async function removeFromActiveWishlist(card) {
@@ -2972,6 +3263,37 @@ async function removeFromActiveWishlist(card) {
   await loadWishlist();
   await loadWishlists();
   await refresh();
+}
+
+async function removeSelectedFromActiveWishlist() {
+  if (!state.activeWishlist) return;
+  const selectedCards = (state.wishlistCards || []).filter((card) => state.selectedWishlistItems.has(wishlistItemKey(card)));
+  if (!selectedCards.length) {
+    setStatus("Select at least one wishlist card first.", "error", els.wishlistStatus);
+    return;
+  }
+  const confirmed = window.confirm(`Remove ${selectedCards.length} selected card${selectedCards.length === 1 ? "" : "s"} from "${state.activeWishlist.name || "Wishlist"}"?`);
+  if (!confirmed) return;
+  const button = els.removeSelectedWishlistCardsButton;
+  if (button) button.disabled = true;
+  try {
+    const result = await api(`/api/wishlists/${encodeURIComponent(state.activeWishlist.id)}/cards`, {
+      method: "DELETE",
+      body: JSON.stringify({
+        cards: selectedCards.map((card) => ({
+          card_id: card.scryfall_id || card.card_id,
+          variant: card.variant || "Normal",
+        })),
+      }),
+    });
+    state.selectedWishlistItems = new Set();
+    setStatus(`Removed ${integer.format(result.removed || selectedCards.length)} card${Number(result.removed || selectedCards.length) === 1 ? "" : "s"} from Wishlist.`, "success", els.wishlistStatus);
+    await loadWishlist();
+    await loadWishlists();
+    await refresh();
+  } finally {
+    if (button) button.disabled = false;
+  }
 }
 
 function openAddWishlistModal() {
@@ -8216,7 +8538,7 @@ function renderMovementHistory(movements) {
         <article class="purchase-history-row ${isAdjust ? "is-adjustment" : isSale ? "is-sale" : "is-purchase"}">
           <div>
             <strong>${escapeHtml(formatDate(movement.movement_date || movement.purchase_date))}</strong>
-            <span>${escapeHtml(movement.card_condition || "Near Mint")}</span>
+            <span>${escapeHtml(movement.variant || "Normal")} - ${escapeHtml(movement.card_condition || "Near Mint")}</span>
           </div>
           <div>
             <b>${integer.format(movement.quantity || 0)} ${verb}</b>
@@ -8225,7 +8547,7 @@ function renderMovementHistory(movements) {
             ${!isSale && !isAdjust && movement.notes ? `<small>${escapeHtml(movement.notes)}</small>` : ""}
           </div>
           ${movement.movement_id ? `
-            <button class="delete-movement-button" type="button" aria-label="${deleteLabel}" title="${deleteLabel}" data-movement-type="${escapeHtml(movement.movement_type)}" data-movement-id="${escapeHtml(movement.movement_id)}">
+            <button class="delete-movement-button" type="button" aria-label="${deleteLabel}" title="${deleteLabel}" data-movement-type="${escapeHtml(movement.movement_type)}" data-movement-id="${escapeHtml(movement.movement_id)}" data-variant="${escapeAttribute(movement.variant || "Normal")}">
               <span class="trash-icon" aria-hidden="true"></span>
             </button>
           ` : ""}
@@ -8839,7 +9161,8 @@ function renderCardDetail(card) {
             <span>${escapeHtml(cardTypeLabel(card))}</span>
             <span>${escapeHtml(cardColorLabel(card))}</span>
           </div>
-          ${owned ? variantSummaryHtml(card) : ""}
+          ${cardDetailVariantSwitcherHtml(card)}
+          ${owned ? variantSummaryHtml(card, { selectedVariant: card.variant || "Normal", title: "Inventory by Variant" }) : ""}
           <dl class="shared-card-details">
             ${detailsHtml}
           </dl>
@@ -8884,7 +9207,7 @@ function renderCardDetail(card) {
       ${owned ? `<section class="purchase-history-panel">
         <div class="panel-head">
           <h2>Card History</h2>
-          <span>${integer.format((card.movements || card.purchases || []).length)} entries</span>
+          <span>${integer.format((card.movements || card.purchases || []).length)} entries across variants</span>
         </div>
         ${renderMovementHistory(card.movements || card.purchases || [])}
       </section>` : ""}
@@ -8898,6 +9221,14 @@ function renderCardDetail(card) {
     </div>
   `;
   els.cardDetailShell.querySelector("#addPurchaseButton")?.addEventListener("click", () => openAddCardModal(card));
+  els.cardDetailShell.querySelectorAll(".card-variant-switcher button[data-card-variant]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const nextVariant = button.dataset.cardVariant || "Normal";
+      if (nextVariant === (card.variant || "Normal")) return;
+      window.history.pushState({}, "", cardDetailUrl({ ...card, variant: nextVariant }));
+      loadCardDetail(card.scryfall_id, nextVariant).catch((error) => setStatus(error.message, "error"));
+    });
+  });
   els.cardDetailShell.querySelector("#adjustInventoryButton")?.addEventListener("click", () => openInventoryAdjustModal(card));
   els.cardDetailShell.querySelector("#addDirectSaleButton")?.addEventListener("click", () => openDirectSaleModal(card));
   els.cardDetailShell.querySelector(".card-notes-form")?.addEventListener("submit", (event) => {
@@ -10229,10 +10560,24 @@ function wireEvents() {
       openAuthModal("login");
     }
   });
+  els.runReportButton?.addEventListener("click", () => {
+    runCollectionReport().catch((error) => setStatus(error.message, "error", els.reportsStatus));
+  });
+  els.exportReportCsvButton?.addEventListener("click", () => exportCollectionReport("csv"));
+  els.exportReportXlsButton?.addEventListener("click", () => exportCollectionReport("xls"));
+  els.emailReportButton?.addEventListener("click", () => {
+    emailCollectionReport().catch((error) => setStatus(error.message, "error", els.reportsStatus));
+  });
   els.addDeckButton.addEventListener("click", openAddDeckModal);
   els.importDeckButton.addEventListener("click", openImportDeckModal);
   els.exportDecksButton.addEventListener("click", openExportDecksModal);
   els.addWishlistButton.addEventListener("click", openAddWishlistModal);
+  els.wishlistSelectAllCheckbox?.addEventListener("change", (event) => {
+    setVisibleWishlistSelection(Boolean(event.currentTarget.checked));
+  });
+  els.removeSelectedWishlistCardsButton?.addEventListener("click", () => {
+    removeSelectedFromActiveWishlist().catch((error) => setStatus(error.message, "error", els.wishlistStatus));
+  });
   els.addContainerButton.addEventListener("click", openAddContainerModal);
   els.refreshPriceSnapshotsButton?.addEventListener("click", () => {
     refreshPriceSnapshots().catch((error) => setStatus(error.message, "error"));
