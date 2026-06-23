@@ -63,6 +63,8 @@ const state = {
   containers: [],
   activeContainer: null,
   editingContainer: null,
+  pendingContainerCard: null,
+  containerCardSearchTimer: null,
   activeSaleCard: null,
   assignContainerCard: null,
   containerAllocationContainers: [],
@@ -558,8 +560,16 @@ const els = {
   containerDetailOverlay: document.querySelector("#containerDetailOverlay"),
   containerDetailTitle: document.querySelector("#containerDetailTitle"),
   containerDetailMeta: document.querySelector("#containerDetailMeta"),
+  containerDetailAddPanel: document.querySelector("#containerDetailAddPanel"),
+  containerCardSearchInput: document.querySelector("#containerCardSearchInput"),
+  containerCardSearchResults: document.querySelector("#containerCardSearchResults"),
+  containerCardAddControls: document.querySelector("#containerCardAddControls"),
+  containerCardAddSummary: document.querySelector("#containerCardAddSummary"),
+  containerCardAddQuantity: document.querySelector("#containerCardAddQuantity"),
+  confirmAddCardToContainerButton: document.querySelector("#confirmAddCardToContainerButton"),
   containerDetailStats: document.querySelector("#containerDetailStats"),
   containerDetailCards: document.querySelector("#containerDetailCards"),
+  addCardToContainerButton: document.querySelector("#addCardToContainerButton"),
   editContainerButton: document.querySelector("#editContainerButton"),
   shareContainerButton: document.querySelector("#shareContainerButton"),
   emailContainerButton: document.querySelector("#emailContainerButton"),
@@ -7180,9 +7190,158 @@ function renderContainerDetail(container) {
   }
 }
 
+function resetContainerCardSearch() {
+  state.pendingContainerCard = null;
+  if (els.containerCardSearchInput) els.containerCardSearchInput.value = "";
+  if (els.containerCardSearchResults) els.containerCardSearchResults.innerHTML = "";
+  if (els.containerCardAddControls) els.containerCardAddControls.hidden = true;
+  if (els.containerCardAddSummary) els.containerCardAddSummary.textContent = "";
+  if (els.containerCardAddQuantity) {
+    els.containerCardAddQuantity.value = "1";
+    els.containerCardAddQuantity.max = "1";
+  }
+}
+
+function toggleContainerCardSearch(force = null) {
+  if (!els.containerDetailAddPanel) return;
+  const shouldOpen = force === null ? els.containerDetailAddPanel.hidden : Boolean(force);
+  els.containerDetailAddPanel.hidden = !shouldOpen;
+  if (shouldOpen) {
+    resetContainerCardSearch();
+    els.containerCardSearchInput?.focus();
+  } else {
+    resetContainerCardSearch();
+  }
+}
+
+function containerRemainingForNewCards(container) {
+  const capacity = Number(container?.capacity || 0);
+  if (capacity <= 0) return null;
+  return Math.max(0, Number(container.remaining_capacity ?? Math.max(0, capacity - Number(container.stored_quantity || 0))));
+}
+
+function containerSearchOptions(cards) {
+  const remaining = containerRemainingForNewCards(state.activeContainer);
+  const options = [];
+  for (const card of cards || []) {
+    for (const entry of selectedCardEntries(card)) {
+      const variant = entry.variant || "Normal";
+      for (const bucket of bulkContainerAllocationBuckets(entry)) {
+        const available = Math.max(0, Number(bucket.available || 0));
+        const storable = remaining === null ? available : Math.min(available, remaining);
+        if (storable <= 0) continue;
+        options.push({
+          card_id: entry.scryfall_id || entry.card_id,
+          name: cardTitle(entry),
+          set_name: entry.set_name || card.set_name || "",
+          collector_number: entry.collector_number || card.collector_number || "",
+          image_small: entry.image_small || card.image_small || "",
+          image_normal: entry.image_normal || card.image_normal || "",
+          variant,
+          card_condition: bucket.card_condition || "Near Mint",
+          available,
+          storable,
+        });
+      }
+    }
+  }
+  return options;
+}
+
+function renderContainerCardSearchResults(options, message = "") {
+  if (!els.containerCardSearchResults) return;
+  if (message) {
+    els.containerCardSearchResults.innerHTML = `<div class="empty-state">${escapeHtml(message)}</div>`;
+    return;
+  }
+  if (!options.length) {
+    els.containerCardSearchResults.innerHTML = '<div class="empty-state">No uncontained owned cards match that search.</div>';
+    return;
+  }
+  els.containerCardSearchResults.innerHTML = options.slice(0, 12).map((option, index) => `
+    <button class="container-card-search-option" type="button" data-index="${index}">
+      <img src="${escapeHtml(option.image_small || option.image_normal || "")}" alt="">
+      <span>
+        <strong>${escapeHtml(option.name)}</strong>
+        <small>${escapeHtml(option.variant)} / ${escapeHtml(option.card_condition)} - ${integer.format(option.available)} uncontained${option.storable < option.available ? `, ${integer.format(option.storable)} fits here` : ""}</small>
+      </span>
+    </button>
+  `).join("");
+  for (const button of els.containerCardSearchResults.querySelectorAll(".container-card-search-option")) {
+    button.addEventListener("click", () => {
+      const option = options[Number(button.dataset.index || 0)];
+      if (!option) return;
+      state.pendingContainerCard = option;
+      els.containerCardAddControls.hidden = false;
+      els.containerCardAddSummary.textContent = `${option.name} - ${option.variant} / ${option.card_condition}. ${integer.format(option.storable)} can be added to this container.`;
+      els.containerCardAddQuantity.max = String(option.storable);
+      els.containerCardAddQuantity.value = String(Math.min(1, option.storable));
+      els.containerCardSearchResults.innerHTML = "";
+      els.containerCardAddQuantity.focus();
+    });
+  }
+}
+
+async function searchContainerCards() {
+  const query = (els.containerCardSearchInput?.value || "").trim();
+  state.pendingContainerCard = null;
+  if (els.containerCardAddControls) els.containerCardAddControls.hidden = true;
+  if (query.length < 3) {
+    renderContainerCardSearchResults([], "Type at least 3 characters to search your uncontained cards.");
+    return;
+  }
+  if (!state.activeContainer) return;
+  const remaining = containerRemainingForNewCards(state.activeContainer);
+  if (remaining !== null && remaining <= 0) {
+    renderContainerCardSearchResults([], "This container has no more available space.");
+    return;
+  }
+  renderContainerCardSearchResults([], "Searching...");
+  try {
+    const data = await api(`/api/cards?${new URLSearchParams({
+      owned: "owned",
+      search: query,
+      sort: "name",
+      limit: "80",
+    }).toString()}`);
+    renderContainerCardSearchResults(containerSearchOptions(data.cards || []));
+  } catch (error) {
+    renderContainerCardSearchResults([], error.message);
+  }
+}
+
+async function addPendingCardToActiveContainer() {
+  if (!state.activeContainer || !state.pendingContainerCard) return;
+  const option = state.pendingContainerCard;
+  const quantity = Number(els.containerCardAddQuantity?.value || 0);
+  const max = Number(els.containerCardAddQuantity?.max || option.storable || 0);
+  if (quantity < 1 || quantity > max) {
+    els.containersStatus.textContent = `Quantity must be between 1 and ${integer.format(max)}.`;
+    return;
+  }
+  await api(`/api/containers/${encodeURIComponent(state.activeContainer.id)}/cards`, {
+    method: "POST",
+    body: JSON.stringify({
+      cards: [{
+        card_id: option.card_id,
+        variant: option.variant || "Normal",
+        card_condition: option.card_condition || "Near Mint",
+        quantity,
+      }],
+    }),
+  });
+  const container = await api(`/api/containers/${encodeURIComponent(state.activeContainer.id)}`);
+  renderContainerDetail(container);
+  toggleContainerCardSearch(false);
+  els.containersStatus.textContent = `Added ${integer.format(quantity)} ${option.name} to ${container.name}.`;
+  await loadContainers();
+  await loadCards();
+}
+
 async function openContainerDetailModal(containerId) {
   const container = await api(`/api/containers/${encodeURIComponent(containerId)}`);
   renderContainerDetail(container);
+  toggleContainerCardSearch(false);
   els.containerDetailOverlay.hidden = false;
   document.body.classList.add("modal-open");
 }
@@ -7194,6 +7353,7 @@ function closeContainerDetailModal() {
   els.containerDetailCards.innerHTML = "";
   els.containerDetailStats.innerHTML = "";
   els.containerDetailMeta.textContent = "";
+  toggleContainerCardSearch(false);
 }
 
 async function removeCardFromActiveContainer(card) {
@@ -8346,7 +8506,7 @@ function renderContainerAllocationRows(containers = []) {
   }
   const table = document.createElement("div");
   table.className = "container-allocation-table";
-  table.style.setProperty("--allocation-columns", `minmax(240px, 1.35fr) repeat(${Math.max(1, buckets.length)}, minmax(132px, 0.8fr)) 44px`);
+  table.style.setProperty("--allocation-columns", `minmax(260px, 1.35fr) repeat(${Math.max(1, buckets.length)}, minmax(136px, 0.8fr)) 44px`);
   table.innerHTML = `
     <div class="container-allocation-header">
       <span>Container</span>
@@ -11305,6 +11465,18 @@ function wireEvents() {
     }
   });
   els.closeContainerDetailButton.addEventListener("click", closeContainerDetailModal);
+  els.addCardToContainerButton?.addEventListener("click", () => toggleContainerCardSearch());
+  els.containerCardSearchInput?.addEventListener("input", () => {
+    clearTimeout(state.containerCardSearchTimer);
+    state.containerCardSearchTimer = setTimeout(() => {
+      searchContainerCards();
+    }, 220);
+  });
+  els.confirmAddCardToContainerButton?.addEventListener("click", () => {
+    addPendingCardToActiveContainer().catch((error) => {
+      els.containersStatus.textContent = error.message;
+    });
+  });
   els.editContainerButton.addEventListener("click", () => {
     if (state.activeContainer) {
       openEditContainerModal(state.activeContainer);

@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Arcane Ledger</title>
-    <link rel="stylesheet" href="/styles.css?v=167">
+    <link rel="stylesheet" href="/styles.css?v=169">
   </head>
   <body>
     <header class="topbar">
@@ -2110,7 +2110,7 @@
     </div>
 
     <div id="containerDetailOverlay" class="modal-overlay" hidden>
-      <section class="deck-detail-modal" role="dialog" aria-modal="true" aria-labelledby="containerDetailTitle">
+      <section class="deck-detail-modal container-detail-modal" role="dialog" aria-modal="true" aria-labelledby="containerDetailTitle">
         <header class="edit-modal-head">
           <div>
             <p class="eyebrow">Stored cards</p>
@@ -2118,16 +2118,36 @@
             <span id="containerDetailMeta" class="modal-subtitle"></span>
           </div>
           <div class="deck-modal-actions">
-            <button id="editContainerButton" class="share-button" type="button" aria-label="Edit container" title="Edit container"><span class="edit-icon" aria-hidden="true"></span></button>
-            <button id="emailContainerButton" class="share-button" type="button" aria-label="Email container" title="Email container"><span class="send-icon" aria-hidden="true"></span></button>
+            <button id="addCardToContainerButton" class="share-button" type="button" aria-label="Add card to container" title="Add card"><span aria-hidden="true">+</span></button>
             <button id="shareContainerButton" class="share-button" type="button" aria-label="Share container" title="Share container">&#8599;</button>
-            <button id="deleteContainerButton" class="danger-icon-button" type="button" aria-label="Delete container" title="Delete container"><span class="trash-icon" aria-hidden="true"></span></button>
+            <button id="closeContainerDetailButton" class="share-button" type="button" aria-label="Close container dialog" title="Close">x</button>
           </div>
         </header>
-        <div id="containerDetailStats" class="container-detail-stats"></div>
-        <div id="containerDetailCards" class="deck-detail-list"></div>
+        <div class="container-detail-scroll">
+          <div id="containerDetailAddPanel" class="container-add-panel" hidden>
+            <label>
+              Add uncontained card
+              <input id="containerCardSearchInput" type="search" autocomplete="off" placeholder="Type at least 3 characters">
+            </label>
+            <div id="containerCardSearchResults" class="container-card-search-results"></div>
+            <div id="containerCardAddControls" class="container-card-add-controls" hidden>
+              <span id="containerCardAddSummary"></span>
+              <label>
+                Qty
+                <input id="containerCardAddQuantity" type="number" min="1" step="1" value="1">
+              </label>
+              <button id="confirmAddCardToContainerButton" class="primary-button" type="button">Add</button>
+            </div>
+          </div>
+          <div id="containerDetailStats" class="container-detail-stats"></div>
+          <div id="containerDetailCards" class="deck-detail-list"></div>
+        </div>
         <div class="modal-actions deck-detail-footer">
-          <button id="closeContainerDetailButton" class="secondary-button" type="button">Close</button>
+          <button id="deleteContainerButton" class="danger-action-button" type="button"><span class="trash-icon" aria-hidden="true"></span> Delete Container</button>
+          <div class="deck-footer-actions">
+            <button id="editContainerButton" class="secondary-button" type="button"><span class="edit-icon" aria-hidden="true"></span> Edit</button>
+            <button id="emailContainerButton" class="secondary-button" type="button"><span class="send-icon" aria-hidden="true"></span> Email</button>
+          </div>
         </div>
       </section>
     </div>
@@ -2333,6 +2353,6 @@
       </section>
     </div>
 
-    <script src="/app.js?v=187"></script>
+    <script src="/app.js?v=189"></script>
   </body>
 </html>
