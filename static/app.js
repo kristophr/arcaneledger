@@ -8506,7 +8506,8 @@ function renderContainerAllocationRows(containers = []) {
   }
   const table = document.createElement("div");
   table.className = "container-allocation-table";
-  table.style.setProperty("--allocation-columns", `minmax(260px, 1.35fr) repeat(${Math.max(1, buckets.length)}, minmax(136px, 0.8fr)) 44px`);
+  table.style.setProperty("--allocation-columns", `minmax(220px, 1.25fr) repeat(${Math.max(1, buckets.length)}, minmax(112px, 0.72fr)) 36px`);
+  table.style.setProperty("--allocation-min-width", `${260 + Math.max(1, buckets.length) * 122 + 46}px`);
   table.innerHTML = `
     <div class="container-allocation-header">
       <span>Container</span>

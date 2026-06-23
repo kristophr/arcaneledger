@@ -574,8 +574,8 @@ body.has-site-wallpaper::before {
   background-repeat: no-repeat;
   background-position: center;
   background-size: cover;
-  opacity: 0.105;
-  filter: saturate(1.02) contrast(1.05);
+  opacity: 0.13;
+  filter: saturate(1.04) contrast(1.08);
 }
 
 .nav-collapsed.has-site-wallpaper::before {
@@ -8392,8 +8392,8 @@ body:not(.is-authenticated) .nav-bottom {
 
 .assign-container-cards {
   display: grid;
-  gap: 8px;
-  max-height: 520px;
+  gap: 7px;
+  max-height: 500px;
   overflow: auto;
   padding-right: 2px;
 }
@@ -8452,18 +8452,18 @@ body:not(.is-authenticated) .nav-bottom {
 
 .assign-container-card-preview {
   display: grid;
-  grid-template-columns: 48px minmax(0, 1fr);
-  gap: 10px;
+  grid-template-columns: 42px minmax(0, 1fr);
+  gap: 9px;
   align-items: center;
   border: 1px solid var(--line);
   border-radius: 8px;
-  padding: 10px;
+  padding: 8px;
   background: var(--detail-bg);
 }
 
 .assign-container-card-preview img {
-  width: 48px;
-  height: 67px;
+  width: 42px;
+  height: 59px;
   border-radius: 5px;
   object-fit: cover;
   background: var(--wash);
@@ -8483,7 +8483,8 @@ body:not(.is-authenticated) .nav-bottom {
 
 .container-allocation-table {
   display: block;
-  min-width: max-content;
+  width: 100%;
+  min-width: var(--allocation-min-width, 560px);
   overflow: auto;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -8493,10 +8494,10 @@ body:not(.is-authenticated) .nav-bottom {
 .container-allocation-header,
 .container-allocation-row {
   display: grid;
-  grid-template-columns: var(--allocation-columns, minmax(260px, 1.35fr) minmax(136px, 0.8fr) 44px);
-  gap: 10px;
+  grid-template-columns: var(--allocation-columns, minmax(220px, 1.25fr) minmax(112px, 0.72fr) 36px);
+  gap: 8px;
   align-items: center;
-  padding: 9px 10px;
+  padding: 7px 9px;
   border-bottom: 1px solid var(--line);
   box-sizing: border-box;
   min-width: 100%;
@@ -8510,7 +8511,7 @@ body:not(.is-authenticated) .nav-bottom {
 .container-allocation-header {
   color: var(--muted);
   background: color-mix(in srgb, var(--panel) 74%, var(--detail-bg));
-  font-size: 0.68rem;
+  font-size: 0.66rem;
   font-weight: 900;
   text-transform: uppercase;
 }
@@ -8523,7 +8524,7 @@ body:not(.is-authenticated) .nav-bottom {
   display: block;
   margin-top: 3px;
   color: var(--ink);
-  font-size: 0.72rem;
+  font-size: 0.68rem;
   line-height: 1.25;
   text-transform: none;
 }
@@ -8549,7 +8550,7 @@ body:not(.is-authenticated) .nav-bottom {
 .container-space-label {
   display: block;
   margin-top: 3px;
-  font-size: 0.72rem;
+  font-size: 0.68rem;
   font-weight: 800;
   color: var(--muted);
 }
@@ -8560,7 +8561,7 @@ body:not(.is-authenticated) .nav-bottom {
 
 .container-allocation-row input {
   width: 100%;
-  min-height: 36px;
+  min-height: 34px;
   border: 1px solid #c7d1cd;
   border-radius: 7px;
   padding: 0 8px;
@@ -8570,7 +8571,7 @@ body:not(.is-authenticated) .nav-bottom {
 
 .container-allocation-row select {
   width: 100%;
-  min-height: 38px;
+  min-height: 34px;
   border: 1px solid #c7d1cd;
   border-radius: 8px;
   padding: 0 9px;
@@ -8585,8 +8586,9 @@ body:not(.is-authenticated) .nav-bottom {
 }
 
 .remove-allocation-row-button {
-  width: 36px;
-  height: 36px;
+  width: 32px;
+  height: 32px;
+  padding: 0;
   align-self: center;
   justify-self: end;
 }
@@ -8598,7 +8600,8 @@ body:not(.is-authenticated) .nav-bottom {
 
 .bulk-container-allocation-table {
   display: block;
-  min-width: 760px;
+  width: 100%;
+  min-width: 690px;
   overflow: auto;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -8608,10 +8611,10 @@ body:not(.is-authenticated) .nav-bottom {
 .bulk-container-allocation-header,
 .bulk-container-allocation-row {
   display: grid;
-  grid-template-columns: minmax(280px, 1.55fr) minmax(270px, 1.15fr) 90px 40px 40px;
-  gap: 10px;
+  grid-template-columns: minmax(230px, 1.38fr) minmax(230px, 1.05fr) 76px 34px 34px;
+  gap: 8px;
   align-items: center;
-  padding: 9px 10px;
+  padding: 7px 9px;
   border-bottom: 1px solid var(--line);
   box-sizing: border-box;
   min-width: 100%;
@@ -8625,7 +8628,7 @@ body:not(.is-authenticated) .nav-bottom {
 .bulk-container-allocation-header {
   color: var(--muted);
   background: color-mix(in srgb, var(--panel) 74%, var(--detail-bg));
-  font-size: 0.68rem;
+  font-size: 0.66rem;
   font-weight: 900;
   text-transform: uppercase;
 }
@@ -8636,14 +8639,14 @@ body:not(.is-authenticated) .nav-bottom {
 
 .bulk-container-card-cell {
   display: grid;
-  grid-template-columns: 38px minmax(0, 1fr);
-  gap: 10px;
+  grid-template-columns: 32px minmax(0, 1fr);
+  gap: 8px;
   align-items: center;
 }
 
 .bulk-container-card-cell img {
-  width: 38px;
-  height: 53px;
+  width: 32px;
+  height: 45px;
   border-radius: 4px;
   object-fit: cover;
   background: var(--wash);
@@ -8662,7 +8665,7 @@ body:not(.is-authenticated) .nav-bottom {
 .bulk-container-card-cell small {
   margin-top: 3px;
   color: var(--muted);
-  font-size: 0.74rem;
+  font-size: 0.7rem;
   line-height: 1.3;
 }
 
@@ -8670,7 +8673,7 @@ body:not(.is-authenticated) .nav-bottom {
 .bulk-container-allocation-row input {
   width: 100%;
   box-sizing: border-box;
-  min-height: 38px;
+  min-height: 34px;
   border: 1px solid #c7d1cd;
   border-radius: 8px;
   padding: 0 9px;
@@ -8684,8 +8687,8 @@ body:not(.is-authenticated) .nav-bottom {
 
 .add-bulk-allocation-row-button,
 .bulk-container-allocation-row .remove-allocation-row-button {
-  width: 36px;
-  height: 36px;
+  width: 32px;
+  height: 32px;
   padding: 0;
   justify-self: center;
 }
