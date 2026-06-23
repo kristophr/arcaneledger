@@ -8604,6 +8604,10 @@ function movementTypeLabel(movement) {
   return "Buy";
 }
 
+function ledgerDate(value) {
+  return String(value || "").slice(0, 10) || "-";
+}
+
 function renderLedgerEntries(movements) {
   if (!movements || !movements.length) {
     return '<div class="empty-state">No ledger entries yet.</div>';
@@ -8616,19 +8620,30 @@ function renderLedgerEntries(movements) {
         <span>Qty</span>
         <span>Variant</span>
         <span>Condition</span>
+        <span>Purchase Price</span>
+        <span>Store</span>
+        <span>City, State</span>
         <span>Amount</span>
       </div>
       ${movements.map((movement) => {
         const amount = movement.movement_type === "adjust"
           ? ""
           : dollars.format(movement.total_amount ?? movement.total_price ?? 0);
+        const priceEach = movement.movement_type === "adjust"
+          ? ""
+          : dollars.format(movement.price_each || 0);
+        const storeName = movement.movement_type === "buy" ? movement.store_name || "" : "";
+        const storeLocation = movement.movement_type === "buy" ? movement.store_location || "" : "";
         return `
           <div class="card-ledger-row">
-            <span>${escapeHtml(formatDate(movement.movement_date || movement.purchase_date))}</span>
+            <span>${escapeHtml(ledgerDate(movement.movement_date || movement.purchase_date))}</span>
             <strong>${escapeHtml(movementTypeLabel(movement))}</strong>
             <b>${integer.format(movement.quantity || 0)}</b>
             <span>${escapeHtml(movement.variant || "Normal")}</span>
             <span>${escapeHtml(movement.card_condition || "Near Mint")}</span>
+            <span>${escapeHtml(priceEach || "-")}</span>
+            <span>${escapeHtml(storeName || "-")}</span>
+            <span>${escapeHtml(storeLocation || "-")}</span>
             <span>${escapeHtml(amount || "-")}</span>
           </div>
         `;
@@ -9546,6 +9561,10 @@ function renderSetPage(setDetail, cards, options = {}) {
   state.setCards = cards;
   state.selectedSetMissingCards.clear();
   const percent = Math.max(0, Math.min(100, Number(setDetail.completion_percent || 0)));
+  const totalPaid = Number(setDetail.total_paid || 0);
+  const totalMarketValue = Number(setDetail.total_market_value || 0);
+  const delta = Number(setDetail.delta || (totalMarketValue - totalPaid));
+  const deltaClass = delta >= 0 ? "positive" : "negative";
   const readonly = Boolean(options.readonly || setDetail.readonly);
   els.setPageShell.innerHTML = `
     <section class="set-hero">
@@ -9557,6 +9576,20 @@ function renderSetPage(setDetail, cards, options = {}) {
       <div class="set-hero-actions">
         <b>${percent.toFixed(1)}%</b>
         ${readonly ? "" : '<button id="addMissingSetButton" class="primary-button" type="button">Add Missing to Missing List</button>'}
+      </div>
+      <div class="set-financial-strip" aria-label="Set financial summary">
+        <article>
+          <span>Total Paid</span>
+          <strong>${dollars.format(totalPaid)}</strong>
+        </article>
+        <article>
+          <span>Market Value</span>
+          <strong>${dollars.format(totalMarketValue)}</strong>
+        </article>
+        <article>
+          <span>Delta</span>
+          <strong class="${deltaClass}">${dollars.format(delta)}</strong>
+        </article>
       </div>
       <div class="set-progress set-progress-large" aria-label="${percent.toFixed(1)} percent complete">
         <span style="width: ${percent}%"></span>

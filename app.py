@@ -5937,14 +5937,29 @@ def set_completion(conn, user_id, limit=10):
 
 
 def set_detail(conn, user_id, set_code):
+    price_expr = current_price_sql("c")
     row = conn.execute(
-        """
+        f"""
         SELECT
             s.code AS set_code,
             COALESCE(s.name, MAX(c.set_name), s.code) AS set_name,
             COALESCE(s.cached_at, '') AS cached_at,
             COUNT(DISTINCT c.scryfall_id) AS total_cards,
-            COUNT(DISTINCT CASE WHEN col.quantity > 0 THEN c.scryfall_id END) AS owned_cards
+            COUNT(DISTINCT CASE WHEN col.quantity > 0 THEN c.scryfall_id END) AS owned_cards,
+            COALESCE(SUM(
+                CASE
+                    WHEN COALESCE(col.quantity, 0) > 0
+                    THEN COALESCE(col.quantity, 0) * COALESCE(col.paid_price, 0)
+                    ELSE 0
+                END
+            ), 0) AS total_paid,
+            COALESCE(SUM(
+                CASE
+                    WHEN COALESCE(col.quantity, 0) > 0
+                    THEN COALESCE(col.quantity, 0) * ({price_expr})
+                    ELSE 0
+                END
+            ), 0) AS total_market_value
         FROM cards c
         LEFT JOIN sets s ON s.code = c.set_code
         LEFT JOIN collection col ON col.user_id = ? AND col.card_id = c.scryfall_id
@@ -5960,6 +5975,7 @@ def set_detail(conn, user_id, set_code):
     return {
         **dict(row),
         "completion_percent": round((owned / total * 100) if total else 0, 1),
+        "delta": float(row["total_market_value"] or 0) - float(row["total_paid"] or 0),
     }
 
 
