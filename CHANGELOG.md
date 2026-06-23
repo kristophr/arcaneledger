@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.2.8 beta
+
+### Added
+- Added per-user default purchase price and default sell price preferences in Settings.
+- Added default purchase/sell prices to the user profile payload so defaults persist across devices.
+- Added CSV attachments to emailed collection reports for both SMTP and Mailgun delivery.
+- Added a single batch-level Date Acquired field to the Add Card modal for multi-variant/multi-condition purchases.
+- Added an Add Card modal option to update the user's default purchase price after a successful save.
+
+### Changed
+- Bumped the app version and user agent to `0.2.8 beta`.
+- Updated Add Card purchase rows to remove repeated date fields and use one shared acquisition date.
+- Updated Add Card and Add Purchase flows to use the user's default purchase price.
+- Updated Mark for Sale flows to use the user's default sell price when configured, otherwise falling back to market price.
+- Increased site wallpaper visibility so uploaded backgrounds appear richer while remaining subtle.
+- Bumped frontend asset versions for the Settings, Add Card modal, and wallpaper updates.
+
+### Fixed
+- Fixed emailed reports so the recipient receives an attached CSV instead of only an HTML report preview.
+
 ## 0.2.7 beta
 
 ### Added

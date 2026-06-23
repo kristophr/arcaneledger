@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Arcane Ledger</title>
-    <link rel="stylesheet" href="/styles.css?v=161">
+    <link rel="stylesheet" href="/styles.css?v=163">
   </head>
   <body>
     <header class="topbar">
@@ -781,6 +781,14 @@
                     <option value="airbender">The Last Airbender</option>
                   </select>
                 </label>
+                <label>
+                  Default Purchase Price
+                  <input name="default_purchase_price" type="number" min="0.01" step="0.01" placeholder="0.01">
+                </label>
+                <label>
+                  Default Sell Price
+                  <input name="default_sell_price" type="number" min="0" step="0.01" placeholder="Use market price">
+                </label>
               </fieldset>
               <fieldset class="settings-group">
                 <legend>Store Contact</legend>
@@ -1198,7 +1206,6 @@
                     <th>Variant</th>
                     <th>Condition</th>
                     <th>Price paid per card</th>
-                    <th>Date acquired</th>
                     <th>Graded</th>
                     <th>Quantity</th>
                     <th><span class="sr-only">Add condition row</span></th>
@@ -1216,11 +1223,19 @@
             City Purchased From
             <input name="store_location" type="text" maxlength="120" placeholder="Raleigh, NC">
           </label>
+          <label class="add-purchase-detail">
+            Date Acquired
+            <input name="acquired_date" type="date">
+          </label>
           <label class="add-purchase-detail add-purchase-notes">
             Notes
             <textarea name="notes" maxlength="1000" rows="3" placeholder="Optional purchase notes, grading context, order number, or anything useful later"></textarea>
           </label>
           <div class="modal-actions">
+            <label class="checkbox-field add-default-price-option">
+              <input name="update_default_purchase_price" type="checkbox" value="1">
+              <span>Update default purchase price</span>
+            </label>
             <button id="cancelAddCardButton" class="secondary-button" type="button">Cancel</button>
             <button id="confirmAddNewCardButton" class="primary-button" type="submit" title="Add and New" disabled>Add +</button>
             <button id="confirmAddCardButton" class="primary-button" type="submit" disabled>Add</button>
@@ -2318,6 +2333,6 @@
       </section>
     </div>
 
-    <script src="/app.js?v=181"></script>
+    <script src="/app.js?v=183"></script>
   </body>
 </html>

@@ -5666,12 +5666,31 @@ function conditionOptionsHtml(selected = "Near Mint") {
   )).join("");
 }
 
+function userDefaultPurchasePrice() {
+  const value = Number(state.user?.default_purchase_price ?? 0.01);
+  return Number.isFinite(value) && value > 0 ? value : 0.01;
+}
+
+function userDefaultSellPrice() {
+  const value = Number(state.user?.default_sell_price ?? 0);
+  return Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+function defaultSalePrice(existingPrice, marketPrice) {
+  const existing = Number(existingPrice || 0);
+  if (Number.isFinite(existing) && existing > 0) return existing;
+  const userDefault = userDefaultSellPrice();
+  if (userDefault > 0) return userDefault;
+  const market = Number(marketPrice || 0);
+  return Number.isFinite(market) && market > 0 ? market : 0.01;
+}
+
 function addPurchaseRowHtml(row = {}) {
   const rowId = row.row_id || (window.crypto?.randomUUID ? window.crypto.randomUUID() : `row-${Date.now()}-${Math.random().toString(16).slice(2)}`);
   const variant = row.variant || "Normal";
   const condition = cardConditions.includes(row.card_condition) ? row.card_condition : "Near Mint";
-  const paidPrice = Number(row.paid_price || 0.01) > 0 ? Number(row.paid_price || 0.01).toFixed(2) : "0.01";
-  const acquiredDate = row.acquired_date || todayValue();
+  const defaultPaid = userDefaultPurchasePrice();
+  const paidPrice = Number(row.paid_price || defaultPaid) > 0 ? Number(row.paid_price || defaultPaid).toFixed(2) : defaultPaid.toFixed(2);
   const quantity = Number.isFinite(Number(row.quantity)) ? Math.max(0, Number(row.quantity || 0)) : 0;
   return `
     <tr class="add-purchase-row" data-row-id="${escapeHtml(rowId)}" data-variant="${escapeHtml(variant)}">
@@ -5682,7 +5701,6 @@ function addPurchaseRowHtml(row = {}) {
         </select>
       </td>
       <td><input data-add-field="paid_price" type="number" min="0.01" step="0.01" value="${escapeHtml(paidPrice)}" aria-label="${escapeAttribute(`${variant} price paid per card`)}"></td>
-      <td><input data-add-field="acquired_date" type="date" value="${escapeHtml(acquiredDate)}" aria-label="${escapeAttribute(`${variant} date acquired`)}"></td>
       <td><input data-add-field="graded" type="checkbox" value="1" ${row.graded ? "checked" : ""} aria-label="${escapeAttribute(`${variant} graded`)}"></td>
       <td><input data-add-field="quantity" type="number" min="0" step="1" value="${escapeHtml(String(quantity))}" aria-label="${escapeAttribute(`${variant} quantity`)}"></td>
       <td><button class="secondary-button add-row-button" type="button" data-add-row-copy title="Add another condition row for ${escapeAttribute(variant)}" aria-label="Add another condition row for ${escapeAttribute(variant)}">+</button></td>
@@ -5702,7 +5720,6 @@ function duplicateAddPurchaseRow(row) {
     variant: row.dataset.variant || "Normal",
     card_condition: row.querySelector('[data-add-field="card_condition"]')?.value || "Near Mint",
     paid_price: row.querySelector('[data-add-field="paid_price"]')?.value || "0.01",
-    acquired_date: row.querySelector('[data-add-field="acquired_date"]')?.value || todayValue(),
     graded: Boolean(row.querySelector('[data-add-field="graded"]')?.checked),
     quantity: 0,
   };
@@ -5743,6 +5760,7 @@ function addSearchQuery() {
 
 function addPurchasePayloadRows() {
   const rows = [];
+  const acquiredDate = els.addCardForm?.acquired_date?.value || todayValue();
   for (const row of els.addPurchaseRows?.querySelectorAll(".add-purchase-row") || []) {
     const quantity = Number(row.querySelector('[data-add-field="quantity"]')?.value || 0);
     if (quantity <= 0) continue;
@@ -5750,12 +5768,24 @@ function addPurchasePayloadRows() {
       variant: row.dataset.variant || "Normal",
       card_condition: row.querySelector('[data-add-field="card_condition"]')?.value || "Near Mint",
       paid_price: Number(row.querySelector('[data-add-field="paid_price"]')?.value || 0),
-      acquired_date: row.querySelector('[data-add-field="acquired_date"]')?.value || todayValue(),
+      acquired_date: acquiredDate,
       graded: row.querySelector('[data-add-field="graded"]')?.checked ? 1 : 0,
       quantity,
     });
   }
   return rows;
+}
+
+function defaultPurchasePriceFromPurchases(purchases = []) {
+  const purchase = purchases.find((item) => Number(item.quantity || 0) > 0 && Number(item.paid_price || 0) > 0);
+  const price = Number(purchase?.paid_price || 0);
+  return Number.isFinite(price) && price > 0 ? price : 0;
+}
+
+function prepareAddCardBatchFields() {
+  if (!els.addCardForm) return;
+  if (els.addCardForm.acquired_date) els.addCardForm.acquired_date.value = todayValue();
+  if (els.addCardForm.update_default_purchase_price) els.addCardForm.update_default_purchase_price.checked = false;
 }
 
 async function hydrateAddCardSelection(preselectedCard) {
@@ -5774,6 +5804,7 @@ function openAddCardModal(preselectedCard = null) {
   els.addSearchForm.reset();
   collapseAddAdvancedFilters();
   els.addCardForm.reset();
+  prepareAddCardBatchFields();
   els.addCardForm.scryfall_id.value = "";
   resetAddPurchaseMatrix();
   els.addSearchStatus.textContent = "";
@@ -5815,6 +5846,7 @@ function resetAddCardModalForNew() {
   els.addSearchForm.reset();
   collapseAddAdvancedFilters();
   els.addCardForm.reset();
+  prepareAddCardBatchFields();
   els.addCardForm.scryfall_id.value = "";
   resetAddPurchaseMatrix();
   els.addSearchResults.innerHTML = "";
@@ -5892,6 +5924,7 @@ function selectAddCard(card) {
   state.selectedAddCard = card;
   els.addCardForm.scryfall_id.value = card.scryfall_id;
   els.addCardForm.hidden = false;
+  if (!els.addCardForm.acquired_date?.value) prepareAddCardBatchFields();
   renderAddPurchaseRows(card);
   els.confirmAddCardButton.disabled = false;
   els.confirmAddNewCardButton.disabled = false;
@@ -5945,6 +5978,8 @@ function renderSettingsPage() {
   els.settingsPageForm.contact_website.value = user.contact_website || "";
   els.settingsPageForm.language.value = settings.language || "en";
   els.settingsPageForm.theme.value = settings.theme || "light";
+  els.settingsPageForm.default_purchase_price.value = userDefaultPurchasePrice().toFixed(2);
+  els.settingsPageForm.default_sell_price.value = userDefaultSellPrice() > 0 ? userDefaultSellPrice().toFixed(2) : "";
   if (els.settingsAccountEmail) {
     els.settingsAccountEmail.textContent = state.user ? state.user.email : "Not logged in";
   }
@@ -6139,6 +6174,8 @@ function userSettingsPayload(overrides = {}) {
     contact_threads: user.contact_threads || "",
     about_me: user.about_me || "",
     profile_image: user.profile_image || "",
+    default_purchase_price: user.default_purchase_price ?? 0.01,
+    default_sell_price: user.default_sell_price ?? 0,
     language: settings.language || "en",
     theme: settings.theme || "light",
     ...overrides,
@@ -8222,7 +8259,7 @@ function renderSaleCards() {
         quantity: Number(bucket.quantity || 0),
         sale_available_quantity: Number(bucket.sale_available_quantity ?? bucket.quantity ?? 0),
         sale_quantity: Number(bucket.sale_quantity || 0),
-        sale_price: Number(bucket.sale_price || card.sale_price || market || 0.01),
+        sale_price: defaultSalePrice(bucket.sale_price || card.sale_price, market),
         deck_reserved_quantity: Number(bucket.deck_reserved_quantity || 0),
       }))
       .filter((bucket) => bucket.quantity > 0);
@@ -8232,7 +8269,7 @@ function renderSaleCards() {
         quantity: Number(card.quantity || 0),
         sale_available_quantity: Number(card.saleable_quantity ?? card.quantity ?? 0),
         sale_quantity: Number(card.sale_quantity || 0),
-        sale_price: Number(card.sale_price || market || 0.01),
+        sale_price: defaultSalePrice(card.sale_price, market),
         deck_reserved_quantity: cardDeckQuantity,
       });
     }
@@ -8274,7 +8311,7 @@ function renderSaleCards() {
         </label>
         <label class="sale-inline-field">
           Asking Price
-          <input name="asking_price" type="number" min="0.01" step="0.01" value="${Number(bucket.sale_price || market || 0.01).toFixed(2)}">
+          <input name="asking_price" type="number" min="0.01" step="0.01" value="${defaultSalePrice(bucket.sale_price, market).toFixed(2)}">
         </label>
       `;
       els.saleCards.appendChild(row);
@@ -9399,7 +9436,7 @@ function openAddPurchaseModal(card) {
   els.addPurchaseForm.quantity.value = 1;
   els.addPurchaseForm.card_condition.value = conditionText(card);
   els.addPurchaseForm.purchase_date.value = todayValue();
-  els.addPurchaseForm.total_price.value = "0.01";
+  els.addPurchaseForm.total_price.value = userDefaultPurchasePrice().toFixed(2);
   els.addPurchaseOverlay.hidden = false;
   document.body.classList.add("modal-open");
   els.addPurchaseForm.quantity.focus();
@@ -11352,6 +11389,12 @@ function wireEvents() {
       });
       const quantity = Number(result.quantity_added || 0);
       const variantLabel = (result.variants || []).join(", ") || result.variant || "selected variants";
+      if (formValues.update_default_purchase_price === "1") {
+        const defaultPurchasePrice = defaultPurchasePriceFromPurchases(purchases);
+        if (defaultPurchasePrice > 0) {
+          await saveUserSettings(userSettingsPayload({ default_purchase_price: defaultPurchasePrice }));
+        }
+      }
       setStatus(`Added ${integer.format(quantity)} ${addedCardTitle} card${quantity === 1 ? "" : "s"} (${variantLabel}).`);
       if (addAndNew) {
         resetAddCardModalForNew();

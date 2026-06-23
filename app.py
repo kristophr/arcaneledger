@@ -107,8 +107,8 @@ SESSION_IDLE_MINUTES = int(os.environ.get("SESSION_IDLE_MINUTES", "30") or 30)
 EMAIL_VERIFICATION_MINUTES = int(os.environ.get("EMAIL_VERIFICATION_MINUTES", "30") or 30)
 PASSWORD_RESET_MINUTES = int(os.environ.get("PASSWORD_RESET_MINUTES", str(EMAIL_VERIFICATION_MINUTES)) or EMAIL_VERIFICATION_MINUTES)
 SUPPORTED_SCRYFALL_LANGUAGES = {"en"}
-APP_VERSION = "0.2.7 beta"
-USER_AGENT = "arcaneledger/0.2.7"
+APP_VERSION = "0.2.8 beta"
+USER_AGENT = "arcaneledger/0.2.8"
 PROCESS_STARTED_AT = datetime.now(timezone.utc).replace(microsecond=0)
 COLOR_ORDER = ("W", "U", "B", "R", "G")
 CARD_CONDITIONS = (
@@ -1034,7 +1034,7 @@ def smtp_diagnostics():
     return result
 
 
-def encode_multipart_form(fields):
+def encode_multipart_form(fields, attachments=None):
     boundary = f"----arcaneledger-{secrets.token_hex(16)}"
     parts = []
     for name, value in fields:
@@ -1042,16 +1042,36 @@ def encode_multipart_form(fields):
         parts.append(f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode("utf-8"))
         parts.append(str(value).encode("utf-8"))
         parts.append(b"\r\n")
+    for attachment in attachments or []:
+        filename = clean_attachment_filename(attachment.get("filename") or "attachment")
+        content_type = attachment.get("content_type") or "application/octet-stream"
+        content = attachment.get("content") or b""
+        if isinstance(content, str):
+            content = content.encode("utf-8")
+        parts.append(f"--{boundary}\r\n".encode("utf-8"))
+        parts.append(
+            (
+                f'Content-Disposition: form-data; name="attachment"; filename="{filename}"\r\n'
+                f"Content-Type: {content_type}\r\n\r\n"
+            ).encode("utf-8")
+        )
+        parts.append(content)
+        parts.append(b"\r\n")
     parts.append(f"--{boundary}--\r\n".encode("utf-8"))
     return boundary, b"".join(parts)
 
 
-def send_email(to_email, subject, text=None, html=None, tags=None, from_email=None):
+def clean_attachment_filename(value):
+    filename = re.sub(r"[^A-Za-z0-9._-]+", "-", str(value or "attachment")).strip(".-")
+    return filename[:120] or "attachment"
+
+
+def send_email(to_email, subject, text=None, html=None, tags=None, from_email=None, attachments=None):
     if smtp_configured():
-        return send_smtp_email(to_email, subject, text, html, from_email=from_email)
+        return send_smtp_email(to_email, subject, text, html, from_email=from_email, attachments=attachments)
     if not mailgun_configured():
         raise ValueError("Email is not configured. Set SMTP_HOST, SMTP_USER, SMTP_PASSWORD, and SMTP_FROM, or configure Mailgun API settings.")
-    return send_mailgun_email(to_email, subject, text, html, tags, from_email=from_email)
+    return send_mailgun_email(to_email, subject, text, html, tags, from_email=from_email, attachments=attachments)
 
 
 def validate_email_message(to_email, subject, text=None, html=None):
@@ -1065,7 +1085,7 @@ def validate_email_message(to_email, subject, text=None, html=None):
     return recipient, subject.strip()
 
 
-def send_smtp_email(to_email, subject, text=None, html=None, from_email=None):
+def send_smtp_email(to_email, subject, text=None, html=None, from_email=None, attachments=None):
     recipient, clean_subject = validate_email_message(to_email, subject, text, html)
     message = EmailMessage()
     message["From"] = smtp_sender(from_email)
@@ -1074,6 +1094,20 @@ def send_smtp_email(to_email, subject, text=None, html=None, from_email=None):
     message.set_content(text or "")
     if html:
         message.add_alternative(html, subtype="html")
+    for attachment in attachments or []:
+        content = attachment.get("content") or b""
+        if isinstance(content, str):
+            content = content.encode("utf-8")
+        content_type = attachment.get("content_type") or "application/octet-stream"
+        maintype, _, subtype = content_type.partition("/")
+        if not subtype:
+            maintype, subtype = "application", "octet-stream"
+        message.add_attachment(
+            content,
+            maintype=maintype,
+            subtype=subtype,
+            filename=clean_attachment_filename(attachment.get("filename") or "attachment"),
+        )
 
     if SMTP_SECURE:
         with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=30) as server:
@@ -1090,7 +1124,7 @@ def send_smtp_email(to_email, subject, text=None, html=None, from_email=None):
     return {"ok": True, "provider": "smtp", "status": "sent"}
 
 
-def send_mailgun_email(to_email, subject, text=None, html=None, tags=None, from_email=None):
+def send_mailgun_email(to_email, subject, text=None, html=None, tags=None, from_email=None, attachments=None):
     recipient, clean_subject = validate_email_message(to_email, subject, text, html)
 
     fields = [
@@ -1106,7 +1140,7 @@ def send_mailgun_email(to_email, subject, text=None, html=None, tags=None, from_
         fields.append(("o:tag", tag))
 
     url = f"{MAILGUN_API_BASE}/{urllib.parse.quote(MAILGUN_DOMAIN)}/messages"
-    boundary, body = encode_multipart_form(fields)
+    boundary, body = encode_multipart_form(fields, attachments)
     req = urllib.request.Request(url, data=body, method="POST")
     req.add_header("Authorization", mailgun_auth_header())
     req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
@@ -1354,6 +1388,8 @@ def init_db(conn):
             contact_threads TEXT NOT NULL DEFAULT '',
             about_me TEXT NOT NULL DEFAULT '',
             profile_image TEXT NOT NULL DEFAULT '',
+            default_purchase_price REAL NOT NULL DEFAULT 0.01,
+            default_sell_price REAL NOT NULL DEFAULT 0,
             profile_slug TEXT UNIQUE,
             role TEXT NOT NULL DEFAULT 'normal',
             is_banned INTEGER NOT NULL DEFAULT 0,
@@ -2705,6 +2741,12 @@ def migrate_user_schema(conn):
     ):
         if column not in user_columns:
             conn.execute(f"ALTER TABLE users ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
+    for column, definition in {
+        "default_purchase_price": "REAL NOT NULL DEFAULT 0.01",
+        "default_sell_price": "REAL NOT NULL DEFAULT 0",
+    }.items():
+        if column not in user_columns:
+            conn.execute(f"ALTER TABLE users ADD COLUMN {column} {definition}")
     if "profile_slug" not in user_columns:
         conn.execute("ALTER TABLE users ADD COLUMN profile_slug TEXT")
     conn.execute("UPDATE users SET name = email WHERE trim(COALESCE(name, '')) = ''")
@@ -2825,6 +2867,8 @@ def user_payload(row):
         "contact_threads": row["contact_threads"] if "contact_threads" in row.keys() else "",
         "about_me": row["about_me"] if "about_me" in row.keys() else "",
         "profile_image": row["profile_image"] if "profile_image" in row.keys() else "",
+        "default_purchase_price": money(row["default_purchase_price"] if "default_purchase_price" in row.keys() else 0.01, fallback=0.01),
+        "default_sell_price": money(row["default_sell_price"] if "default_sell_price" in row.keys() else 0, fallback=0),
         "profile_slug": row["profile_slug"] if "profile_slug" in row.keys() else profile_slug(row["name"] if "name" in row.keys() else row["email"]),
         "profile_url": f"/user/{urllib.parse.quote(row['profile_slug'])}" if "profile_slug" in row.keys() and row["profile_slug"] else "",
         "store_share_id": row["store_share_id"] if "store_share_id" in row.keys() else "",
@@ -3990,13 +4034,19 @@ def update_user_settings(conn, user_id, payload):
     contact_threads = clean_contact_handle(payload.get("contact_threads"), "Threads username")
     about_me = clean_profile_text(payload.get("about_me"))
     profile_image = clean_profile_image(payload.get("profile_image"))
+    default_purchase_price = money(payload.get("default_purchase_price"), fallback=0.01)
+    if default_purchase_price <= 0:
+        default_purchase_price = 0.01
+    default_sell_price = money(payload.get("default_sell_price"), fallback=0)
+    if default_sell_price < 0:
+        default_sell_price = 0
     conn.execute(
         """
         UPDATE users
         SET name = ?, profile_slug = ?, language = ?, theme = ?, public_email = ?, contact_whatsapp = ?,
             contact_signal = ?, contact_telegram = ?, contact_discord = ?, contact_website = ?,
             contact_instagram = ?, contact_bluesky = ?, contact_threads = ?, about_me = ?, profile_image = ?,
-            updated_at = ?
+            default_purchase_price = ?, default_sell_price = ?, updated_at = ?
         WHERE id = ?
         """,
         (
@@ -4015,6 +4065,8 @@ def update_user_settings(conn, user_id, payload):
             contact_threads,
             about_me,
             profile_image,
+            default_purchase_price,
+            default_sell_price,
             now_iso(),
             user_id,
         ),
@@ -11951,12 +12003,27 @@ def collection_report_html(report, title="Arcane Ledger Collection Report"):
     """
 
 
+def collection_report_csv(report):
+    output = io.StringIO()
+    fields = report.get("fields") or []
+    rows = report.get("rows") or []
+    writer = csv.writer(output)
+    writer.writerow([field["label"] for field in fields])
+    for row in rows:
+        writer.writerow([
+            report_display_value(field["key"], row.get(field["key"]))
+            for field in fields
+        ])
+    return output.getvalue()
+
+
 def email_collection_report(conn, user, payload):
     to_email = normalize_email((payload or {}).get("to_email") or user["email"])
     if not to_email:
         raise ValueError("Enter an email address.")
     report = build_collection_report(conn, user["id"], payload or {})
     html_body = collection_report_html(report)
+    csv_body = collection_report_csv(report)
     text_lines = ["Arcane Ledger Collection Report", f"{len(report.get('rows') or []):,} rows"]
     for row in report.get("rows", [])[:25]:
         text_lines.append(" | ".join(
@@ -11969,6 +12036,11 @@ def email_collection_report(conn, user, payload):
         "\n".join(text_lines),
         html_body,
         tags=["arcane-ledger", "collection-report"],
+        attachments=[{
+            "filename": "arcaneledger-collection-report.csv",
+            "content_type": "text/csv",
+            "content": csv_body,
+        }],
     )
     return {"ok": True, "message": f"Report emailed to {to_email}.", "email": result}
 
