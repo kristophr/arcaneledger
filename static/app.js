@@ -65,6 +65,7 @@ const state = {
   editingContainer: null,
   activeSaleCard: null,
   assignContainerCard: null,
+  containerAllocationContainers: [],
   importRows: [],
   importIssues: [],
   importWizard: {
@@ -1466,6 +1467,7 @@ function wireCardSelection(selectWrap, selectCheckbox, card, options = {}) {
           sale_price: Number(entry.sale_price || entry.display_price || entry.market_price || 0),
           card_condition: conditionText(entry),
           condition_inventory: Array.isArray(entry.condition_inventory) ? entry.condition_inventory : [],
+          container_memberships: Array.isArray(entry.container_memberships) ? entry.container_memberships : [],
           image_small: entry.image_small || "",
           image_normal: entry.image_normal || "",
         });
@@ -7003,6 +7005,7 @@ function selectCardForDetailAssignment(card) {
     sale_price: Number(card.sale_price || card.display_price || card.market_price || 0),
     card_condition: conditionText(card),
     condition_inventory: Array.isArray(card.condition_inventory) ? card.condition_inventory : [],
+    container_memberships: Array.isArray(card.container_memberships) ? card.container_memberships : [],
     image_small: card.image_small || "",
     image_normal: card.image_normal || "",
   });
@@ -8064,6 +8067,209 @@ function containerAllocationQuantity(card, containerId, variant = null, conditio
     .reduce((total, container) => total + Number(container.quantity || 0), 0);
 }
 
+function containerAllocationBucketKey(bucket) {
+  return `${bucket.variant || "Normal"}||${normalizeConditionName(bucket.card_condition)}`;
+}
+
+function containerStoredForCard(card, containerId) {
+  return (containerMemberships(card) || [])
+    .filter((container) => Number(container.id) === Number(containerId))
+    .reduce((total, container) => total + Number(container.quantity || 0), 0);
+}
+
+function containerSpaceForCard(card, container) {
+  const capacity = Number(container?.capacity || 0);
+  if (capacity <= 0) return null;
+  return Math.max(0, Number(container.remaining_capacity ?? 0) + containerStoredForCard(card, container.id));
+}
+
+function containerAllocationRows(card, containers) {
+  const rowsByContainer = new Map();
+  for (const membership of containerMemberships(card) || []) {
+    const containerId = Number(membership.id || 0);
+    if (!containerId) continue;
+    const row = rowsByContainer.get(containerId) || { container_id: containerId, quantities: new Map() };
+    row.quantities.set(containerAllocationBucketKey({
+      variant: membership.variant || "Normal",
+      card_condition: membership.card_condition || "Near Mint",
+    }), Number(membership.quantity || 0));
+    rowsByContainer.set(containerId, row);
+  }
+  const rows = Array.from(rowsByContainer.values());
+  if (!rows.length && containers.length) {
+    rows.push({ container_id: "", quantities: new Map() });
+  }
+  return rows;
+}
+
+function containerAllocationOptionsHtml(containers, selectedId, card) {
+  const selected = Number(selectedId || 0);
+  return `
+    <option value="">Select container</option>
+    ${containers.map((container) => {
+      const capacity = Number(container.capacity || 0);
+      const openForCard = containerSpaceForCard(card, container);
+      const isSelected = selected && Number(container.id) === selected;
+      const disabled = !isSelected && capacity > 0 && Number(container.remaining_capacity ?? 0) <= 0;
+      const location = container.location ? ` - ${container.location}` : "";
+      const space = capacity > 0
+        ? ` - ${integer.format(Math.max(0, openForCard || 0))} available`
+        : " - no limit";
+      return `<option value="${escapeHtml(container.id)}" ${isSelected ? "selected" : ""} ${disabled ? "disabled" : ""}>${escapeHtml(`${containerTypeLabel(container.storage_type)} - ${container.name}${location}${space}`)}</option>`;
+    }).join("")}
+  `;
+}
+
+function addContainerAllocationRow(containers, buckets, values = {}) {
+  const table = els.assignContainerCards.querySelector(".container-allocation-table");
+  const body = els.assignContainerCards.querySelector(".container-allocation-body");
+  if (!table || !body) return;
+  const row = document.createElement("article");
+  row.className = "container-allocation-row";
+  row.innerHTML = `
+    <label class="container-select-cell">
+      <span class="sr-only">Container</span>
+      <select name="container_id">
+        ${containerAllocationOptionsHtml(containers, values.container_id || "", state.assignContainerCard)}
+      </select>
+      <small class="container-space-label" data-space-label></small>
+    </label>
+    ${buckets.map((bucket) => {
+      const key = containerAllocationBucketKey(bucket);
+      const value = values.quantities instanceof Map ? Number(values.quantities.get(key) || 0) : 0;
+      return `
+        <label>
+          <span class="sr-only">${escapeHtml(bucket.variant)} ${escapeHtml(bucket.card_condition)} quantity</span>
+          <input type="number" min="0" max="${escapeHtml(String(bucket.quantity || 0))}" step="1" value="${escapeHtml(String(value))}" data-variant="${escapeHtml(bucket.variant)}" data-condition="${escapeHtml(bucket.card_condition)}">
+        </label>
+      `;
+    }).join("")}
+    <button class="icon-button remove-allocation-row-button" type="button" aria-label="Remove container row" title="Remove row">×</button>
+  `;
+  body.appendChild(row);
+  const removeButton = row.querySelector(".remove-allocation-row-button");
+  removeButton?.addEventListener("click", () => {
+    if (body.querySelectorAll(".container-allocation-row").length > 1) {
+      row.remove();
+    } else {
+      row.querySelector("select").value = "";
+      for (const input of row.querySelectorAll('input[type="number"]')) input.value = "0";
+      updateContainerAllocationRow(row);
+    }
+  });
+  row.querySelector("select")?.addEventListener("change", () => updateContainerAllocationRow(row));
+  updateContainerAllocationRow(row);
+}
+
+function updateContainerAllocationRow(row) {
+  const card = state.assignContainerCard;
+  if (!card) return;
+  const containers = state.containerAllocationContainers || [];
+  const containerId = Number(row.querySelector("select")?.value || 0);
+  const container = containers.find((item) => Number(item.id) === containerId);
+  const label = row.querySelector("[data-space-label]");
+  if (!container) {
+    if (label) label.textContent = "Choose where these copies live.";
+    row.classList.remove("is-full");
+    return;
+  }
+  const capacity = Number(container.capacity || 0);
+  const openForCard = containerSpaceForCard(card, container);
+  const current = containerStoredForCard(card, container.id);
+  if (label) {
+    label.textContent = capacity > 0
+      ? `${integer.format(Math.max(0, openForCard || 0))} available here, ${integer.format(current)} currently assigned`
+      : `${integer.format(current)} currently assigned, no capacity limit`;
+  }
+  row.classList.toggle("is-full", capacity > 0 && Number(container.remaining_capacity ?? 0) <= 0 && current <= 0);
+}
+
+function bulkContainerAllocationBuckets(card) {
+  const variant = card.variant || "Normal";
+  const buckets = Array.isArray(card.condition_inventory) && card.condition_inventory.length
+    ? card.condition_inventory.filter((bucket) => (bucket.variant || variant) === variant)
+    : [{
+        variant,
+        card_condition: card.card_condition || "Near Mint",
+        quantity: Number(card.quantity || 0),
+      }];
+  return buckets.map((bucket) => {
+    const condition = normalizeConditionName(bucket.card_condition || card.card_condition || "Near Mint");
+    const quantity = Number(bucket.quantity || 0);
+    const stored = containerAllocationQuantity(card, null, variant, condition);
+    return {
+      variant,
+      card_condition: condition,
+      quantity,
+      stored,
+      available: Math.max(0, quantity - stored),
+    };
+  }).filter((bucket) => bucket.quantity > 0);
+}
+
+function bulkAllocationKey(card, bucket) {
+  return `${card.card_id}||${bucket.variant || "Normal"}||${normalizeConditionName(bucket.card_condition)}`;
+}
+
+function bulkContainerOptionsHtml(containers) {
+  return `
+    <option value="">Select container</option>
+    ${containers.map((container) => {
+      const capacity = Number(container.capacity || 0);
+      const remaining = Number(container.remaining_capacity ?? 0);
+      const disabled = capacity > 0 && remaining <= 0;
+      const location = container.location ? ` - ${container.location}` : "";
+      const space = capacity > 0 ? ` - ${integer.format(Math.max(0, remaining))} open` : " - no limit";
+      return `<option value="${escapeHtml(container.id)}" ${disabled ? "disabled" : ""}>${escapeHtml(`${containerTypeLabel(container.storage_type)} - ${container.name}${location}${space}`)}</option>`;
+    }).join("")}
+  `;
+}
+
+function addBulkContainerAllocationRow(containers, card, bucket, quantity = 0) {
+  const body = els.assignContainerCards.querySelector(".bulk-container-allocation-body");
+  if (!body) return;
+  const available = Number(bucket.available || 0);
+  const row = document.createElement("article");
+  row.className = "bulk-container-allocation-row";
+  row.dataset.cardId = card.card_id;
+  row.dataset.variant = bucket.variant || "Normal";
+  row.dataset.condition = bucket.card_condition || "Near Mint";
+  row.dataset.available = String(available);
+  row.innerHTML = `
+    <div class="bulk-container-card-cell">
+      <img src="${escapeHtml(card.image_small || card.image_normal || "")}" alt="">
+      <span>
+        <strong>${escapeHtml(card.name || "Card")}</strong>
+        <small>${escapeHtml(bucket.variant || "Normal")} / ${escapeHtml(bucket.card_condition || "Near Mint")} - ${integer.format(bucket.quantity || 0)} owned, ${integer.format(bucket.stored || 0)} stored, ${integer.format(available)} eligible</small>
+      </span>
+    </div>
+    <label class="container-select-cell">
+      <span class="sr-only">Container</span>
+      <select name="container_id">
+        ${bulkContainerOptionsHtml(containers)}
+      </select>
+    </label>
+    <label>
+      <span class="sr-only">Quantity</span>
+      <input type="number" min="0" max="${escapeHtml(String(available))}" step="1" value="${escapeHtml(String(Math.min(Number(quantity || 0), available)))}" ${available <= 0 ? "disabled" : ""}>
+    </label>
+    <button class="icon-button add-bulk-allocation-row-button" type="button" aria-label="Split this card into another container" title="Split into another container">+</button>
+    <button class="icon-button remove-allocation-row-button" type="button" aria-label="Remove allocation row" title="Remove row">×</button>
+  `;
+  body.appendChild(row);
+  row.querySelector(".add-bulk-allocation-row-button")?.addEventListener("click", () => {
+    addBulkContainerAllocationRow(containers, card, bucket, 0);
+  });
+  row.querySelector(".remove-allocation-row-button")?.addEventListener("click", () => {
+    if (body.querySelectorAll(".bulk-container-allocation-row").length > 1) {
+      row.remove();
+    } else {
+      row.querySelector("select").value = "";
+      row.querySelector('input[type="number"]').value = "0";
+    }
+  });
+}
+
 function renderAssignContainerCards(containers = state.containers || []) {
   if (state.assignContainerCard) {
     renderContainerAllocationRows(containers);
@@ -8075,23 +8281,39 @@ function renderAssignContainerCards(containers = state.containers || []) {
     els.assignContainerCards.innerHTML = '<div class="empty-state">Select owned cards first.</div>';
     return;
   }
+  if (!containers.length) {
+    els.assignContainerCards.innerHTML = '<div class="empty-state">Create a container first.</div>';
+    return;
+  }
+  state.containerAllocationContainers = containers;
+  const table = document.createElement("div");
+  table.className = "bulk-container-allocation-table";
+  table.innerHTML = `
+    <div class="bulk-container-allocation-header">
+      <span>Card / Variant</span>
+      <span>Container</span>
+      <span>Qty</span>
+      <span></span>
+      <span></span>
+    </div>
+    <div class="bulk-container-allocation-body"></div>
+  `;
+  els.assignContainerCards.appendChild(table);
   for (const card of cards) {
-    const available = Math.max(0, Number(card.unassigned_quantity || 0));
-    const row = document.createElement("article");
-    row.className = "assign-container-row";
-    row.dataset.cardKey = `${card.card_id}::${card.variant}`;
-    row.innerHTML = `
-      <img src="${escapeHtml(card.image_small || card.image_normal || "")}" alt="">
-      <div>
-        <strong>${escapeHtml(card.name || "Card")}</strong>
-        <span>${escapeHtml(card.variant || "Normal")} - ${integer.format(available)} unassigned of ${integer.format(card.quantity || 0)} owned</span>
-      </div>
-      <label>
-        Qty
-        <input type="number" min="1" max="${available}" step="1" value="${available > 0 ? 1 : 0}" ${available <= 0 ? "disabled" : ""}>
-      </label>
-    `;
-    els.assignContainerCards.appendChild(row);
+    const buckets = bulkContainerAllocationBuckets(card);
+    if (!buckets.length) {
+      addBulkContainerAllocationRow(containers, card, {
+        variant: card.variant || "Normal",
+        card_condition: card.card_condition || "Near Mint",
+        quantity: Number(card.quantity || 0),
+        stored: Number(card.quantity || 0),
+        available: 0,
+      }, 0);
+      continue;
+    }
+    for (const bucket of buckets) {
+      addBulkContainerAllocationRow(containers, card, bucket, 0);
+    }
   }
 }
 
@@ -8099,6 +8321,7 @@ function renderContainerAllocationRows(containers = []) {
   const card = state.assignContainerCard;
   els.assignContainerCards.innerHTML = "";
   if (!card) return;
+  state.containerAllocationContainers = containers;
   const buckets = containerAllocationBuckets(card);
   const owned = buckets.reduce((total, bucket) => total + Number(bucket.quantity || 0), 0);
   const stored = (containerMemberships(card) || []).reduce((total, container) => total + Number(container.quantity || 0), 0);
@@ -8123,65 +8346,46 @@ function renderContainerAllocationRows(containers = []) {
   }
   const table = document.createElement("div");
   table.className = "container-allocation-table";
-  const rows = [];
-  for (const bucket of buckets) {
-    const bucketOwned = Number(bucket.quantity || 0);
-    const bucketStored = containerAllocationQuantity(card, null, bucket.variant, bucket.card_condition);
-    for (const container of containers) {
-      const current = containerAllocationQuantity(card, container.id, bucket.variant, bucket.card_condition);
-      const capacity = Number(container.capacity || 0);
-      const remaining = Number(container.remaining_capacity ?? 0);
-      const maxForContainer = capacity > 0 ? Math.min(bucketOwned, current + remaining) : bucketOwned;
-      const isFull = capacity > 0 && remaining <= 0 && current <= 0;
-      const location = container.location ? ` - ${escapeHtml(container.location)}` : "";
-      const capacityText = capacity > 0
-        ? `${isFull ? "No more space" : `${integer.format(Math.max(0, remaining))} open`} - ${integer.format(current)} stored here`
-        : `${integer.format(current)} stored here`;
-      rows.push(`
-        <article class="container-allocation-row${isFull ? " is-full" : ""}"
-          data-container-id="${escapeHtml(container.id)}"
-          data-variant="${escapeHtml(bucket.variant)}"
-          data-condition="${escapeHtml(bucket.card_condition)}"
-          data-owned="${escapeHtml(String(bucketOwned))}">
-          <strong>${escapeHtml(bucket.variant)}</strong>
-          <span>${escapeHtml(bucket.card_condition)}<small class="container-space-label">${integer.format(bucketStored)} of ${integer.format(bucketOwned)} stored</small></span>
-          <span>${escapeHtml(container.name || "Container")}<small class="container-space-label">${escapeHtml(containerTypeLabel(container.storage_type))}${location}</small></span>
-          <span>${escapeHtml(capacityText)}</span>
-          <label>
-            <span class="sr-only">Quantity in ${escapeHtml(container.name || "container")}</span>
-            <input type="number" min="0" max="${escapeHtml(String(maxForContainer))}" step="1" value="${escapeHtml(String(Math.min(current, maxForContainer)))}" ${isFull ? "disabled" : ""}>
-          </label>
-        </article>
-      `);
-    }
-  }
+  table.style.setProperty("--allocation-columns", `minmax(240px, 1.35fr) repeat(${Math.max(1, buckets.length)}, minmax(132px, 0.8fr)) 44px`);
   table.innerHTML = `
     <div class="container-allocation-header">
-      <span>Variant</span>
-      <span>Condition</span>
       <span>Container</span>
-      <span>Space</span>
-      <span>Quantity</span>
+      ${buckets.map((bucket) => {
+        const storedForBucket = containerAllocationQuantity(card, null, bucket.variant, bucket.card_condition);
+        return `
+          <span>
+            ${escapeHtml(bucket.variant)}
+            <small>${escapeHtml(bucket.card_condition)} - ${integer.format(storedForBucket)} stored / ${integer.format(bucket.quantity || 0)} owned</small>
+          </span>
+        `;
+      }).join("")}
+      <span></span>
     </div>
-    ${rows.join("")}
+    <div class="container-allocation-body"></div>
+    <button class="secondary-button add-allocation-row-button" type="button">Add Container Row</button>
   `;
   els.assignContainerCards.appendChild(table);
+  const rows = containerAllocationRows(card, containers);
+  for (const row of rows) addContainerAllocationRow(containers, buckets, row);
+  table.querySelector(".add-allocation-row-button")?.addEventListener("click", () => {
+    addContainerAllocationRow(containers, buckets, { container_id: "", quantities: new Map() });
+  });
 }
 
 function updateAssignContainerMode() {
   const isCardAllocation = Boolean(state.assignContainerCard);
   const selectLabel = els.assignContainerForm.container_id.closest("label");
-  if (selectLabel) selectLabel.hidden = isCardAllocation;
-  els.assignContainerForm.container_id.required = !isCardAllocation;
+  if (selectLabel) selectLabel.hidden = true;
+  els.assignContainerForm.container_id.required = false;
   if (els.assignCreateContainerButton) {
     els.assignCreateContainerButton.textContent = isCardAllocation ? "Create Container" : "Add New Container";
   }
   const title = document.querySelector("#assignContainerTitle");
-  if (title) title.textContent = isCardAllocation ? "Assign Containers" : "Add to Container";
+  if (title) title.textContent = "Assign Containers";
   const eyebrow = els.assignContainerOverlay.querySelector(".eyebrow");
   if (eyebrow) eyebrow.textContent = isCardAllocation ? "Store this card" : "Store selected cards";
   const submit = els.assignContainerForm.querySelector('button[type="submit"]');
-  if (submit) submit.textContent = isCardAllocation ? "Save Containers" : "Add to Container";
+  if (submit) submit.textContent = "Save Containers";
 }
 
 async function openAssignContainerModal(options = {}) {
@@ -11667,11 +11871,19 @@ function wireEvents() {
         populateAssignContainerSelect(containers);
         renderAssignContainerCards(containers);
         if (state.assignContainerCard) {
-          const newRowInput = els.assignContainerCards.querySelector(`[data-container-id="${CSS.escape(String(result.container.id))}"] input`);
-          newRowInput?.focus();
+          const lastRow = els.assignContainerCards.querySelector(".container-allocation-row:last-child");
+          const select = lastRow?.querySelector("select");
+          if (select) {
+            select.value = String(result.container.id);
+            updateContainerAllocationRow(lastRow);
+            select.focus();
+          }
         } else {
-          els.assignContainerForm.container_id.value = String(result.container.id);
-          els.assignContainerForm.container_id.focus();
+          const firstSelect = els.assignContainerCards.querySelector(".bulk-container-allocation-row select");
+          if (firstSelect) {
+            firstSelect.value = String(result.container.id);
+            firstSelect.focus();
+          }
         }
       }
       if (state.activeContainer && Number(state.activeContainer.id) === Number(result.container.id)) {
@@ -11718,7 +11930,6 @@ function wireEvents() {
   });
   els.assignContainerForm.addEventListener("submit", async (event) => {
     event.preventDefault();
-    const containerId = els.assignContainerForm.container_id.value;
     const statusTarget = activeStatusTarget();
     if (state.assignContainerCard) {
       const card = state.assignContainerCard;
@@ -11726,22 +11937,56 @@ function wireEvents() {
       for (const bucket of containerAllocationBuckets(card)) {
         ownedByBucket.set(`${bucket.variant}||${bucket.card_condition}`, Number(bucket.quantity || 0));
       }
-      const allocations = Array.from(els.assignContainerCards.querySelectorAll(".container-allocation-row")).map((row) => ({
-        container_id: Number(row.dataset.containerId || 0),
-        variant: row.dataset.variant || "Normal",
-        card_condition: row.dataset.condition || "Near Mint",
-        quantity: Number(row.querySelector('input[type="number"]')?.value || 0),
-        max: Number(row.querySelector('input[type="number"]')?.max || 0),
-      })).filter((allocation) => allocation.container_id);
+      const allocations = [];
+      const rowTotalsByContainer = new Map();
+      const containersById = new Map((state.containerAllocationContainers || []).map((container) => [Number(container.id), container]));
+      for (const row of els.assignContainerCards.querySelectorAll(".container-allocation-row")) {
+        const containerId = Number(row.querySelector("select")?.value || 0);
+        if (!containerId) continue;
+        let rowTotal = 0;
+        for (const input of row.querySelectorAll('input[type="number"]')) {
+          const quantity = Math.max(0, Number(input.value || 0));
+          const max = Number(input.max || 0);
+          if (quantity > max) {
+            setStatus("One of those quantities is higher than the owned quantity for that variant.", "error", statusTarget);
+            return;
+          }
+          rowTotal += quantity;
+          allocations.push({
+            container_id: containerId,
+            variant: input.dataset.variant || "Normal",
+            card_condition: input.dataset.condition || "Near Mint",
+            quantity,
+            max,
+          });
+        }
+        rowTotalsByContainer.set(containerId, (rowTotalsByContainer.get(containerId) || 0) + rowTotal);
+      }
+      for (const [containerId, total] of rowTotalsByContainer.entries()) {
+        const container = containersById.get(containerId);
+        if (!container || Number(container.capacity || 0) <= 0) continue;
+        const available = containerSpaceForCard(card, container);
+        if (total > Number(available || 0)) {
+          setStatus(`${container.name || "That container"} only has space for ${integer.format(Math.max(0, available || 0))} card/copy.`, "error", statusTarget);
+          return;
+        }
+      }
       if (!allocations.length) {
         setStatus("Create a container first.", "error", statusTarget);
         return;
       }
-      const overCapacity = allocations.find((allocation) => allocation.quantity > allocation.max);
-      if (overCapacity) {
-        setStatus("One of those containers does not have enough space.", "error", statusTarget);
-        return;
+      const allocationMap = new Map();
+      for (const allocation of allocations) {
+        const key = `${allocation.container_id}||${allocation.variant}||${allocation.card_condition}`;
+        const existing = allocationMap.get(key);
+        if (existing) {
+          existing.quantity += allocation.quantity;
+        } else {
+          allocationMap.set(key, { ...allocation });
+        }
       }
+      allocations.length = 0;
+      allocations.push(...Array.from(allocationMap.values()));
       const totalsByBucket = new Map();
       for (const allocation of allocations) {
         const key = `${allocation.variant}||${allocation.card_condition}`;
@@ -11772,35 +12017,66 @@ function wireEvents() {
       }
       return;
     }
-    if (!containerId) {
-      setStatus("Create a container first.", "error", statusTarget);
-      return;
-    }
-    if (els.assignContainerForm.container_id.selectedOptions[0]?.disabled) {
-      setStatus("That container has no more space.", "error", statusTarget);
-      return;
-    }
-    const cardsByKey = new Map(Array.from(state.selectedCards.values()).map((card) => [`${card.card_id}::${card.variant}`, card]));
-    const cards = Array.from(els.assignContainerCards.querySelectorAll(".assign-container-row")).map((row) => {
-      const card = cardsByKey.get(row.dataset.cardKey);
+    const cardsByContainer = new Map();
+    const totalsByBucket = new Map();
+    const totalsByContainer = new Map();
+    const containersById = new Map((state.containerAllocationContainers || []).map((container) => [Number(container.id), container]));
+    for (const row of els.assignContainerCards.querySelectorAll(".bulk-container-allocation-row")) {
+      const selectedContainerId = Number(row.querySelector("select")?.value || 0);
       const input = row.querySelector('input[type="number"]');
-      if (!card || !input) return null;
-      return {
-        card_id: card.card_id,
-        variant: card.variant,
-        quantity: Number(input.value || 0),
-      };
-    }).filter((card) => card && card.quantity > 0);
-    if (!cards.length) {
-      setStatus("No unassigned copies are available for those cards.", "error", statusTarget);
+      const quantity = Math.max(0, Number(input?.value || 0));
+      if (!selectedContainerId || quantity <= 0) continue;
+      const max = Number(input?.max || row.dataset.available || 0);
+      if (quantity > max) {
+        setStatus("One of those quantities is higher than the eligible quantity for that variant.", "error", statusTarget);
+        return;
+      }
+      const cardId = row.dataset.cardId;
+      const variant = row.dataset.variant || "Normal";
+      const condition = row.dataset.condition || "Near Mint";
+      const bucketKey = `${cardId}||${variant}||${condition}`;
+      totalsByBucket.set(bucketKey, (totalsByBucket.get(bucketKey) || 0) + quantity);
+      totalsByContainer.set(selectedContainerId, (totalsByContainer.get(selectedContainerId) || 0) + quantity);
+      const cards = cardsByContainer.get(selectedContainerId) || [];
+      cards.push({
+        card_id: cardId,
+        variant,
+        card_condition: condition,
+        quantity,
+      });
+      cardsByContainer.set(selectedContainerId, cards);
+    }
+    for (const [key, total] of totalsByBucket.entries()) {
+      const row = els.assignContainerCards.querySelector(`.bulk-container-allocation-row[data-card-id="${CSS.escape(key.split("||")[0])}"][data-variant="${CSS.escape(key.split("||")[1])}"][data-condition="${CSS.escape(key.split("||")[2])}"]`);
+      const available = Number(row?.dataset.available || 0);
+      if (total > available) {
+        setStatus("One of those variant allocations exceeds the eligible quantity.", "error", statusTarget);
+        return;
+      }
+    }
+    for (const [selectedContainerId, total] of totalsByContainer.entries()) {
+      const selectedContainer = containersById.get(selectedContainerId);
+      if (!selectedContainer || Number(selectedContainer.capacity || 0) <= 0) continue;
+      const remaining = Number(selectedContainer.remaining_capacity ?? 0);
+      if (total > remaining) {
+        setStatus(`${selectedContainer.name || "That container"} only has space for ${integer.format(Math.max(0, remaining))} card/copy.`, "error", statusTarget);
+        return;
+      }
+    }
+    if (!cardsByContainer.size) {
+      setStatus("Choose at least one container and quantity.", "error", statusTarget);
       return;
     }
     try {
-      const result = await api(`/api/containers/${encodeURIComponent(containerId)}/cards`, {
-        method: "POST",
-        body: JSON.stringify({ cards }),
-      });
-      setStatus(`Stored ${integer.format(result.added || 0)} card${result.added === 1 ? "" : "s"} in container.`, "", statusTarget);
+      let added = 0;
+      for (const [selectedContainerId, cards] of cardsByContainer.entries()) {
+        const result = await api(`/api/containers/${encodeURIComponent(selectedContainerId)}/cards`, {
+          method: "POST",
+          body: JSON.stringify({ cards }),
+        });
+        added += Number(result.added || 0);
+      }
+      setStatus(`Stored ${integer.format(added)} card${added === 1 ? "" : "s"} in containers.`, "", statusTarget);
       closeAssignContainerModal();
       clearSelectedCards();
       await loadContainers();

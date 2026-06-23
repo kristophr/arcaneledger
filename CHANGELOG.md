@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.2.9 beta
+
+### Added
+- Added set drill-in financial totals for Total Paid, Market Value, and Delta so users can review spend versus current value inside each owned set.
+- Added a wider card ledger modal with full transaction dates, purchase price, store name, and store location fields.
+- Added variant-and-condition-aware container allocation controls for assigning cards into physical storage.
+- Added bulk container allocation rows so selected collection cards can be split across different containers by variant and condition.
+
+### Changed
+- Bumped the app version and user agent to `0.2.9 beta`.
+- Reworked the single-card Assign Containers modal to use a container dropdown plus variant/condition quantity columns instead of listing every container as a separate row.
+- Reworked bulk Add to Container behavior so normal, foil, and other variant/condition quantities can be delegated to different containers in one save.
+- Widened the assign-to-container modal and improved table spacing for clearer storage allocation.
+- Bumped frontend asset versions for the set financial summary and container assignment updates.
+
+### Fixed
+- Fixed mass container assignment that previously flattened selected cards into one container workflow and made mixed normal/foil storage awkward.
+- Fixed container allocation validation so the UI checks eligible owned quantities and container capacity before saving.
+
 ## 0.2.8 beta
 
 ### Added
