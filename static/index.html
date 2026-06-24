@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Arcane Ledger</title>
-    <link rel="stylesheet" href="/styles.css?v=178">
+    <link rel="stylesheet" href="/styles.css?v=179">
   </head>
   <body>
     <header class="topbar">
@@ -916,68 +916,74 @@
             </div>
             <dl id="adminServerDetails" class="admin-server-details"></dl>
           </section>
-          <section class="panel admin-panel">
-            <div class="panel-head">
-              <h3>User Management</h3>
-              <span id="adminUserCount"></span>
+          <div class="admin-content-columns">
+            <div class="admin-column admin-primary-column">
+              <section class="panel admin-panel">
+                <div class="panel-head">
+                  <h3>User Management</h3>
+                  <span id="adminUserCount"></span>
+                </div>
+                <div id="adminUsersList" class="admin-users-list"></div>
+              </section>
+              <section class="panel admin-panel">
+                <div class="panel-head">
+                  <h3>Content Reports</h3>
+                  <span id="adminReportCount"></span>
+                </div>
+                <div id="adminReportsList" class="admin-reports-list"></div>
+              </section>
+              <section class="panel admin-panel admin-wallpaper-panel">
+                <div class="panel-head">
+                  <div>
+                    <h3>Wallpaper Management</h3>
+                    <span id="adminWallpaperCount"></span>
+                  </div>
+                </div>
+                <p class="settings-help">Upload, review, and delete site wallpapers. Arcane Ledger rotates one into the background each day.</p>
+                <div class="admin-wallpaper-upload">
+                  <input id="adminWallpaperInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif">
+                  <button id="uploadAdminWallpaperButton" class="primary-button compact-button" type="button">Upload Wallpaper</button>
+                </div>
+                <div id="adminWallpaperStatus" class="status admin-wallpaper-status" aria-live="polite"></div>
+                <div id="adminWallpapersList" class="admin-wallpapers-list"></div>
+              </section>
             </div>
-            <div id="adminUsersList" class="admin-users-list"></div>
-          </section>
-          <section class="panel admin-panel">
-            <div class="panel-head">
-              <h3>Content Reports</h3>
-              <span id="adminReportCount"></span>
+            <div class="admin-column admin-secondary-column">
+              <section class="panel admin-panel admin-home-panel">
+                <div class="panel-head">
+                  <div>
+                    <h3>Home Page Management</h3>
+                    <span id="adminAnnouncementCount"></span>
+                  </div>
+                  <button id="addAdminAnnouncementButton" class="primary-button compact-button" type="button">Add Announcement</button>
+                </div>
+                <div id="adminAnnouncementStatus" class="status admin-announcement-status" aria-live="polite"></div>
+                <div id="adminAnnouncementsList" class="admin-announcements-list"></div>
+              </section>
+              <section class="panel admin-panel admin-pro-panel">
+                <div class="panel-head">
+                  <div>
+                    <h3>Pro Features</h3>
+                    <span>Normal account limits; Pro, Contributor, and Admin remain unlimited.</span>
+                  </div>
+                  <button id="saveAdminProFeaturesButton" class="primary-button compact-button" type="button">Save Limits</button>
+                </div>
+                <div id="adminProFeaturesStatus" class="status admin-pro-features-status" aria-live="polite"></div>
+                <div id="adminProFeaturesList" class="admin-pro-features-list"></div>
+              </section>
+              <section class="panel admin-panel admin-email-panel">
+                <div class="panel-head">
+                  <div>
+                    <h3>Email Templates</h3>
+                    <span id="adminEmailTemplateCount"></span>
+                  </div>
+                  <button id="addAdminEmailTemplateButton" class="primary-button compact-button" type="button">+ Template</button>
+                </div>
+                <div id="adminEmailStatus" class="status admin-email-status" aria-live="polite"></div>
+                <div id="adminEmailTemplatesList" class="admin-email-template-list"></div>
+              </section>
             </div>
-            <div id="adminReportsList" class="admin-reports-list"></div>
-          </section>
-          <section class="panel admin-panel admin-wallpaper-panel">
-            <div class="panel-head">
-              <div>
-                <h3>Wallpaper Management</h3>
-                <span id="adminWallpaperCount"></span>
-              </div>
-            </div>
-            <p class="settings-help">Upload, review, and delete site wallpapers. Arcane Ledger rotates one into the background each day.</p>
-            <div class="admin-wallpaper-upload">
-              <input id="adminWallpaperInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif">
-              <button id="uploadAdminWallpaperButton" class="primary-button compact-button" type="button">Upload Wallpaper</button>
-            </div>
-            <div id="adminWallpaperStatus" class="status admin-wallpaper-status" aria-live="polite"></div>
-            <div id="adminWallpapersList" class="admin-wallpapers-list"></div>
-          </section>
-          <section class="panel admin-panel admin-home-panel">
-            <div class="panel-head">
-              <div>
-                <h3>Home Page Management</h3>
-                <span id="adminAnnouncementCount"></span>
-              </div>
-              <button id="addAdminAnnouncementButton" class="primary-button compact-button" type="button">Add Announcement</button>
-            </div>
-            <div id="adminAnnouncementStatus" class="status admin-announcement-status" aria-live="polite"></div>
-            <div id="adminAnnouncementsList" class="admin-announcements-list"></div>
-          </section>
-          <section class="panel admin-panel admin-pro-panel">
-            <div class="panel-head">
-              <div>
-                <h3>Pro Features</h3>
-                <span>Normal account limits; Pro, Contributor, and Admin remain unlimited.</span>
-              </div>
-              <button id="saveAdminProFeaturesButton" class="primary-button compact-button" type="button">Save Limits</button>
-            </div>
-            <div id="adminProFeaturesStatus" class="status admin-pro-features-status" aria-live="polite"></div>
-            <div id="adminProFeaturesList" class="admin-pro-features-list"></div>
-          </section>
-          <section class="panel admin-panel admin-email-panel">
-            <div class="panel-head">
-              <div>
-                <h3>Email Templates</h3>
-                <span id="adminEmailTemplateCount"></span>
-              </div>
-              <button id="addAdminEmailTemplateButton" class="primary-button compact-button" type="button">+ Template</button>
-            </div>
-            <div id="adminEmailStatus" class="status admin-email-status" aria-live="polite"></div>
-            <div id="adminEmailTemplatesList" class="admin-email-template-list"></div>
-          </section>
+          </div>
           <section class="panel admin-panel admin-logs-panel">
             <div class="panel-head">
               <h3>Server Logs</h3>
