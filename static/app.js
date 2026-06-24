@@ -18,6 +18,7 @@ const state = {
   adminReports: [],
   adminEmailTemplates: [],
   adminAnnouncements: [],
+  adminProFeatures: null,
   adminWallpapers: [],
   homeAnnouncements: [],
   newsPosts: [],
@@ -25,6 +26,7 @@ const state = {
   newsPublished: [],
   newsSearchTimer: null,
   activeNewsStudioTab: "new",
+  activeNewsPost: null,
   editingAdminEmailTemplateId: null,
   editingAdminAnnouncementId: null,
   appConfig: {},
@@ -223,6 +225,7 @@ const els = {
   newsDetailTitle: document.querySelector("#newsDetailTitle"),
   newsDetailMeta: document.querySelector("#newsDetailMeta"),
   newsDetailBody: document.querySelector("#newsDetailBody"),
+  shareNewsDetailButton: document.querySelector("#shareNewsDetailButton"),
   closeNewsDetailButton: document.querySelector("#closeNewsDetailButton"),
   contributorStudioButton: document.querySelector("#contributorStudioButton"),
   newsStudioOverlay: document.querySelector("#newsStudioOverlay"),
@@ -314,6 +317,9 @@ const els = {
   adminAnnouncementsList: document.querySelector("#adminAnnouncementsList"),
   adminAnnouncementStatus: document.querySelector("#adminAnnouncementStatus"),
   addAdminAnnouncementButton: document.querySelector("#addAdminAnnouncementButton"),
+  adminProFeaturesStatus: document.querySelector("#adminProFeaturesStatus"),
+  adminProFeaturesList: document.querySelector("#adminProFeaturesList"),
+  saveAdminProFeaturesButton: document.querySelector("#saveAdminProFeaturesButton"),
   adminAnnouncementOverlay: document.querySelector("#adminAnnouncementOverlay"),
   adminAnnouncementModalTitle: document.querySelector("#adminAnnouncementModalTitle"),
   adminAnnouncementSubject: document.querySelector("#adminAnnouncementSubject"),
@@ -2147,6 +2153,12 @@ async function loadNews() {
   setStatus(state.newsPosts.length ? "" : "No news articles found.", state.newsPosts.length ? "" : "info", els.newsStatus);
 }
 
+async function loadNewsRoute(postId) {
+  showPage("news");
+  await loadNews();
+  await openNewsDetail(postId);
+}
+
 function renderNews() {
   if (!els.newsGrid) return;
   els.newsGrid.innerHTML = "";
@@ -2176,6 +2188,7 @@ async function openNewsDetail(postId) {
   const data = await api(`/api/news/${encodeURIComponent(postId)}`);
   const post = data.post;
   if (!post) return;
+  state.activeNewsPost = post;
   if (els.newsDetailTitle) els.newsDetailTitle.textContent = post.title || "Article";
   if (els.newsDetailMeta) {
     els.newsDetailMeta.textContent = `By ${post.author?.name || "Contributor"} · ${formatCompactDate(post.published_at || post.created_at || "")}`;
@@ -2191,6 +2204,15 @@ function closeNewsDetailModal() {
   if (!els.newsDetailOverlay) return;
   els.newsDetailOverlay.hidden = true;
   document.body.classList.remove("modal-open");
+  state.activeNewsPost = null;
+}
+
+function openNewsShareModal(post = state.activeNewsPost) {
+  if (!post?.id) {
+    setStatus("This article does not have a share link yet.", "error", els.newsStatus);
+    return;
+  }
+  openShareUrl(post.title || "News article", shareUrlForNews(post), "news", post);
 }
 
 function resetNewsEditorForm() {
@@ -2633,6 +2655,11 @@ function userProfileRoute() {
 
 function favoritesShareRoute() {
   const match = window.location.pathname.match(/^\/favorites\/([^/]+)\/?$/);
+  return match ? decodeURIComponent(match[1]) : "";
+}
+
+function newsRouteId() {
+  const match = window.location.pathname.match(/^\/news\/([0-9]+)\/?$/);
   return match ? decodeURIComponent(match[1]) : "";
 }
 
@@ -3758,6 +3785,7 @@ function closeAssignWishlistModal() {
 
 function shareUrlForEntity(type, entity) {
   if (type === "card") return shareUrlForCard(entity);
+  if (type === "news") return shareUrlForNews(entity);
   if (type === "deck" || type === "shared-deck") return shareUrlForDeck(entity);
   if (type === "container") return shareUrlForContainer(entity);
   if (type === "set") return shareUrlForSet(entity);
@@ -3767,6 +3795,7 @@ function shareUrlForEntity(type, entity) {
 
 function emailEntityLabel(type) {
   if (type === "card") return "Card";
+  if (type === "news") return "News";
   if (type === "deck" || type === "shared-deck") return "Deck";
   if (type === "container") return "Container";
   if (type === "set") return "Set";
@@ -4297,12 +4326,13 @@ async function loadAdmin() {
     setStatus("Admin access required.", "error", els.adminStatus);
     return;
   }
-  const [users, server, reports, templates, announcements, wallpapers, logs] = await Promise.all([
+  const [users, server, reports, templates, announcements, proFeatures, wallpapers, logs] = await Promise.all([
     api("/api/admin/users"),
     api("/api/admin/server"),
     api("/api/admin/reports"),
     api("/api/admin/email-templates"),
     api("/api/admin/announcements"),
+    api("/api/admin/pro-features"),
     api("/api/admin/wallpapers"),
     loadAdminLogs(false),
   ]);
@@ -4311,6 +4341,7 @@ async function loadAdmin() {
   state.adminReports = reports.reports || [];
   state.adminEmailTemplates = templates.templates || [];
   state.adminAnnouncements = announcements.announcements || [];
+  state.adminProFeatures = proFeatures;
   state.adminWallpapers = wallpapers.wallpapers || [];
   state.appConfig = { ...(state.appConfig || {}), wallpaper: wallpapers.current || null };
   applySiteWallpaper();
@@ -4320,6 +4351,7 @@ async function loadAdmin() {
   renderAdminLogs();
   renderAdminEmailTemplates();
   renderAdminAnnouncements();
+  renderAdminProFeatures();
   renderAdminWallpapers();
 }
 
@@ -4746,6 +4778,49 @@ async function saveAdminAnnouncement(status) {
     closeAdminAnnouncementModal();
     renderAdminAnnouncements();
     setStatus(status === "published" ? "Announcement published." : "Announcement saved as draft.", "success", els.adminAnnouncementStatus || els.adminStatus);
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+function renderAdminProFeatures() {
+  if (!els.adminProFeaturesList) return;
+  const payload = state.adminProFeatures || {};
+  const features = payload.features || [
+    { key: "containers", label: "Max Number of Containers", normal_limit: 4, pro_limit: "Unlimited" },
+    { key: "decks", label: "Max Number of Decks", normal_limit: 10, pro_limit: "Unlimited" },
+    { key: "wishlists", label: "Max Number of Wishlists", normal_limit: 10, pro_limit: "Unlimited" },
+  ];
+  els.adminProFeaturesList.innerHTML = features.map((feature) => `
+    <label class="admin-pro-feature-row" data-feature-key="${escapeHtml(feature.key)}">
+      <span>
+        <strong>${escapeHtml(feature.label)}</strong>
+        <small>Pro / Contributor / Admin: ${escapeHtml(feature.pro_limit || "Unlimited")}</small>
+      </span>
+      <input type="number" min="${Number(feature.normal_limit || 0)}" step="1" value="${Number(feature.normal_limit || 0)}" aria-label="${escapeHtml(feature.label)}">
+    </label>
+  `).join("");
+}
+
+async function saveAdminProFeatures() {
+  if (!isAdminUser()) return;
+  const button = els.saveAdminProFeaturesButton;
+  const limits = {};
+  els.adminProFeaturesList?.querySelectorAll(".admin-pro-feature-row").forEach((row) => {
+    const key = row.dataset.featureKey;
+    const value = Number(row.querySelector("input")?.value || 0);
+    if (key) limits[key] = value;
+  });
+  if (button) button.disabled = true;
+  setStatus("Saving Pro feature limits...", "", els.adminProFeaturesStatus || els.adminStatus);
+  try {
+    const result = await api("/api/admin/pro-features", {
+      method: "PUT",
+      body: JSON.stringify({ limits }),
+    });
+    state.adminProFeatures = result;
+    renderAdminProFeatures();
+    setStatus("Pro feature limits saved.", "success", els.adminProFeaturesStatus || els.adminStatus);
   } finally {
     if (button) button.disabled = false;
   }
@@ -5338,6 +5413,11 @@ function shareUrlForCard(card) {
   return new URL(cardDetailUrl(card), window.location.origin).toString();
 }
 
+function shareUrlForNews(post) {
+  if (!post?.id) return "";
+  return new URL(`/news/${encodeURIComponent(post.id)}`, window.location.origin).toString();
+}
+
 function shareUrlForDeck(deck) {
   if (!deck || !deck.share_id) return "";
   return new URL(`/decks/${encodeURIComponent(deck.share_id)}`, window.location.origin).toString();
@@ -5714,6 +5794,9 @@ function wireContainerMembershipButton(button, card, showIndicator) {
 function closeShareModal() {
   els.shareOverlay.hidden = true;
   document.body.classList.remove("modal-open");
+  if (els.newsDetailOverlay && !els.newsDetailOverlay.hidden) {
+    document.body.classList.add("modal-open");
+  }
   els.shareUrlInput.value = "";
   els.shareEmailForm?.reset();
   if (els.shareEmailStatus) {
@@ -11240,6 +11323,7 @@ function wireEvents() {
     openNewsStudioModal().catch((error) => setStatus(error.message, "error", els.newsStatus));
   });
   els.closeNewsDetailButton?.addEventListener("click", closeNewsDetailModal);
+  els.shareNewsDetailButton?.addEventListener("click", () => openNewsShareModal());
   els.newsDetailOverlay?.addEventListener("click", (event) => {
     if (event.target === els.newsDetailOverlay) closeNewsDetailModal();
   });
@@ -11294,6 +11378,11 @@ function wireEvents() {
     const profileSlug = userProfileRoute();
     if (profileSlug) {
       loadUserProfile(profileSlug);
+      return;
+    }
+    const newsPostId = newsRouteId();
+    if (newsPostId) {
+      loadNewsRoute(newsPostId).catch((error) => setStatus(error.message, "error", els.newsStatus));
       return;
     }
     const deckId = deckRouteId();
@@ -11497,6 +11586,9 @@ function wireEvents() {
   });
   els.publishAdminAnnouncementButton?.addEventListener("click", () => {
     saveAdminAnnouncement("published").catch((error) => setStatus(`Announcement publish failed: ${error.message}`, "error", els.adminAnnouncementStatus || els.adminStatus));
+  });
+  els.saveAdminProFeaturesButton?.addEventListener("click", () => {
+    saveAdminProFeatures().catch((error) => setStatus(error.message, "error", els.adminProFeaturesStatus || els.adminStatus));
   });
   els.adminAnnouncementOverlay?.addEventListener("click", (event) => {
     if (event.target === els.adminAnnouncementOverlay) {
@@ -11976,6 +12068,7 @@ function wireEvents() {
     const entityId = payload.entity_id || shareEntityId(type, entity);
     const endpoints = {
       card: "cards",
+      news: "news",
       deck: "decks",
       "shared-deck": "shared-decks",
       container: "containers",
@@ -12016,7 +12109,7 @@ function wireEvents() {
       });
       const recipient = payload.email;
       closeShareModal();
-      const statusTarget = type === "deck" ? els.decksStatus : type === "shared-deck" ? els.browseDecksStatus : type === "container" ? els.containersStatus : type === "wishlist" ? els.wishlistStatus : type === "set" ? els.setsStatus : type === "favorites" ? els.favoritesStatus : els.status;
+      const statusTarget = type === "news" ? els.newsStatus : type === "deck" ? els.decksStatus : type === "shared-deck" ? els.browseDecksStatus : type === "container" ? els.containersStatus : type === "wishlist" ? els.wishlistStatus : type === "set" ? els.setsStatus : type === "favorites" ? els.favoritesStatus : els.status;
       setStatus(`${label} emailed to ${recipient}.`, "success", statusTarget);
     } catch (error) {
       if (els.shareEmailStatus) {
@@ -12872,6 +12965,7 @@ async function boot() {
   const initialStoreShareId = storeRouteId();
   const initialUserProfileSlug = userProfileRoute();
   const initialFavoritesShare = favoritesShareRoute();
+  const initialNewsPostId = newsRouteId();
   const initialCardDetail = cardDetailRoute();
   const initialVerificationToken = verificationRouteToken();
   const initialPasswordResetToken = passwordResetRouteToken();
@@ -12926,6 +13020,8 @@ async function boot() {
     loadPasswordReset(initialPasswordResetToken);
   } else if (initialUserProfileSlug) {
     loadUserProfile(initialUserProfileSlug);
+  } else if (initialNewsPostId) {
+    loadNewsRoute(initialNewsPostId).catch((error) => setStatus(error.message, "error", els.newsStatus));
   } else if (isRootRoute) {
     activatePage(state.user ? "dashboard" : "home", { replace: true, promptLogin: false });
   } else if (initialCardDetail) {

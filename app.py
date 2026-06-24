@@ -107,8 +107,8 @@ SESSION_IDLE_MINUTES = int(os.environ.get("SESSION_IDLE_MINUTES", "30") or 30)
 EMAIL_VERIFICATION_MINUTES = int(os.environ.get("EMAIL_VERIFICATION_MINUTES", "30") or 30)
 PASSWORD_RESET_MINUTES = int(os.environ.get("PASSWORD_RESET_MINUTES", str(EMAIL_VERIFICATION_MINUTES)) or EMAIL_VERIFICATION_MINUTES)
 SUPPORTED_SCRYFALL_LANGUAGES = {"en"}
-APP_VERSION = "0.4.0 beta"
-USER_AGENT = "arcaneledger/0.4.0"
+APP_VERSION = "0.4.1 beta"
+USER_AGENT = "arcaneledger/0.4.1"
 PROCESS_STARTED_AT = datetime.now(timezone.utc).replace(microsecond=0)
 COLOR_ORDER = ("W", "U", "B", "R", "G")
 CARD_CONDITIONS = (
@@ -136,13 +136,12 @@ THEMES = {
 }
 USER_ROLES = {"admin", "contributor", "pro", "normal"}
 PRO_SUBSCRIPTION_STATUSES = {"active", "trialing"}
-ROLE_LIMITS = {
-    "normal": {
-        "containers": 4,
-        "decks": 10,
-        "wishlists": 10,
-    }
+DEFAULT_NORMAL_ROLE_LIMITS = {
+    "containers": 4,
+    "decks": 10,
+    "wishlists": 10,
 }
+PRO_FEATURE_LIMIT_KEYS = tuple(DEFAULT_NORMAL_ROLE_LIMITS.keys())
 ADMIN_EMAILS = {
     email.strip().lower()
     for email in re.split(r"[,;\s]+", os.environ.get("ADMIN_EMAILS", ""))
@@ -402,7 +401,7 @@ def user_role(conn, user_id):
 
 def enforce_role_limit(conn, user_id, table, label, limit_key, incoming=1):
     role = user_role(conn, user_id)
-    limit = ROLE_LIMITS.get(role, {}).get(limit_key)
+    limit = normal_role_limits(conn).get(limit_key) if role == "normal" else 0
     if not limit:
         return
     count_queries = {
@@ -416,6 +415,82 @@ def enforce_role_limit(conn, user_id, table, label, limit_key, incoming=1):
     current = conn.execute(query, (user_id,)).fetchone()["count"] or 0
     if current + max(0, int(incoming or 0)) > limit:
         raise ValueError(f"Normal accounts can create up to {limit} {label}. Upgrade to Pro for unlimited {label}.")
+
+
+def site_setting(conn, key, fallback=""):
+    row = conn.execute("SELECT value FROM site_settings WHERE key = ?", (key,)).fetchone()
+    return row["value"] if row else fallback
+
+
+def set_site_setting(conn, key, value):
+    timestamp = now_iso()
+    conn.execute(
+        """
+        INSERT INTO site_settings (key, value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+        """,
+        (key, str(value), timestamp),
+    )
+
+
+def normal_role_limits(conn):
+    limits = dict(DEFAULT_NORMAL_ROLE_LIMITS)
+    for key, default in DEFAULT_NORMAL_ROLE_LIMITS.items():
+        value = site_setting(conn, f"normal_limit_{key}", str(default))
+        try:
+            limits[key] = max(0, int(value))
+        except (TypeError, ValueError):
+            limits[key] = default
+    return limits
+
+
+def admin_pro_features_payload(conn):
+    limits = normal_role_limits(conn)
+    return {
+        "limits": limits,
+        "features": [
+            {
+                "key": "containers",
+                "label": "Max Number of Containers",
+                "normal_limit": limits["containers"],
+                "pro_limit": "Unlimited",
+            },
+            {
+                "key": "decks",
+                "label": "Max Number of Decks",
+                "normal_limit": limits["decks"],
+                "pro_limit": "Unlimited",
+            },
+            {
+                "key": "wishlists",
+                "label": "Max Number of Wishlists",
+                "normal_limit": limits["wishlists"],
+                "pro_limit": "Unlimited",
+            },
+        ],
+    }
+
+
+def update_admin_pro_features(conn, payload):
+    current = normal_role_limits(conn)
+    incoming = payload.get("limits") or payload
+    cleaned = {}
+    for key in PRO_FEATURE_LIMIT_KEYS:
+        raw = incoming.get(key)
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            raise ValueError("Enter whole-number limits.")
+        if value < 0:
+            raise ValueError("Limits cannot be negative.")
+        if value < current[key]:
+            raise ValueError("Cannot reduce.")
+        cleaned[key] = value
+    for key, value in cleaned.items():
+        set_site_setting(conn, f"normal_limit_{key}", value)
+    conn.commit()
+    return {"ok": True, **admin_pro_features_payload(conn)}
 
 
 def clean_contact_handle(value, field_name, max_length=80):
@@ -1713,6 +1788,12 @@ def init_db(conn):
             FOREIGN KEY (admin_user_id) REFERENCES users(id) ON DELETE SET NULL
         );
 
+        CREATE TABLE IF NOT EXISTS site_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL DEFAULT '',
+            updated_at TEXT NOT NULL
+        );
+
         CREATE TABLE IF NOT EXISTS card_sale_journal (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER,
@@ -1893,6 +1974,9 @@ def init_db(conn):
     migrate_content_reports_schema(conn)
     migrate_news_schema(conn)
     migrate_user_schema(conn)
+    for key, value in DEFAULT_NORMAL_ROLE_LIMITS.items():
+        if not conn.execute("SELECT 1 FROM site_settings WHERE key = ?", (f"normal_limit_{key}",)).fetchone():
+            set_site_setting(conn, f"normal_limit_{key}", value)
     ensure_collection_share_ids(conn)
     ensure_deck_share_ids(conn)
     ensure_wishlist_share_ids(conn)
@@ -10277,6 +10361,58 @@ def card_public_url(card):
     return f"{verification_base_url()}/card/{urllib.parse.quote(card_id)}/{urllib.parse.quote(variant)}"
 
 
+def news_public_url(post_id):
+    return f"{verification_base_url()}/news/{urllib.parse.quote(str(post_id))}"
+
+
+def news_email_html(post, share_url, sender_name):
+    title = html_lib.escape(post.get("title") or "Arcane Ledger News")
+    safe_sender = html_lib.escape(sender_name or "An Arcane Ledger user")
+    safe_url = html_lib.escape(share_url)
+    body = html_lib.escape(post.get("body") or "").replace("\n", "<br>")
+    return f"""
+    <!doctype html>
+    <html>
+      <body style="margin:0;background:#f4f7f5;color:#111816;font-family:Arial,Helvetica,sans-serif;">
+        <div style="max-width:760px;margin:0 auto;padding:24px;">
+          <h1 style="margin:0 0 8px;font-size:28px;line-height:1.1;">{title}</h1>
+          <p style="margin:0 0 16px;color:#586661;">{safe_sender} shared this Arcane Ledger news article with you.</p>
+          <p style="margin:0 0 20px;">
+            <a href="{safe_url}" style="display:inline-block;background:#111816;color:#ffffff;text-decoration:none;padding:10px 14px;border-radius:8px;font-weight:700;">Open article</a>
+          </p>
+          <p style="margin:0 0 16px;color:#303936;word-break:break-all;">{safe_url}</p>
+          <div style="background:#ffffff;border:1px solid #d7dedb;border-radius:8px;padding:16px;line-height:1.55;color:#303936;">{body}</div>
+        </div>
+      </body>
+    </html>
+    """
+
+
+def news_email_text(post, share_url, sender_name):
+    return "\n".join([
+        f"{sender_name or 'An Arcane Ledger user'} shared this Arcane Ledger news article with you: {post.get('title') or 'News article'}",
+        share_url,
+        "",
+        post.get("body") or "",
+    ])
+
+
+def email_news_post(conn, user, post_id, payload):
+    recipient = validate_email(payload.get("email"))
+    post = news_post_detail(conn, post_id)["post"]
+    share_url = news_public_url(post_id)
+    sender_name = user["name"] or user["email"]
+    subject = f"Arcane Ledger: {sender_name} sharing news: {post.get('title') or 'News article'}"
+    result = send_email(
+        recipient,
+        subject,
+        text=news_email_text(post, share_url, sender_name),
+        html=news_email_html(post, share_url, sender_name),
+        tags=["arcaneledger", "news-share"],
+    )
+    return {"ok": True, "email": recipient, "provider": result.get("provider"), "status": result.get("status")}
+
+
 def card_email_html(card, share_url, sender_name):
     title = html_lib.escape(card_email_title(card))
     safe_sender = html_lib.escape(sender_name or "An Arcane Ledger user")
@@ -12514,6 +12650,9 @@ class Handler(SimpleHTTPRequestHandler):
                 if parsed.path == "/api/admin/announcements":
                     self.require_admin(conn)
                     return self.send_json(list_admin_announcements(conn))
+                if parsed.path == "/api/admin/pro-features":
+                    self.require_admin(conn)
+                    return self.send_json(admin_pro_features_payload(conn))
                 if parsed.path == "/api/admin/wallpapers":
                     self.require_admin(conn)
                     payload = list_site_wallpapers(conn)
@@ -12728,6 +12867,7 @@ class Handler(SimpleHTTPRequestHandler):
             or re.match(r"^/stores/[^/]+/?$", parsed.path)
             or re.match(r"^/user/[^/]+/?$", parsed.path)
             or re.match(r"^/favorites/[^/]+/?$", parsed.path)
+            or re.match(r"^/news/[0-9]+/?$", parsed.path)
             or re.match(r"^/verify-email/[^/]+/?$", parsed.path)
             or re.match(r"^/reset-password/[^/]+/?$", parsed.path)
             or re.match(r"^/(news|dashboard|favorites|collection|reports|sets|decks|browse-decks|containers|missing-list|for-sale|store-front|wishlist|notifications|admin|settings|search|import)/?$", parsed.path)
@@ -12914,6 +13054,10 @@ class Handler(SimpleHTTPRequestHandler):
                 if match:
                     user = self.require_user(conn)
                     return self.send_json(email_set(conn, user, urllib.parse.unquote(match.group(1)).lower(), self.read_json()))
+                match = re.match(r"^/api/news/([0-9]+)/email$", parsed.path)
+                if match:
+                    user = self.require_user(conn)
+                    return self.send_json(email_news_post(conn, user, int(match.group(1)), self.read_json()))
                 match = re.match(r"^/api/shared-decks/([^/]+)/favorite$", parsed.path)
                 if match:
                     user = self.require_user(conn)
@@ -13017,6 +13161,9 @@ class Handler(SimpleHTTPRequestHandler):
                 if match:
                     user = self.require_admin(conn)
                     return self.send_json(update_admin_user(conn, user["id"], int(match.group(1)), self.read_json()))
+                if parsed.path == "/api/admin/pro-features":
+                    self.require_admin(conn)
+                    return self.send_json(update_admin_pro_features(conn, self.read_json()))
                 if parsed.path == "/api/user/settings":
                     user = self.require_user(conn)
                     return self.send_json(update_user_settings(conn, user["id"], self.read_json()))

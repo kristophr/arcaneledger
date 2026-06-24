@@ -3029,18 +3029,21 @@ body:not(.is-authenticated) .nav-bottom {
 
 .admin-email-panel,
 .admin-home-panel,
+.admin-pro-panel,
 .admin-wallpaper-panel {
   min-height: 260px;
 }
 
 .admin-email-panel .panel-head,
 .admin-home-panel .panel-head,
+.admin-pro-panel .panel-head,
 .admin-wallpaper-panel .panel-head {
   align-items: start;
 }
 
 .admin-email-panel .panel-head span,
 .admin-home-panel .panel-head span,
+.admin-pro-panel .panel-head span,
 .admin-wallpaper-panel .panel-head span {
   display: block;
   margin-top: 4px;
@@ -3051,8 +3054,57 @@ body:not(.is-authenticated) .nav-bottom {
 
 .admin-email-status,
 .admin-announcement-status,
+.admin-pro-features-status,
 .admin-wallpaper-status {
   margin-bottom: 10px;
+}
+
+.admin-pro-panel {
+  grid-column: 2;
+}
+
+.admin-pro-features-list {
+  display: grid;
+  gap: 10px;
+}
+
+.admin-pro-feature-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 104px;
+  gap: 12px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--panel);
+}
+
+.admin-pro-feature-row span {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.admin-pro-feature-row strong {
+  color: var(--ink);
+  font-size: 0.94rem;
+}
+
+.admin-pro-feature-row small {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.admin-pro-feature-row input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 9px;
+  color: var(--ink);
+  background: var(--field-bg);
+  font-weight: 850;
 }
 
 .admin-wallpaper-upload {
@@ -3288,6 +3340,12 @@ body:not(.is-authenticated) .nav-bottom {
 
 .news-detail-modal {
   width: min(980px, calc(100vw - 28px));
+}
+
+.news-detail-share-button {
+  position: absolute;
+  top: 14px;
+  right: 56px;
 }
 
 .news-studio-modal {
@@ -9303,6 +9361,10 @@ body:not(.is-authenticated) .nav-bottom {
     grid-template-columns: 1fr;
   }
 
+  .admin-pro-panel {
+    grid-column: auto;
+  }
+
   .reports-builder {
     grid-template-columns: 1fr;
   }
@@ -9642,6 +9704,7 @@ body:not(.is-authenticated) .nav-bottom {
   .panel-head-actions button,
   .admin-email-panel .panel-head button,
   .admin-home-panel .panel-head button,
+  .admin-pro-panel .panel-head button,
   .admin-wallpaper-panel .panel-head button {
     width: 100%;
   }

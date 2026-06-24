@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.4.1 beta
+
+### Added
+- Added unified sharing to News article detail modals, including copyable `/news/:id` links and share-by-email support.
+- Added direct `/news/:id` routing so shared News links open the correct public article.
+- Added an admin-managed Pro Features section under Home Page Management for configuring Normal account limits.
+- Added persistent site settings for Normal account limits covering containers, decks, and wishlists.
+
+### Changed
+- Bumped the app version and user agent to `0.4.1 beta`.
+- Updated Normal account limit enforcement to read from admin-managed settings instead of fixed code values.
+- Kept Pro, Contributor, and Admin accounts unlimited while letting admins increase Normal account limits over time.
+- Bumped frontend asset versions for the News share and admin Pro Features updates.
+
+### Fixed
+- Prevented admins from reducing configured Normal account limits once saved.
+- Preserved modal scroll locking when sharing a News article from inside the News detail modal.
+- Routed News share-email success messages back to the News page status area.
+
 ## 0.4.0 beta
 
 ### Added
