@@ -1371,6 +1371,7 @@ function groupedCardsForDisplay(cards) {
     const summariesByVariant = new Map();
     const conditionInventory = [];
     let quantity = 0;
+    let totalPaid = 0;
     let ownedValue = 0;
     let gainLoss = 0;
     let containerQuantity = 0;
@@ -1390,6 +1391,7 @@ function groupedCardsForDisplay(cards) {
       };
       summariesByVariant.set(variant, summary);
       quantity += Number(card.quantity || 0);
+      totalPaid += Number(card.total_paid ?? (Number(card.quantity || 0) * Number(card.paid_price || 0)));
       ownedValue += Number(card.owned_value || 0);
       gainLoss += Number(card.gain_loss || 0);
       containerQuantity += Number(card.container_quantity || 0);
@@ -1413,6 +1415,7 @@ function groupedCardsForDisplay(cards) {
       ...primary,
       quantity,
       owned_quantity: quantity,
+      total_paid: totalPaid,
       owned_value: ownedValue,
       total_value: ownedValue,
       gain_loss: gainLoss,
@@ -3224,12 +3227,14 @@ function ownedSetGroups(cards, completionSets = []) {
       cards: [],
       unique_count: 0,
       quantity: 0,
+      paid: 0,
       value: 0,
       preview_images: [],
     };
     group.cards.push(card);
     group.unique_count += 1;
     group.quantity += quantity;
+    group.paid += Number(card.total_paid ?? (quantity * Number(card.paid_price || 0)));
     group.value += Number(card.owned_value || card.total_value || 0);
     if (card.image_normal || card.image_small) {
       group.preview_images.push(card.image_normal || card.image_small);
@@ -3264,7 +3269,9 @@ function setCompletionMetaText(set) {
   const uniqueText = Number(set.total_cards || 0) > 0
     ? `${integer.format(set.owned_cards || set.unique_count || 0)} / ${integer.format(set.total_cards || 0)} unique`
     : `${integer.format(set.unique_count || 0)} unique owned`;
-  return `${uniqueText} - ${integer.format(set.quantity || 0)} cards - ${dollars.format(set.value || 0)}`;
+  const paid = Number(set.total_paid ?? set.paid ?? set.paid_total ?? 0);
+  const market = Number(set.total_market_value ?? set.value ?? 0);
+  return `${uniqueText} - ${integer.format(set.quantity || 0)} cards - ${dollars.format(paid)} / ${dollars.format(market)}`;
 }
 
 function compareCardsBySetOrder(a, b) {
