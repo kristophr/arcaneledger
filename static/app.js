@@ -8384,7 +8384,7 @@ function updateContainerAllocationRow(row) {
   const container = containers.find((item) => Number(item.id) === containerId);
   const label = row.querySelector("[data-space-label]");
   if (!container) {
-    if (label) label.textContent = "Choose where these copies live.";
+    if (label) label.textContent = "";
     row.classList.remove("is-full");
     return;
   }

@@ -8685,6 +8685,10 @@ body:not(.is-authenticated) .nav-bottom {
   color: var(--muted);
 }
 
+.container-space-label:empty {
+  display: none;
+}
+
 .container-allocation-row.is-full .container-space-label {
   color: var(--danger);
 }
