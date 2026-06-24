@@ -2356,7 +2356,7 @@ function appPageRoute() {
 }
 
 function cardDetailUrl(card) {
-  return `/card/${encodeURIComponent(card.scryfall_id || card.card_id || "")}/${encodeURIComponent(card.variant || "Normal")}`;
+  return `/card/${encodeURIComponent(card.scryfall_id || card.card_id || card.id || "")}/${encodeURIComponent(card.variant || "Normal")}`;
 }
 
 function renderChart(points) {
@@ -5021,7 +5021,7 @@ function closeEditModal() {
 }
 
 function shareUrlForCard(card) {
-  if (!card || !(card.scryfall_id || card.card_id)) return "";
+  if (!card || !(card.scryfall_id || card.card_id || card.id)) return "";
   return new URL(cardDetailUrl(card), window.location.origin).toString();
 }
 
@@ -9739,7 +9739,9 @@ function renderCardDetail(card) {
   els.cardDetailShell.querySelector(".detail-blog-posts-button")?.addEventListener("click", () => {
     openCardBlogListModal(card).catch((error) => setStatus(error.message, "error"));
   });
-  els.cardDetailShell.querySelector(".detail-share-button")?.addEventListener("click", () => openShareModal(card));
+  els.cardDetailShell.querySelectorAll(".detail-share-button").forEach((button) => {
+    button.addEventListener("click", () => openShareModal(card));
+  });
   els.cardDetailShell.querySelector(".detail-delete-button")?.addEventListener("click", () => {
     deleteCardFromDetail(card).catch((error) => setStatus(error.message, "error"));
   });
