@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.3.0 beta
+
+### Added
+- Added collection quick filters for owned sets, using full set names in a multi-select dropdown.
+- Added collection container-status filtering so users can show only cards assigned to containers or only cards still needing storage.
+- Added a unified share modal for cards, decks, sets, containers, wishlists, and favorites with both copy-link and email-share controls in one place.
+- Added the unified share action back to the card detail view inside the Card Actions panel.
+
+### Changed
+- Bumped the app version and user agent to `0.3.0 beta`.
+- Replaced separate share URL and email icons with one cleaner share icon across shareable screens.
+- Reworked the share UI so logged-out users can still copy public links while email sharing remains available to logged-in users.
+- Tightened the Add to Container modal layout and adjusted container allocation rows for better readability.
+- Increased site wallpaper visibility slightly for richer background treatment.
+- Bumped frontend asset versions for the collection filter, container modal, wallpaper, and unified sharing updates.
+
+### Fixed
+- Fixed card detail sharing after the share cleanup by restoring a visible Share Card action that opens the unified modal.
+- Fixed stale share-email modal markup and handlers that were left behind after consolidating share flows.
+- Fixed collection set filtering gaps where users could search card names but could not quickly filter by set names like Bloomburrow or Final Fantasy.
+
 ## 0.2.9 beta
 
 ### Added

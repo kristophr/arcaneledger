@@ -107,8 +107,8 @@ SESSION_IDLE_MINUTES = int(os.environ.get("SESSION_IDLE_MINUTES", "30") or 30)
 EMAIL_VERIFICATION_MINUTES = int(os.environ.get("EMAIL_VERIFICATION_MINUTES", "30") or 30)
 PASSWORD_RESET_MINUTES = int(os.environ.get("PASSWORD_RESET_MINUTES", str(EMAIL_VERIFICATION_MINUTES)) or EMAIL_VERIFICATION_MINUTES)
 SUPPORTED_SCRYFALL_LANGUAGES = {"en"}
-APP_VERSION = "0.2.9 beta"
-USER_AGENT = "arcaneledger/0.2.9"
+APP_VERSION = "0.3.0 beta"
+USER_AGENT = "arcaneledger/0.3.0"
 PROCESS_STARTED_AT = datetime.now(timezone.utc).replace(microsecond=0)
 COLOR_ORDER = ("W", "U", "B", "R", "G")
 CARD_CONDITIONS = (
@@ -8178,10 +8178,21 @@ def list_cards(conn, query, user_id):
     for_sale = params.get("for_sale", [""])[0]
     sort = params.get("sort", ["value"])[0]
     set_code = (params.get("set", [""])[0] or "").strip().lower()
+    set_codes = []
+    for raw_value in params.get("set_code", []) + params.get("sets", []):
+        for value in str(raw_value or "").split(","):
+            normalized = value.strip().lower()
+            if normalized and normalized not in set_codes:
+                set_codes.append(normalized)
+    container_filter = (params.get("container", [""])[0] or "").strip().lower()
     limit = min(int(params.get("limit", ["250"])[0] or 250), 5000)
     where = []
     values = []
-    if set_code:
+    if set_codes:
+        placeholders = ", ".join("?" for _ in set_codes)
+        where.append(f"lower(c.set_code) IN ({placeholders})")
+        values.extend(set_codes)
+    elif set_code:
         where.append("lower(c.set_code) = ?")
         values.append(set_code)
     if search:
@@ -8201,7 +8212,6 @@ def list_cards(conn, query, user_id):
         where.append("COALESCE(col.quantity, 0) = 0")
     if for_sale in {"1", "true", "yes"}:
         where.append("COALESCE(sale.sale_quantity, 0) > 0")
-    where_sql = "WHERE " + " AND ".join(where) if where else ""
     price_expr = current_price_sql("c")
     allocated_expr = """
         COALESCE((
@@ -8219,6 +8229,13 @@ def list_cards(conn, query, user_id):
             WHERE dt.user_id = ? AND dc.card_id = c.scryfall_id AND dc.variant = COALESCE(col.variant, 'Normal')
         ), 0)
     """
+    if container_filter in {"yes", "true", "1", "in", "contained"}:
+        where.append(f"({allocated_expr}) > 0")
+        values.append(user_id)
+    elif container_filter in {"no", "false", "0", "out", "uncontained"}:
+        where.append(f"COALESCE(col.quantity, 0) - ({allocated_expr}) > 0")
+        values.append(user_id)
+    where_sql = "WHERE " + " AND ".join(where) if where else ""
     sort_map = {
         "name": "c.name COLLATE NOCASE ASC",
         "set": "c.set_name COLLATE NOCASE ASC, CAST(c.collector_number AS INTEGER), c.collector_number",

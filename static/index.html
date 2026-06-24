@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Arcane Ledger</title>
-    <link rel="stylesheet" href="/styles.css?v=170">
+    <link rel="stylesheet" href="/styles.css?v=173">
   </head>
   <body>
     <header class="topbar">
@@ -299,7 +299,6 @@
               <button id="favoriteListViewButton" type="button">List</button>
             </div>
             <button id="shareFavoritesButton" class="share-filter-button" type="button" aria-label="Share favorites" title="Share favorites">&#8599;</button>
-            <button id="emailFavoritesButton" class="share-filter-button" type="button" aria-label="Email favorites" title="Email favorites"><span class="send-icon" aria-hidden="true"></span></button>
           </div>
         </div>
 
@@ -320,6 +319,17 @@
           </div>
           <div class="filters">
             <input id="searchInput" type="search" placeholder="Search cards, sets, numbers">
+            <div class="multi-filter collection-set-filter">
+              <button id="collectionSetFilterButton" class="filter-dropdown-button" type="button" aria-expanded="false">
+                <span id="collectionSetFilterSummary">All sets</span>
+              </button>
+              <div id="collectionSetFilterMenu" class="multi-filter-menu" hidden></div>
+            </div>
+            <select id="collectionContainerFilter" aria-label="Container filter">
+              <option value="">Container: Any</option>
+              <option value="yes">Container: Yes</option>
+              <option value="no">Container: No</option>
+            </select>
             <select id="ownedFilter" aria-label="Ownership filter" hidden>
               <option value="owned" selected>Owned</option>
             </select>
@@ -1606,19 +1616,31 @@
       <section class="share-modal" role="dialog" aria-modal="true" aria-labelledby="shareTitle">
         <header class="edit-modal-head">
           <div>
-            <p class="eyebrow">Share card</p>
+            <p class="eyebrow">Share</p>
             <h2 id="shareTitle">Share link</h2>
           </div>
           <button id="closeShareButton" class="modal-close" type="button" aria-label="Close share dialog">x</button>
         </header>
         <div class="share-content">
           <label>
-            Unique card URL
+            Share URL
             <input id="shareUrlInput" type="text" readonly>
           </label>
           <div class="modal-actions">
             <button id="copyShareButton" class="primary-button" type="button">Copy</button>
           </div>
+          <form id="shareEmailForm" class="share-email-form">
+            <input name="entity_type" type="hidden">
+            <input name="entity_id" type="hidden">
+            <label>
+              Email this link
+              <input name="email" type="email" autocomplete="email" placeholder="friend@example.com">
+            </label>
+            <p id="shareEmailStatus" class="settings-help" aria-live="polite"></p>
+            <div class="modal-actions">
+              <button id="sendShareEmailButton" class="secondary-button" type="submit">Share</button>
+            </div>
+          </form>
         </div>
       </section>
     </div>
@@ -1866,31 +1888,6 @@
       </section>
     </div>
 
-    <div id="emailWishlistOverlay" class="modal-overlay modal-overlay-stacked" hidden>
-      <section class="settings-modal" role="dialog" aria-modal="true" aria-labelledby="emailWishlistTitle">
-        <header class="edit-modal-head">
-          <div>
-            <p class="eyebrow">Send share link</p>
-            <h2 id="emailWishlistTitle">Email Share Link</h2>
-          </div>
-          <button id="closeEmailWishlistButton" class="modal-close" type="button" aria-label="Close email wishlist dialog">x</button>
-        </header>
-        <form id="emailWishlistForm" class="settings-form">
-          <input name="entity_type" type="hidden">
-          <input name="entity_id" type="hidden">
-          <label>
-            Recipient email
-            <input name="email" type="email" autocomplete="email" required placeholder="friend@example.com">
-          </label>
-          <p id="emailWishlistStatus" class="settings-help" aria-live="polite"></p>
-          <div class="modal-actions">
-            <button id="cancelEmailWishlistButton" class="secondary-button" type="button">Cancel</button>
-            <button class="primary-button" type="submit">Send</button>
-          </div>
-        </form>
-      </section>
-    </div>
-
     <div id="assignDeckOverlay" class="modal-overlay" hidden>
       <section class="settings-modal" role="dialog" aria-modal="true" aria-labelledby="assignDeckTitle">
         <header class="edit-modal-head">
@@ -1932,7 +1929,6 @@
           </button>
           <div class="deck-footer-actions">
             <button id="addDeckCardButton" class="share-button" type="button" aria-label="Add card to deck" title="Add card">+</button>
-            <button id="emailDeckButton" class="share-button" type="button" aria-label="Email deck" title="Email deck"><span class="send-icon" aria-hidden="true"></span></button>
             <button id="shareDeckButton" class="share-button" type="button" aria-label="Share deck" title="Share deck">&#8599;</button>
           </div>
         </div>
@@ -2146,7 +2142,6 @@
           <button id="deleteContainerButton" class="danger-action-button" type="button"><span class="trash-icon" aria-hidden="true"></span> Delete Container</button>
           <div class="deck-footer-actions">
             <button id="editContainerButton" class="secondary-button" type="button"><span class="edit-icon" aria-hidden="true"></span> Edit</button>
-            <button id="emailContainerButton" class="secondary-button" type="button"><span class="send-icon" aria-hidden="true"></span> Email</button>
           </div>
         </div>
       </section>
@@ -2353,6 +2348,6 @@
       </section>
     </div>
 
-    <script src="/app.js?v=190"></script>
+    <script src="/app.js?v=194"></script>
   </body>
 </html>
