@@ -20,6 +20,11 @@ const state = {
   adminAnnouncements: [],
   adminWallpapers: [],
   homeAnnouncements: [],
+  newsPosts: [],
+  newsDrafts: [],
+  newsPublished: [],
+  newsSearchTimer: null,
+  activeNewsStudioTab: "new",
   editingAdminEmailTemplateId: null,
   editingAdminAnnouncementId: null,
   appConfig: {},
@@ -155,6 +160,7 @@ const disallowedNameWords = new Set([
 ]);
 const pageRoutes = {
   home: "/",
+  news: "/news",
   dashboard: "/dashboard",
   search: "/search",
   favorites: "/favorites",
@@ -210,6 +216,30 @@ const els = {
   homeAnnouncementDetailMeta: document.querySelector("#homeAnnouncementDetailMeta"),
   homeAnnouncementDetailBody: document.querySelector("#homeAnnouncementDetailBody"),
   closeHomeAnnouncementDetailButton: document.querySelector("#closeHomeAnnouncementDetailButton"),
+  newsSearchInput: document.querySelector("#newsSearchInput"),
+  newsStatus: document.querySelector("#newsStatus"),
+  newsGrid: document.querySelector("#newsGrid"),
+  newsDetailOverlay: document.querySelector("#newsDetailOverlay"),
+  newsDetailTitle: document.querySelector("#newsDetailTitle"),
+  newsDetailMeta: document.querySelector("#newsDetailMeta"),
+  newsDetailBody: document.querySelector("#newsDetailBody"),
+  closeNewsDetailButton: document.querySelector("#closeNewsDetailButton"),
+  contributorStudioButton: document.querySelector("#contributorStudioButton"),
+  newsStudioOverlay: document.querySelector("#newsStudioOverlay"),
+  newsStudioTabs: document.querySelectorAll("[data-news-studio-tab]"),
+  newsStudioPanels: document.querySelectorAll("[data-news-studio-panel]"),
+  closeNewsStudioButton: document.querySelector("#closeNewsStudioButton"),
+  newsEditorPostId: document.querySelector("#newsEditorPostId"),
+  newsEditorTitleInput: document.querySelector("#newsEditorTitleInput"),
+  newsEditorBodyInput: document.querySelector("#newsEditorBodyInput"),
+  newsScheduledAtInput: document.querySelector("#newsScheduledAtInput"),
+  newsScheduleRow: document.querySelector("#newsScheduleRow"),
+  saveNewsDraftButton: document.querySelector("#saveNewsDraftButton"),
+  scheduleNewsButton: document.querySelector("#scheduleNewsButton"),
+  newsEditorStatus: document.querySelector("#newsEditorStatus"),
+  publishNewsEditorButton: document.querySelector("#publishNewsEditorButton"),
+  newsDraftsList: document.querySelector("#newsDraftsList"),
+  newsPublishedList: document.querySelector("#newsPublishedList"),
   historyCount: document.querySelector("#historyCount"),
   historyChart: document.querySelector("#historyChart"),
   refreshPriceSnapshotsButton: document.querySelector("#refreshPriceSnapshotsButton"),
@@ -713,6 +743,10 @@ function isAdminUser() {
   return Boolean(state.user && state.user.is_admin);
 }
 
+function isContributorUser() {
+  return Boolean(state.user && (state.user.is_admin || state.user.is_contributor || state.user.role === "contributor"));
+}
+
 async function api(path, options = {}) {
   const { promptLogin = false, ...fetchOptions } = options;
   const response = await fetch(path, {
@@ -802,6 +836,9 @@ function updateAuthUi() {
   }
   if (els.addCardButton) {
     els.addCardButton.hidden = !loggedIn;
+  }
+  if (els.contributorStudioButton) {
+    els.contributorStudioButton.hidden = !isContributorUser();
   }
   if (els.myProfileButton) {
     els.myProfileButton.hidden = !loggedIn;
@@ -1096,7 +1133,7 @@ async function logout() {
 }
 
 function protectedPage(page) {
-  return !["home", "search", "store-front", "browse-decks", "deck-share", "card-share", "favorites-share", "wishlist-share", "container-share", "store-share"].includes(page);
+  return !["home", "news", "search", "store-front", "browse-decks", "deck-share", "card-share", "favorites-share", "wishlist-share", "container-share", "store-share"].includes(page);
 }
 
 function valueClass(value) {
@@ -1991,6 +2028,9 @@ function activatePage(pageName, options = {}) {
   if (page === "home") {
     loadHome().catch((error) => setStatus(error.message, "error"));
   }
+  if (page === "news") {
+    loadNews().catch((error) => setStatus(error.message, "error", els.newsStatus));
+  }
   if (page === "settings") {
     renderSettingsPage();
   }
@@ -2089,7 +2129,272 @@ function activeStatusTarget() {
   if (visiblePage === "notifications") return els.notificationsStatus;
   if (visiblePage === "admin") return els.adminStatus;
   if (visiblePage === "search") return els.catalogSearchStatus;
+  if (visiblePage === "news") return els.newsStatus;
   return els.status;
+}
+
+function newsSearchQuery() {
+  return (els.newsSearchInput?.value || "").trim();
+}
+
+async function loadNews() {
+  if (!els.newsGrid) return;
+  setStatus("Loading news...", "", els.newsStatus);
+  const query = newsSearchQuery();
+  const data = await api(`/api/news?search=${encodeURIComponent(query)}`);
+  state.newsPosts = data.posts || [];
+  renderNews();
+  setStatus(state.newsPosts.length ? "" : "No news articles found.", state.newsPosts.length ? "" : "info", els.newsStatus);
+}
+
+function renderNews() {
+  if (!els.newsGrid) return;
+  els.newsGrid.innerHTML = "";
+  if (!state.newsPosts.length) {
+    els.newsGrid.innerHTML = '<div class="empty-state">No news articles yet.</div>';
+    return;
+  }
+  for (const post of state.newsPosts) {
+    const card = document.createElement("article");
+    card.className = "news-card";
+    card.innerHTML = `
+      <button class="news-card-button" type="button">
+        <span class="news-card-date">${escapeHtml(formatCompactDate(post.published_at || post.created_at || ""))}</span>
+        <strong>${escapeHtml(post.title || "Untitled article")}</strong>
+        <span>By ${escapeHtml(post.author?.name || "Contributor")}</span>
+        <p>${escapeHtml(post.excerpt || "Open the article to read more.")}</p>
+      </button>
+    `;
+    card.querySelector(".news-card-button")?.addEventListener("click", () => {
+      openNewsDetail(post.id).catch((error) => setStatus(error.message, "error", els.newsStatus));
+    });
+    els.newsGrid.appendChild(card);
+  }
+}
+
+async function openNewsDetail(postId) {
+  const data = await api(`/api/news/${encodeURIComponent(postId)}`);
+  const post = data.post;
+  if (!post) return;
+  if (els.newsDetailTitle) els.newsDetailTitle.textContent = post.title || "Article";
+  if (els.newsDetailMeta) {
+    els.newsDetailMeta.textContent = `By ${post.author?.name || "Contributor"} · ${formatCompactDate(post.published_at || post.created_at || "")}`;
+  }
+  if (els.newsDetailBody) els.newsDetailBody.innerHTML = markdownToHtml(post.body || "");
+  if (els.newsDetailOverlay) {
+    els.newsDetailOverlay.hidden = false;
+    document.body.classList.add("modal-open");
+  }
+}
+
+function closeNewsDetailModal() {
+  if (!els.newsDetailOverlay) return;
+  els.newsDetailOverlay.hidden = true;
+  document.body.classList.remove("modal-open");
+}
+
+function resetNewsEditorForm() {
+  if (els.newsEditorPostId) els.newsEditorPostId.value = "";
+  if (els.newsEditorTitleInput) els.newsEditorTitleInput.value = "";
+  if (els.newsEditorBodyInput) els.newsEditorBodyInput.value = "";
+  if (els.newsScheduledAtInput) els.newsScheduledAtInput.value = "";
+  if (els.newsScheduleRow) els.newsScheduleRow.hidden = true;
+  setStatus("", "", els.newsEditorStatus);
+}
+
+function switchNewsStudioTab(tab) {
+  state.activeNewsStudioTab = tab || "new";
+  els.newsStudioTabs?.forEach((button) => {
+    button.classList.toggle("is-active", button.dataset.newsStudioTab === state.activeNewsStudioTab);
+  });
+  els.newsStudioPanels?.forEach((panel) => {
+    panel.hidden = panel.dataset.newsStudioPanel !== state.activeNewsStudioTab;
+  });
+  if (state.activeNewsStudioTab !== "new" && els.newsScheduleRow) {
+    els.newsScheduleRow.hidden = true;
+  }
+}
+
+async function openNewsStudioModal() {
+  if (!state.user) {
+    openAuthModal("login", "Log in with a contributor account to write news.");
+    return;
+  }
+  if (!isContributorUser()) {
+    setStatus("Contributor access required.", "error", els.newsStatus);
+    return;
+  }
+  resetNewsEditorForm();
+  switchNewsStudioTab("new");
+  await loadMyNewsPosts();
+  if (els.newsStudioOverlay) {
+    els.newsStudioOverlay.hidden = false;
+    document.body.classList.add("modal-open");
+    window.setTimeout(() => els.newsEditorTitleInput?.focus(), 0);
+  }
+}
+
+function closeNewsStudioModal() {
+  if (!els.newsStudioOverlay) return;
+  els.newsStudioOverlay.hidden = true;
+  document.body.classList.remove("modal-open");
+}
+
+async function loadMyNewsPosts() {
+  if (!isContributorUser()) return;
+  const data = await api("/api/news/mine", { promptLogin: true });
+  state.newsDrafts = data.drafts || [];
+  state.newsPublished = data.published || [];
+  renderNewsStudioLists();
+}
+
+function renderNewsStudioLists() {
+  renderNewsStudioList(els.newsDraftsList, state.newsDrafts, "drafts");
+  renderNewsStudioList(els.newsPublishedList, state.newsPublished, "published");
+}
+
+function newsPostTimingLabel(post) {
+  if (post.status === "scheduled") return `Scheduled ${formatCompactDate(post.scheduled_at)}`;
+  if (post.status === "published") return `Published ${formatCompactDate(post.published_at)}`;
+  return `Draft ${formatCompactDate(post.updated_at || post.created_at)}`;
+}
+
+function renderNewsStudioList(target, posts, mode) {
+  if (!target) return;
+  target.innerHTML = "";
+  if (!posts.length) {
+    target.innerHTML = `<div class="empty-state">No ${mode === "drafts" ? "drafts or scheduled posts" : "published articles"} yet.</div>`;
+    return;
+  }
+  for (const post of posts) {
+    const row = document.createElement("article");
+    row.className = "news-studio-row";
+    row.dataset.postId = post.id;
+    row.innerHTML = `
+      <button class="news-studio-row-main" type="button">
+        <strong>${escapeHtml(post.title || "Untitled post")}</strong>
+        <span>${escapeHtml(newsPostTimingLabel(post))}</span>
+      </button>
+      <div class="news-studio-row-actions">
+        ${mode === "published" ? '<button class="secondary-button compact-button unpublish-news-post-button" type="button">Unpublish</button>' : ""}
+        <button class="danger-action-button compact-button delete-news-post-button" type="button"><span class="trash-icon" aria-hidden="true"></span>Delete</button>
+      </div>
+    `;
+    row.querySelector(".news-studio-row-main")?.addEventListener("click", () => loadNewsPostIntoEditor(post));
+    row.querySelector(".unpublish-news-post-button")?.addEventListener("click", () => {
+      unpublishNewsPost(post).catch((error) => setStatus(error.message, "error", els.newsEditorStatus));
+    });
+    row.querySelector(".delete-news-post-button")?.addEventListener("click", () => {
+      deleteNewsPost(post).catch((error) => setStatus(error.message, "error", els.newsEditorStatus));
+    });
+    target.appendChild(row);
+  }
+}
+
+function loadNewsPostIntoEditor(post) {
+  if (els.newsEditorPostId) els.newsEditorPostId.value = post.id || "";
+  if (els.newsEditorTitleInput) els.newsEditorTitleInput.value = post.title || "";
+  if (els.newsEditorBodyInput) els.newsEditorBodyInput.value = post.body || "";
+  if (els.newsScheduledAtInput) {
+    els.newsScheduledAtInput.value = post.scheduled_at ? localDatetimeValue(post.scheduled_at) : "";
+  }
+  if (els.newsScheduleRow) els.newsScheduleRow.hidden = post.status !== "scheduled";
+  setStatus("Post loaded into New Post.", "success", els.newsEditorStatus);
+  switchNewsStudioTab("new");
+  window.setTimeout(() => els.newsEditorTitleInput?.focus(), 0);
+}
+
+function localDatetimeValue(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const offset = date.getTimezoneOffset() * 60000;
+  return new Date(date.getTime() - offset).toISOString().slice(0, 16);
+}
+
+function scheduledIsoFromInput() {
+  const value = els.newsScheduledAtInput?.value || "";
+  if (!value) return "";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "" : date.toISOString();
+}
+
+async function saveNewsPost(action) {
+  const title = (els.newsEditorTitleInput?.value || "").trim();
+  const body = (els.newsEditorBodyInput?.value || "").trim();
+  if (!title) {
+    setStatus("Subject is required.", "error", els.newsEditorStatus);
+    return;
+  }
+  if (action !== "draft" && !body) {
+    setStatus("Article body is required before publishing.", "error", els.newsEditorStatus);
+    return;
+  }
+  if (action === "scheduled" && !scheduledIsoFromInput()) {
+    setStatus("Choose a scheduled publish date and time.", "error", els.newsEditorStatus);
+    if (els.newsScheduleRow) els.newsScheduleRow.hidden = false;
+    return;
+  }
+  [els.saveNewsDraftButton, els.scheduleNewsButton, els.publishNewsEditorButton].forEach((button) => {
+    if (button) button.disabled = true;
+  });
+  try {
+    const data = await api("/api/news", {
+      method: "POST",
+      body: JSON.stringify({
+        id: els.newsEditorPostId?.value || "",
+        title,
+        body,
+        action,
+        scheduled_at: action === "scheduled" ? scheduledIsoFromInput() : "",
+      }),
+      promptLogin: true,
+    });
+    state.newsDrafts = data.drafts || [];
+    state.newsPublished = data.published || [];
+    renderNewsStudioLists();
+    resetNewsEditorForm();
+    setStatus(action === "published" ? "Article published." : action === "scheduled" ? "Article scheduled." : "Draft saved.", "success", els.newsEditorStatus);
+    if (action === "published") {
+      loadNews().catch(() => {});
+    }
+  } finally {
+    [els.saveNewsDraftButton, els.scheduleNewsButton, els.publishNewsEditorButton].forEach((button) => {
+      if (button) button.disabled = false;
+    });
+  }
+}
+
+async function unpublishNewsPost(post) {
+  if (!post?.id) return;
+  const confirmed = window.confirm(`Unpublish "${post.title}" and move it back to drafts?`);
+  if (!confirmed) return;
+  const data = await api(`/api/news/${encodeURIComponent(post.id)}/unpublish`, {
+    method: "POST",
+    body: "{}",
+    promptLogin: true,
+  });
+  state.newsDrafts = data.drafts || [];
+  state.newsPublished = data.published || [];
+  renderNewsStudioLists();
+  loadNews().catch(() => {});
+  setStatus("Article unpublished and moved to drafts.", "success", els.newsEditorStatus);
+}
+
+async function deleteNewsPost(post) {
+  if (!post?.id) return;
+  const confirmed = window.confirm(`Delete "${post.title}"? This cannot be undone.`);
+  if (!confirmed) return;
+  const data = await api(`/api/news/${encodeURIComponent(post.id)}`, {
+    method: "DELETE",
+    body: "{}",
+    promptLogin: true,
+  });
+  state.newsDrafts = data.drafts || [];
+  state.newsPublished = data.published || [];
+  renderNewsStudioLists();
+  loadNews().catch(() => {});
+  setStatus("Article deleted.", "success", els.newsEditorStatus);
 }
 
 function renderReportFieldPicker() {
@@ -4042,7 +4347,7 @@ function renderAdminUsers() {
     const row = document.createElement("article");
     row.className = `admin-user-row ${user.is_banned ? "is-banned" : ""}`;
     row.dataset.userId = user.id;
-    const roleOptions = ["admin", "pro", "normal"].map((role) => (
+    const roleOptions = ["admin", "contributor", "pro", "normal"].map((role) => (
       `<option value="${role}" ${user.role === role ? "selected" : ""}>${roleLabel(role)}</option>`
     )).join("");
     const protectedAdmin = Boolean(user.protected_admin);
@@ -4539,8 +4844,7 @@ async function deleteAdminWallpaper(button) {
   setStatus("Wallpaper deleted.", "success", els.adminWallpaperStatus || els.adminStatus);
 }
 
-function insertAnnouncementMarkdown(action) {
-  const textarea = els.adminAnnouncementBody;
+function insertMarkdownSnippet(textarea, action) {
   if (!textarea) return;
   const start = textarea.selectionStart || 0;
   const end = textarea.selectionEnd || 0;
@@ -4555,6 +4859,14 @@ function insertAnnouncementMarkdown(action) {
   const insert = snippets[action] || selected;
   textarea.setRangeText(insert, start, end, "select");
   textarea.focus();
+}
+
+function insertAnnouncementMarkdown(action) {
+  insertMarkdownSnippet(els.adminAnnouncementBody, action);
+}
+
+function insertNewsMarkdown(action) {
+  insertMarkdownSnippet(els.newsEditorBodyInput, action);
 }
 
 async function resolveAdminReport(button, action) {
@@ -4577,6 +4889,7 @@ async function resolveAdminReport(button, action) {
 
 function roleLabel(role) {
   if (role === "admin") return "Admin";
+  if (role === "contributor") return "Contributor";
   if (role === "pro" || role === "paid") return "Pro";
   return "Normal";
 }
@@ -8857,7 +9170,11 @@ function escapeAttribute(value) {
 }
 
 function identityIsPro(identity) {
-  return Boolean(identity?.is_pro || identity?.owner_is_pro || identity?.seller_is_pro || identity?.role === "pro" || identity?.role === "admin" || identity?.owner_role === "pro" || identity?.owner_role === "admin");
+  return Boolean(
+    identity?.is_pro || identity?.owner_is_pro || identity?.seller_is_pro
+    || ["admin", "contributor", "pro"].includes(identity?.role)
+    || ["admin", "contributor", "pro"].includes(identity?.owner_role)
+  );
 }
 
 function proBadgeHtml(identity) {
@@ -10913,6 +11230,43 @@ function wireEvents() {
       activatePage(page, { push: true });
     });
   }
+  els.newsSearchInput?.addEventListener("input", () => {
+    window.clearTimeout(state.newsSearchTimer);
+    state.newsSearchTimer = window.setTimeout(() => {
+      loadNews().catch((error) => setStatus(error.message, "error", els.newsStatus));
+    }, 220);
+  });
+  els.contributorStudioButton?.addEventListener("click", () => {
+    openNewsStudioModal().catch((error) => setStatus(error.message, "error", els.newsStatus));
+  });
+  els.closeNewsDetailButton?.addEventListener("click", closeNewsDetailModal);
+  els.newsDetailOverlay?.addEventListener("click", (event) => {
+    if (event.target === els.newsDetailOverlay) closeNewsDetailModal();
+  });
+  els.closeNewsStudioButton?.addEventListener("click", closeNewsStudioModal);
+  els.newsStudioOverlay?.addEventListener("click", (event) => {
+    if (event.target === els.newsStudioOverlay) closeNewsStudioModal();
+  });
+  els.newsStudioTabs?.forEach((button) => {
+    button.addEventListener("click", () => switchNewsStudioTab(button.dataset.newsStudioTab));
+  });
+  els.saveNewsDraftButton?.addEventListener("click", () => {
+    saveNewsPost("draft").catch((error) => setStatus(error.message, "error", els.newsEditorStatus));
+  });
+  els.scheduleNewsButton?.addEventListener("click", () => {
+    if (els.newsScheduleRow?.hidden) {
+      els.newsScheduleRow.hidden = false;
+      els.newsScheduledAtInput?.focus();
+      return;
+    }
+    saveNewsPost("scheduled").catch((error) => setStatus(error.message, "error", els.newsEditorStatus));
+  });
+  els.publishNewsEditorButton?.addEventListener("click", () => {
+    saveNewsPost("published").catch((error) => setStatus(error.message, "error", els.newsEditorStatus));
+  });
+  els.newsStudioOverlay?.querySelectorAll("[data-markdown-action]")?.forEach((button) => {
+    button.addEventListener("click", () => insertNewsMarkdown(button.dataset.markdownAction));
+  });
   els.myProfileButton?.addEventListener("click", openMyProfile);
   window.addEventListener("popstate", () => {
     const routePage = appPageRoute();

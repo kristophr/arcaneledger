@@ -107,8 +107,8 @@ SESSION_IDLE_MINUTES = int(os.environ.get("SESSION_IDLE_MINUTES", "30") or 30)
 EMAIL_VERIFICATION_MINUTES = int(os.environ.get("EMAIL_VERIFICATION_MINUTES", "30") or 30)
 PASSWORD_RESET_MINUTES = int(os.environ.get("PASSWORD_RESET_MINUTES", str(EMAIL_VERIFICATION_MINUTES)) or EMAIL_VERIFICATION_MINUTES)
 SUPPORTED_SCRYFALL_LANGUAGES = {"en"}
-APP_VERSION = "0.3.0 beta"
-USER_AGENT = "arcaneledger/0.3.0"
+APP_VERSION = "0.4.0 beta"
+USER_AGENT = "arcaneledger/0.4.0"
 PROCESS_STARTED_AT = datetime.now(timezone.utc).replace(microsecond=0)
 COLOR_ORDER = ("W", "U", "B", "R", "G")
 CARD_CONDITIONS = (
@@ -134,7 +134,7 @@ THEMES = {
     "light", "dark", "retro", "neon", "red", "blue", "black", "green", "pride",
     "final-fantasy", "spider-man", "airbender",
 }
-USER_ROLES = {"admin", "pro", "normal"}
+USER_ROLES = {"admin", "contributor", "pro", "normal"}
 PRO_SUBSCRIPTION_STATUSES = {"active", "trialing"}
 ROLE_LIMITS = {
     "normal": {
@@ -379,6 +379,8 @@ def effective_user_role(row):
         cancel_at_period_end = bool(row.get("subscription_cancel_at_period_end", False))
     if role == "admin":
         return "admin"
+    if role == "contributor":
+        return "contributor"
     if role == "pro" or subscription_grants_pro(status, period_end, cancel_at_period_end):
         return "pro"
     return "normal"
@@ -1687,6 +1689,19 @@ def init_db(conn):
             FOREIGN KEY (admin_user_id) REFERENCES users(id) ON DELETE SET NULL
         );
 
+        CREATE TABLE IF NOT EXISTS news_posts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            author_user_id INTEGER NOT NULL,
+            title TEXT NOT NULL,
+            body TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'published',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            published_at TEXT NOT NULL DEFAULT '',
+            scheduled_at TEXT NOT NULL DEFAULT '',
+            FOREIGN KEY (author_user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+
         CREATE TABLE IF NOT EXISTS site_wallpapers (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             filename TEXT NOT NULL UNIQUE,
@@ -1848,6 +1863,8 @@ def init_db(conn):
         CREATE INDEX IF NOT EXISTS idx_notifications_user_read ON notifications(user_id, is_read, updated_at);
         CREATE INDEX IF NOT EXISTS idx_admin_email_templates_trigger ON admin_email_templates(trigger_key);
         CREATE INDEX IF NOT EXISTS idx_home_announcements_status_dates ON home_announcements(status, starts_on, ends_on);
+        CREATE INDEX IF NOT EXISTS idx_news_posts_status_date ON news_posts(status, published_at DESC, id DESC);
+        CREATE INDEX IF NOT EXISTS idx_news_posts_author ON news_posts(author_user_id, created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_card_sale_journal_card ON card_sale_journal(user_id, card_id, variant, card_condition, sold_date);
         CREATE INDEX IF NOT EXISTS idx_inventory_adjustments_card ON inventory_adjustments(user_id, card_id, variant, card_condition, adjustment_date);
         CREATE INDEX IF NOT EXISTS idx_snapshots_date ON price_snapshots(snapshot_date);
@@ -1874,6 +1891,7 @@ def init_db(conn):
     migrate_profile_social_schema(conn)
     migrate_card_comments_schema(conn)
     migrate_content_reports_schema(conn)
+    migrate_news_schema(conn)
     migrate_user_schema(conn)
     ensure_collection_share_ids(conn)
     ensure_deck_share_ids(conn)
@@ -2687,6 +2705,32 @@ def migrate_content_reports_schema(conn):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_content_reports_target ON content_reports(target_type, target_id)")
 
 
+def migrate_news_schema(conn):
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS news_posts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            author_user_id INTEGER NOT NULL,
+            title TEXT NOT NULL,
+            body TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'published',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            published_at TEXT NOT NULL DEFAULT '',
+            scheduled_at TEXT NOT NULL DEFAULT '',
+            FOREIGN KEY (author_user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+        """
+    )
+    columns = table_columns(conn, "news_posts")
+    if "scheduled_at" not in columns:
+        conn.execute("ALTER TABLE news_posts ADD COLUMN scheduled_at TEXT NOT NULL DEFAULT ''")
+    conn.execute("UPDATE news_posts SET status = 'published' WHERE trim(COALESCE(status, '')) = ''")
+    conn.execute("UPDATE news_posts SET status = 'draft' WHERE status NOT IN ('draft', 'scheduled', 'published')")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_news_posts_status_date ON news_posts(status, published_at DESC, id DESC)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_news_posts_author ON news_posts(author_user_id, created_at DESC)")
+
+
 def add_user_id_column(conn, table):
     if "user_id" not in table_columns(conn, table):
         conn.execute(f"ALTER TABLE {table} ADD COLUMN user_id INTEGER")
@@ -2757,7 +2801,7 @@ def migrate_user_schema(conn):
         if not row["profile_slug"]:
             conn.execute("UPDATE users SET profile_slug = ? WHERE id = ?", (unique_profile_slug(conn, row["name"] or row["email"], row["id"]), row["id"]))
     conn.execute("UPDATE users SET role = 'pro' WHERE role = 'paid'")
-    conn.execute("UPDATE users SET role = 'normal' WHERE role NOT IN ('admin', 'pro', 'normal') OR trim(COALESCE(role, '')) = ''")
+    conn.execute("UPDATE users SET role = 'normal' WHERE role NOT IN ('admin', 'contributor', 'pro', 'normal') OR trim(COALESCE(role, '')) = ''")
     for email in ADMIN_EMAILS:
         conn.execute("UPDATE users SET role = 'admin', is_banned = 0 WHERE lower(email) = ?", (email,))
     rows = conn.execute("SELECT id FROM users WHERE store_share_id IS NULL OR store_share_id = ''").fetchall()
@@ -2845,7 +2889,8 @@ def user_payload(row):
         "role": role,
         "account_role": clean_user_role(row["role"] if "role" in row.keys() else role_for_email(row["email"])),
         "is_admin": role == "admin",
-        "is_pro": role in {"admin", "pro"},
+        "is_contributor": role in {"admin", "contributor"},
+        "is_pro": role in {"admin", "contributor", "pro"},
         "subscription_status": subscription_status,
         "stripe_price_id": stripe_price_id,
         "subscription_plan": subscription_plan,
@@ -3627,6 +3672,234 @@ def save_home_announcement(conn, admin_user_id, payload):
     }
 
 
+NEWS_POST_STATUSES = {"draft", "scheduled", "published"}
+
+
+def news_post_row(row, include_body=False):
+    body = row["body"] or ""
+    excerpt = re.sub(r"\s+", " ", body).strip()
+    if len(excerpt) > 220:
+        excerpt = f"{excerpt[:217].rstrip()}..."
+    payload = {
+        "id": int(row["id"]),
+        "title": row["title"] or "",
+        "excerpt": excerpt,
+        "status": row["status"] or "published",
+        "author": {
+            "id": int(row["author_user_id"]),
+            "name": row["author_name"] or row["author_email"] or "Contributor",
+            "email": row["author_email"] or "",
+            "profile_slug": row["author_profile_slug"] or "",
+            "profile_url": f"/user/{urllib.parse.quote(row['author_profile_slug'])}" if row["author_profile_slug"] else "",
+            "role": effective_user_role({
+                "role": row["author_role"] or "normal",
+                "subscription_status": row["author_subscription_status"] or "",
+                "subscription_current_period_end": row["author_subscription_current_period_end"] or "",
+                "subscription_cancel_at_period_end": bool(row["author_subscription_cancel_at_period_end"] or 0),
+            }),
+        },
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+        "published_at": row["published_at"] or "",
+        "scheduled_at": row["scheduled_at"] or "",
+    }
+    if include_body:
+        payload["body"] = body
+    return payload
+
+
+def news_post_select(include_body=False):
+    body_column = "np.body" if include_body else "'' AS body"
+    return f"""
+        SELECT np.id, np.author_user_id, np.title, {body_column}, np.status,
+               np.created_at, np.updated_at, np.published_at, np.scheduled_at,
+               u.name AS author_name, u.email AS author_email, u.profile_slug AS author_profile_slug,
+               u.role AS author_role, u.subscription_status AS author_subscription_status,
+               u.subscription_current_period_end AS author_subscription_current_period_end,
+               u.subscription_cancel_at_period_end AS author_subscription_cancel_at_period_end
+        FROM news_posts np
+        JOIN users u ON u.id = np.author_user_id
+    """
+
+
+def publish_due_news_posts(conn):
+    timestamp = now_iso()
+    conn.execute(
+        """
+        UPDATE news_posts
+        SET status = 'published', published_at = scheduled_at, scheduled_at = '', updated_at = ?
+        WHERE status = 'scheduled'
+          AND scheduled_at != ''
+          AND scheduled_at <= ?
+        """,
+        (timestamp, timestamp),
+    )
+
+
+def list_news_posts(conn, query_string=""):
+    publish_due_news_posts(conn)
+    conn.commit()
+    params = urllib.parse.parse_qs(query_string or "")
+    search = re.sub(r"\s+", " ", (params.get("search", [""])[0] or "").strip().lower())
+    sql = news_post_select(include_body=True) + """
+        WHERE np.status = 'published'
+          AND (? = '' OR lower(np.body) LIKE ?)
+        ORDER BY datetime(np.published_at) DESC, np.id DESC
+        LIMIT 100
+    """
+    rows = conn.execute(sql, (search, f"%{search}%")).fetchall()
+    return {"posts": [news_post_row(row, include_body=False) for row in rows], "search": search}
+
+
+def news_post_detail(conn, post_id):
+    publish_due_news_posts(conn)
+    conn.commit()
+    row = conn.execute(
+        news_post_select(include_body=True) + """
+        WHERE np.id = ? AND np.status = 'published'
+        """,
+        (post_id,),
+    ).fetchone()
+    if not row:
+        raise KeyError("News article not found.")
+    return {"post": news_post_row(row, include_body=True)}
+
+
+def list_my_news_posts(conn, user):
+    if not is_contributor_user(user):
+        raise ForbiddenError("Contributor access required.")
+    publish_due_news_posts(conn)
+    conn.commit()
+    rows = conn.execute(
+        news_post_select(include_body=True) + """
+        WHERE np.author_user_id = ?
+        ORDER BY
+          CASE np.status WHEN 'draft' THEN 0 WHEN 'scheduled' THEN 1 ELSE 2 END,
+          datetime(COALESCE(NULLIF(np.scheduled_at, ''), NULLIF(np.published_at, ''), np.updated_at)) DESC,
+          np.id DESC
+        """,
+        (user["id"],),
+    ).fetchall()
+    posts = [news_post_row(row, include_body=True) for row in rows]
+    return {
+        "drafts": [post for post in posts if post["status"] in {"draft", "scheduled"}],
+        "published": [post for post in posts if post["status"] == "published"],
+    }
+
+
+def clean_news_payload(payload, action):
+    title = validate_user_content_name(payload.get("title") or payload.get("subject"), "News subject", 160)
+    body = (payload.get("body") or "").strip()
+    if len(body) > 50000:
+        raise ValueError("News article body must be 50,000 characters or fewer.")
+    action = (action or payload.get("action") or payload.get("status") or "draft").strip().lower()
+    if action in {"publish", "published"}:
+        status = "published"
+    elif action in {"schedule", "scheduled"}:
+        status = "scheduled"
+    else:
+        status = "draft"
+    if status in {"published", "scheduled"} and not body:
+        raise ValueError("News article body is required before publishing.")
+    scheduled_at = ""
+    if status == "scheduled":
+        scheduled = parse_iso_datetime(payload.get("scheduled_at") or payload.get("publish_at"))
+        if not scheduled:
+            raise ValueError("Choose a valid scheduled publish date and time.")
+        if scheduled.tzinfo is None:
+            scheduled = scheduled.replace(tzinfo=timezone.utc)
+        scheduled_at = scheduled.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        if scheduled_at <= now_iso():
+            status = "published"
+            scheduled_at = ""
+    return title, body, status, scheduled_at
+
+
+def save_news_post(conn, user, payload):
+    if not is_contributor_user(user):
+        raise ForbiddenError("Contributor access required.")
+    title, body, status, scheduled_at = clean_news_payload(payload, payload.get("action"))
+    timestamp = now_iso()
+    published_at = timestamp if status == "published" else ""
+    raw_id = str(payload.get("id") or "")
+    post_id = int(raw_id) if raw_id.isdigit() else 0
+    if post_id:
+        existing = conn.execute("SELECT * FROM news_posts WHERE id = ?", (post_id,)).fetchone()
+        if not existing:
+            raise KeyError("News article not found.")
+        if int(existing["author_user_id"]) != int(user["id"]) and not is_admin_user(user):
+            raise ForbiddenError("You can only edit your own news articles.")
+        if status == "published" and existing["status"] == "published" and existing["published_at"]:
+            published_at = existing["published_at"]
+        conn.execute(
+            """
+            UPDATE news_posts
+            SET title = ?, body = ?, status = ?, updated_at = ?, published_at = ?, scheduled_at = ?
+            WHERE id = ?
+            """,
+            (title, body, status, timestamp, published_at, scheduled_at, post_id),
+        )
+    else:
+        cursor = conn.execute(
+            """
+            INSERT INTO news_posts (author_user_id, title, body, status, created_at, updated_at, published_at, scheduled_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (user["id"], title, body, status, timestamp, timestamp, published_at, scheduled_at),
+        )
+        post_id = cursor.lastrowid
+    conn.commit()
+    mine = list_my_news_posts(conn, user)
+    return {
+        "ok": True,
+        "post": news_post_for_author(conn, user, post_id),
+        **mine,
+    }
+
+
+def news_post_for_author(conn, user, post_id):
+    row = conn.execute(
+        news_post_select(include_body=True) + """
+        WHERE np.id = ?
+        """,
+        (post_id,),
+    ).fetchone()
+    if not row:
+        raise KeyError("News article not found.")
+    if int(row["author_user_id"]) != int(user["id"]) and not is_admin_user(user):
+        raise ForbiddenError("You can only access your own news articles.")
+    return news_post_row(row, include_body=True)
+
+
+def unpublish_news_post(conn, user, post_id):
+    if not is_contributor_user(user):
+        raise ForbiddenError("Contributor access required.")
+    existing = conn.execute("SELECT * FROM news_posts WHERE id = ?", (post_id,)).fetchone()
+    if not existing:
+        raise KeyError("News article not found.")
+    if int(existing["author_user_id"]) != int(user["id"]) and not is_admin_user(user):
+        raise ForbiddenError("You can only unpublish your own news articles.")
+    conn.execute(
+        "UPDATE news_posts SET status = 'draft', published_at = '', scheduled_at = '', updated_at = ? WHERE id = ?",
+        (now_iso(), post_id),
+    )
+    conn.commit()
+    return {"ok": True, **list_my_news_posts(conn, user)}
+
+
+def delete_news_post(conn, user, post_id):
+    if not is_contributor_user(user):
+        raise ForbiddenError("Contributor access required.")
+    existing = conn.execute("SELECT * FROM news_posts WHERE id = ?", (post_id,)).fetchone()
+    if not existing:
+        raise KeyError("News article not found.")
+    if int(existing["author_user_id"]) != int(user["id"]) and not is_admin_user(user):
+        raise ForbiddenError("You can only delete your own news articles.")
+    conn.execute("DELETE FROM news_posts WHERE id = ?", (post_id,))
+    conn.commit()
+    return {"ok": True, **list_my_news_posts(conn, user)}
+
+
 def wallpaper_url(filename):
     return f"/media/wallpapers/{urllib.parse.quote(filename)}"
 
@@ -4111,6 +4384,18 @@ def is_admin_user(user):
     return clean_user_role(user.get("role")) == "admin" and not bool(user.get("is_banned"))
 
 
+def is_contributor_user(user):
+    if not user:
+        return False
+    if isinstance(user, sqlite3.Row):
+        role = effective_user_role(user)
+        banned = bool(user["is_banned"] if "is_banned" in user.keys() else 0)
+    else:
+        role = effective_user_role(user)
+        banned = bool(user.get("is_banned"))
+    return role in {"admin", "contributor"} and not banned
+
+
 def admin_user_payload(row):
     email = row["email"]
     role = clean_user_role(row["role"] if "role" in row.keys() else role_for_email(email))
@@ -4162,10 +4447,10 @@ def list_admin_users(conn):
             FROM card_sales
             GROUP BY user_id
         ) s ON s.user_id = u.id
-        ORDER BY CASE lower(COALESCE(u.role, 'normal')) WHEN 'admin' THEN 0 WHEN 'pro' THEN 1 ELSE 2 END, lower(u.email)
+        ORDER BY CASE lower(COALESCE(u.role, 'normal')) WHEN 'admin' THEN 0 WHEN 'contributor' THEN 1 WHEN 'pro' THEN 2 ELSE 3 END, lower(u.email)
         """
     ).fetchall()
-    return {"users": [admin_user_payload(row) for row in rows], "roles": ["admin", "pro", "normal"]}
+    return {"users": [admin_user_payload(row) for row in rows], "roles": ["admin", "contributor", "pro", "normal"]}
 
 
 def update_admin_user(conn, acting_user_id, target_user_id, payload):
@@ -7057,7 +7342,7 @@ def shared_deck(conn, share_id, viewer_user_id=None):
         "subscription_status": deck["owner_subscription_status"],
     })
     payload["owner_role"] = owner_role
-    payload["owner_is_pro"] = owner_role in {"admin", "pro"}
+    payload["owner_is_pro"] = owner_role in {"admin", "contributor", "pro"}
     return payload
 
 
@@ -7134,7 +7419,7 @@ def list_favorite_decks(conn, user_id):
             "subscription_status": deck.get("owner_subscription_status"),
         })
         deck["owner_role"] = owner_role
-        deck["owner_is_pro"] = owner_role in {"admin", "pro"}
+        deck["owner_is_pro"] = owner_role in {"admin", "contributor", "pro"}
     return decks
 
 
@@ -7215,7 +7500,7 @@ def list_favorite_store_listings(conn, user_id):
             "subscription_status": listing.get("seller_subscription_status"),
         })
         listing["seller_role"] = seller_role
-        listing["seller_is_pro"] = seller_role in {"admin", "pro"}
+        listing["seller_is_pro"] = seller_role in {"admin", "contributor", "pro"}
         listing["store_url"] = store_share_url(listing["store_share_id"])
         listing["favorite_store"] = True
         listing["listing_key"] = sale_listing_key(
@@ -7463,7 +7748,7 @@ def list_public_decks(conn, viewer_user_id=None):
             "subscription_status": deck.get("owner_subscription_status"),
         })
         deck["owner_role"] = owner_role
-        deck["owner_is_pro"] = owner_role in {"admin", "pro"}
+        deck["owner_is_pro"] = owner_role in {"admin", "contributor", "pro"}
         deck["preview_images"] = [image for image in (deck.get("preview_images") or "").split("|||") if image][:5]
         deck["cards"] = public_deck_preview_cards(conn, deck["id"], viewer_user_id, 10)
         deck["viewer_is_owner"] = bool(viewer_user_id and int(viewer_user_id) == int(deck.get("user_id") or 0))
@@ -9172,7 +9457,7 @@ def card_deck_references(conn, card_id):
             "subscription_status": deck.get("owner_subscription_status"),
         })
         deck["owner_role"] = owner_role
-        deck["owner_is_pro"] = owner_role in {"admin", "pro"}
+        deck["owner_is_pro"] = owner_role in {"admin", "contributor", "pro"}
         deck["deck_url"] = deck_share_url(deck)
         decks.append(deck)
     return {"decks": decks}
@@ -9204,7 +9489,7 @@ def card_sale_sellers(conn, card_id):
         seller["seller_name"] = public_display_name(row, "Seller")
         seller_role = effective_user_role(row)
         seller["seller_role"] = seller_role
-        seller["seller_is_pro"] = seller_role in {"admin", "pro"}
+        seller["seller_is_pro"] = seller_role in {"admin", "contributor", "pro"}
         seller["store_url"] = store_share_url(seller["store_share_id"])
         sellers.append(seller)
     conn.commit()
@@ -9383,7 +9668,7 @@ def store_front_card_detail(conn, card_id, current_user_id=None):
         seller["seller_name"] = public_display_name(row, "Seller")
         seller_role = effective_user_role(row)
         seller["seller_role"] = seller_role
-        seller["seller_is_pro"] = seller_role in {"admin", "pro"}
+        seller["seller_is_pro"] = seller_role in {"admin", "contributor", "pro"}
         seller["store_url"] = store_share_url(seller["store_share_id"])
         seller["is_current_user"] = bool(current_user_id and int(current_user_id) == int(row["user_id"]))
         seller["favorite_store"] = False
@@ -9535,7 +9820,7 @@ def profile_actor_payload(row):
         "profile_url": f"/user/{urllib.parse.quote(row['profile_slug'])}" if row["profile_slug"] else "",
         "profile_image": row["profile_image"] if "profile_image" in row.keys() else "",
         "role": role,
-        "is_pro": role in {"admin", "pro"},
+        "is_pro": role in {"admin", "contributor", "pro"},
     }
 
 
@@ -9586,7 +9871,7 @@ def profile_wall_rows(conn, profile_user_id):
                 "profile_url": f"/user/{urllib.parse.quote(row['profile_slug'])}" if row["profile_slug"] else "",
                 "profile_image": row["profile_image"],
                 "role": role,
-                "is_pro": role in {"admin", "pro"},
+                "is_pro": role in {"admin", "contributor", "pro"},
             },
         })
     return messages
@@ -9704,7 +9989,7 @@ def profile_post_rows(conn, profile_user_id):
                 "profile_url": f"/user/{urllib.parse.quote(row['profile_slug'])}" if row["profile_slug"] else "",
                 "profile_image": row["profile_image"],
                 "role": role,
-                "is_pro": role in {"admin", "pro"},
+                "is_pro": role in {"admin", "contributor", "pro"},
             },
         })
     for post in posts:
@@ -9752,7 +10037,7 @@ def profile_posts_for_card(conn, card_id, variant=None):
                 "profile_url": f"/user/{urllib.parse.quote(row['profile_slug'])}" if row["profile_slug"] else "",
                 "profile_image": row["profile_image"],
                 "role": role,
-                "is_pro": role in {"admin", "pro"},
+                "is_pro": role in {"admin", "contributor", "pro"},
             },
         })
     return {
@@ -9780,7 +10065,7 @@ def public_user_profile(conn, slug, viewer_user_id=None):
         "profile_url": profile_url_from_slug(user["profile_slug"]),
         "profile_image": user["profile_image"],
         "role": role,
-        "is_pro": role in {"admin", "pro"},
+        "is_pro": role in {"admin", "contributor", "pro"},
         "about_me": user["about_me"],
         "member_since": user["created_at"],
         "contacts": public_profile_contacts(user),
@@ -9921,7 +10206,7 @@ def shared_store(conn, share_id):
         "share_id": share_id,
         "seller_name": public_display_name(user, "Seller"),
         "seller_role": seller_role,
-        "seller_is_pro": seller_role in {"admin", "pro"},
+        "seller_is_pro": seller_role in {"admin", "contributor", "pro"},
         "contact_email": contact_email,
         "contacts": [contact for contact in contacts if contact["value"]],
         "cards": cards,
@@ -10437,7 +10722,7 @@ def card_comments(conn, user_id, card_id):
                 "profile_url": f"/user/{urllib.parse.quote(row['profile_slug'])}" if row["profile_slug"] else "",
                 "profile_image": row["profile_image"],
                 "role": role,
-                "is_pro": role in {"admin", "pro"},
+                "is_pro": role in {"admin", "contributor", "pro"},
             },
         })
     return comments
@@ -12191,6 +12476,14 @@ class Handler(SimpleHTTPRequestHandler):
                     return self.send_json(verify_password_reset_token(conn, params.get("token", [""])[0]))
                 if parsed.path == "/api/home":
                     return self.send_json(home_stats(conn))
+                if parsed.path == "/api/news":
+                    return self.send_json(list_news_posts(conn, parsed.query))
+                if parsed.path == "/api/news/mine":
+                    user = self.require_user(conn)
+                    return self.send_json(list_my_news_posts(conn, user))
+                match = re.match(r"^/api/news/([0-9]+)$", parsed.path)
+                if match:
+                    return self.send_json(news_post_detail(conn, int(match.group(1))))
                 if parsed.path == "/api/search/hero-cards":
                     return self.send_json({"cards": search_hero_cards(conn)})
                 if parsed.path == "/api/dashboard":
@@ -12437,7 +12730,7 @@ class Handler(SimpleHTTPRequestHandler):
             or re.match(r"^/favorites/[^/]+/?$", parsed.path)
             or re.match(r"^/verify-email/[^/]+/?$", parsed.path)
             or re.match(r"^/reset-password/[^/]+/?$", parsed.path)
-            or re.match(r"^/(dashboard|favorites|collection|reports|sets|decks|browse-decks|containers|missing-list|for-sale|store-front|wishlist|notifications|admin|settings|search|import)/?$", parsed.path)
+            or re.match(r"^/(news|dashboard|favorites|collection|reports|sets|decks|browse-decks|containers|missing-list|for-sale|store-front|wishlist|notifications|admin|settings|search|import)/?$", parsed.path)
         ):
             self.path = "/index.html"
         return super().do_GET()
@@ -12488,6 +12781,13 @@ class Handler(SimpleHTTPRequestHandler):
                 if parsed.path == "/api/reports":
                     user = self.require_user(conn)
                     return self.send_json(create_content_report(conn, user["id"], self.read_json()), HTTPStatus.CREATED)
+                if parsed.path == "/api/news":
+                    user = self.require_user(conn)
+                    return self.send_json(save_news_post(conn, user, self.read_json()), HTTPStatus.CREATED)
+                match = re.match(r"^/api/news/([0-9]+)/unpublish$", parsed.path)
+                if match:
+                    user = self.require_user(conn)
+                    return self.send_json(unpublish_news_post(conn, user, int(match.group(1))))
                 if parsed.path == "/api/collection-report":
                     user = self.require_user(conn)
                     return self.send_json(build_collection_report(conn, user["id"], self.read_json()))
@@ -12758,6 +13058,10 @@ class Handler(SimpleHTTPRequestHandler):
                 if match:
                     self.require_admin(conn)
                     return self.send_json(delete_site_wallpaper(conn, int(match.group(1))))
+                match = re.match(r"^/api/news/([0-9]+)$", parsed.path)
+                if match:
+                    user = self.require_user(conn)
+                    return self.send_json(delete_news_post(conn, user, int(match.group(1))))
                 if parsed.path == "/api/user/profile":
                     user = self.require_user(conn)
                     result = delete_user_profile(conn, user["id"])

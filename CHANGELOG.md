@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.4.0 beta
+
+### Added
+- Added a new `Contributor` role that sits below Admin and above Pro.
+- Added a public News page available to guests and logged-in users.
+- Added contributor-authored News articles displayed newest-first in large tiles.
+- Added News body search that filters article text without broadening into unrelated metadata.
+- Added a top-bar contributor studio `+` action for Admin and Contributor accounts.
+- Added a large three-tab contributor studio with New Post, Drafts, and Published views.
+- Added Markdown controls for contributor News posts.
+- Added draft saving for incomplete News articles.
+- Added immediate publishing for News articles.
+- Added scheduled publishing so News posts remain hidden until their scheduled publish time has passed.
+- Added contributor article management actions for loading drafts back into the editor, unpublishing published posts back to drafts, and deleting posts.
+- Added database support for News post status, published timestamps, scheduled timestamps, and per-author article ownership.
+
+### Changed
+- Bumped the app version and user agent to `0.4.0 beta`.
+- Treated Contributor as a Pro-level role for limits and public display styling while keeping Admin-only functionality restricted to Admins.
+- Updated Admin user management so Admins can assign Contributor accounts.
+- Updated public News article rendering to support the same lightweight Markdown syntax used elsewhere in Arcane Ledger.
+- Bumped frontend asset versions for the News page and contributor studio updates.
+
+### Fixed
+- Fixed News authoring UX so contributors no longer need to publish immediately just to start writing.
+- Fixed scheduled News visibility so scheduled posts do not appear in the public News feed until due.
+- Fixed role migration safeguards so Contributor roles are preserved instead of normalized back to Normal.
+
 ## 0.3.0 beta
 
 ### Added
