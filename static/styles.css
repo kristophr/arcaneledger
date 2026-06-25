@@ -3215,7 +3215,7 @@ body:not(.is-authenticated) .nav-bottom {
 
 .admin-email-template-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(150px, 0.7fr) 38px max-content max-content;
+  grid-template-columns: minmax(0, 1fr) minmax(150px, 0.7fr) 38px max-content max-content 38px;
   gap: 10px;
   align-items: end;
   border: 1px solid var(--line);
@@ -3522,7 +3522,8 @@ body:not(.is-authenticated) .nav-bottom {
 }
 
 .admin-email-template-row .admin-save-email-template-button,
-.admin-email-template-row .admin-edit-email-template-button {
+.admin-email-template-row .admin-edit-email-template-button,
+.admin-email-template-row .admin-delete-email-template-button {
   white-space: nowrap;
 }
 
@@ -3566,6 +3567,16 @@ body:not(.is-authenticated) .nav-bottom {
   background: color-mix(in srgb, var(--panel) 84%, var(--accent) 10%);
 }
 
+.visually-hidden-file {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 .admin-template-editor-field textarea {
   min-height: 360px;
   padding: 12px;
@@ -3602,6 +3613,18 @@ body:not(.is-authenticated) .nav-bottom {
   border-radius: 5px;
   padding: 1px 5px;
   background: color-mix(in srgb, var(--panel) 78%, var(--line));
+}
+
+.news-detail-body img,
+.announcement-markdown-body img {
+  display: block;
+  width: min(100%, 760px);
+  max-height: 620px;
+  object-fit: contain;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
 }
 
 .admin-user-row {
@@ -7887,6 +7910,26 @@ body:not(.is-authenticated) .nav-bottom {
   overflow-wrap: anywhere;
 }
 
+.modal-subtitle .copy-id-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  margin: 2px 8px 2px 0;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.72);
+  font: inherit;
+  font-size: 0.76rem;
+  cursor: pointer;
+}
+
+.modal-subtitle .copy-id-chip:hover {
+  border-color: var(--accent);
+  color: var(--accent-strong);
+}
+
 .danger-icon-button {
   width: 38px;
   height: 38px;
@@ -9675,7 +9718,8 @@ body:not(.is-authenticated) .nav-bottom {
 
   .admin-email-template-row .icon-only-button,
   .admin-email-template-row .admin-save-email-template-button,
-  .admin-email-template-row .admin-edit-email-template-button {
+  .admin-email-template-row .admin-edit-email-template-button,
+  .admin-email-template-row .admin-delete-email-template-button {
     justify-self: start;
   }
 
@@ -9909,7 +9953,8 @@ body:not(.is-authenticated) .nav-bottom {
 
   .admin-email-template-row .icon-only-button,
   .admin-email-template-row .admin-save-email-template-button,
-  .admin-email-template-row .admin-edit-email-template-button {
+  .admin-email-template-row .admin-edit-email-template-button,
+  .admin-email-template-row .admin-delete-email-template-button {
     grid-column: 1;
     width: 100%;
     justify-self: stretch;

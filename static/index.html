@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Arcane Ledger</title>
-    <link rel="stylesheet" href="/styles.css?v=182">
+    <link rel="stylesheet" href="/styles.css?v=185">
   </head>
   <body>
     <header class="topbar">
@@ -2337,6 +2337,16 @@
           <span>%lastlogindate%</span>
           <span>%daysinactive%</span>
           <span>%inactive_days%</span>
+          <span>%membershiplevel%</span>
+          <span>%subscriptionplan%</span>
+          <span>%subscriptionstatus%</span>
+          <span>%subscriptionid%</span>
+          <span>%subscriptionstartdate%</span>
+          <span>%subscriptionrenews%</span>
+          <span>%subscriptionends%</span>
+          <span>%previousrole%</span>
+          <span>%newrole%</span>
+          <span>%billingurl%</span>
           <span>%date%</span>
           <span>%year%</span>
         </div>
@@ -2463,6 +2473,8 @@
               <button type="button" data-markdown-action="heading" title="Heading">H</button>
               <button type="button" data-markdown-action="list" title="Bulleted list">•</button>
               <button type="button" data-markdown-action="link" title="Link">Link</button>
+              <button id="uploadNewsImageButton" type="button" title="Upload image">Image</button>
+              <input id="newsImageInput" class="visually-hidden-file" type="file" accept="image/png,image/jpeg,image/webp,image/gif">
             </div>
             <label class="admin-template-editor-field">
               <span>Body</span>
@@ -2491,6 +2503,6 @@
       </section>
     </div>
 
-    <script src="/app.js?v=205"></script>
+    <script src="/app.js?v=208"></script>
   </body>
 </html>

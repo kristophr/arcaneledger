@@ -1,6 +1,6 @@
 # Arcane Ledger
 
-**Version:** 0.4.5 beta
+**Version:** 0.4.6 beta
 
 A Magic: The Gathering collection tracker. It uses Scryfall as the catalog and price source, stores data in SQLite, tracks collection value and purchase/sale history, manages decks, containers, wishlists, reports, store listings, profiles, public sharing, contributor news, and exports your data back to CSV or spreadsheet-friendly formats.
 
@@ -12,10 +12,10 @@ A Magic: The Gathering collection tracker. It uses Scryfall as the catalog and p
 - Bulk import container allocations from CSV or JSON with validation for card ownership, variant, condition, available uncontainered quantity, and container capacity.
 - Build wishlists, favorites, store listings, profile posts, and public comments around cards and decks.
 - Share cards, decks, sets, containers, wishlists, and favorites from one clean modal with copy-link and email options.
-- Publish and share contributor-written News articles with drafts, Markdown editing, scheduled publishing, public reading/search, copy-link sharing, and email sharing.
+- Publish and share contributor-written News articles with drafts, Markdown editing, image uploads, scheduled publishing, public reading/search, copy-link sharing, and email sharing.
 - Filter collection views by set and container status to quickly find stored or unstored cards.
-- Run collection reports with selectable fields, filters, CSV/XLS export, and email delivery with CSV attachments.
-- Admin tools include user management, Contributor role assignment, Pro feature limits, moderation reports, email templates, announcements, logs, server details, and wallpaper management.
+- Run collection reports with selectable fields, including `card_id` for storage imports, filters, CSV/XLS export, and email delivery with CSV attachments.
+- Admin tools include user management, Contributor role assignment, Pro feature limits, moderation reports, email templates with membership triggers, announcements, logs, server details, and wallpaper management.
 
 ## Run With Docker Compose
 

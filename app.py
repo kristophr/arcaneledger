@@ -57,6 +57,7 @@ DATA_DIR = Path(os.environ.get("DATA_DIR", ROOT / "data"))
 DB_PATH = Path(os.environ.get("DB_PATH", DATA_DIR / "mtg_collection.sqlite"))
 LOG_DIR = Path(os.environ.get("LOG_DIR", DATA_DIR / "logs"))
 WALLPAPER_DIR = Path(os.environ.get("WALLPAPER_DIR", DATA_DIR / "wallpapers"))
+NEWS_IMAGE_DIR = Path(os.environ.get("NEWS_IMAGE_DIR", DATA_DIR / "news-images"))
 LOG_FILE = Path(os.environ.get("LOG_FILE", LOG_DIR / "arcaneledger.log"))
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
 LOG_MAX_BYTES = int(os.environ.get("LOG_MAX_BYTES", str(2 * 1024 * 1024)) or (2 * 1024 * 1024))
@@ -107,8 +108,8 @@ SESSION_IDLE_MINUTES = int(os.environ.get("SESSION_IDLE_MINUTES", "30") or 30)
 EMAIL_VERIFICATION_MINUTES = int(os.environ.get("EMAIL_VERIFICATION_MINUTES", "30") or 30)
 PASSWORD_RESET_MINUTES = int(os.environ.get("PASSWORD_RESET_MINUTES", str(EMAIL_VERIFICATION_MINUTES)) or EMAIL_VERIFICATION_MINUTES)
 SUPPORTED_SCRYFALL_LANGUAGES = {"en"}
-APP_VERSION = "0.4.5 beta"
-USER_AGENT = "arcaneledger/0.4.5"
+APP_VERSION = "0.4.6 beta"
+USER_AGENT = "arcaneledger/0.4.6"
 PROCESS_STARTED_AT = datetime.now(timezone.utc).replace(microsecond=0)
 COLOR_ORDER = ("W", "U", "B", "R", "G")
 CARD_CONDITIONS = (
@@ -127,6 +128,7 @@ WALLPAPER_MIME_TYPES = {
     "image/gif": ".gif",
 }
 MAX_WALLPAPER_BYTES = 5 * 1024 * 1024
+MAX_NEWS_IMAGE_BYTES = 5 * 1024 * 1024
 CONDITION_ORDER = {condition: index for index, condition in enumerate(CARD_CONDITIONS)}
 CONTAINER_TYPES = ("binder", "box", "other")
 DEFAULT_CONTAINER_TYPE = "other"
@@ -3355,7 +3357,7 @@ def send_subscription_receipt(conn, user_id, subscription, plan=""):
     return {"ok": True, "email": user["email"], "provider": result.get("provider"), "status": result.get("status")}
 
 
-def update_user_from_stripe_subscription(conn, subscription):
+def update_user_from_stripe_subscription(conn, subscription, previous_role_override=None):
     subscription = subscription or {}
     subscription_id = subscription.get("id") or ""
     customer_id = subscription.get("customer") or ""
@@ -3371,6 +3373,7 @@ def update_user_from_stripe_subscription(conn, subscription):
     if not row:
         LOGGER.warning("Stripe subscription %s did not match a user.", subscription_id)
         return None
+    previous_role = previous_role_override or effective_user_role(row)
     status = (subscription.get("status") or "").strip().lower()
     price_id = stripe_subscription_price_id(subscription)
     plan = stripe_plan_for_price_id(price_id, metadata.get("plan"))
@@ -3406,6 +3409,15 @@ def update_user_from_stripe_subscription(conn, subscription):
             row["id"],
         ),
     )
+    updated = conn.execute("SELECT * FROM users WHERE id = ?", (row["id"],)).fetchone()
+    send_membership_role_change_emails(
+        conn,
+        row["id"],
+        previous_role,
+        effective_user_role(updated),
+        subscription=subscription,
+        plan=plan,
+    )
     return row["id"]
 
 
@@ -3415,6 +3427,8 @@ def update_user_from_checkout_session(conn, session):
     if not user_id:
         LOGGER.warning("Stripe checkout session %s did not include a user id.", session.get("id"))
         return None
+    existing_user = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+    previous_role = effective_user_role(existing_user) if existing_user else "normal"
     timestamp = now_iso()
     conn.execute(
         """
@@ -3435,7 +3449,7 @@ def update_user_from_checkout_session(conn, session):
     if subscription_id:
         try:
             subscription = stripe_api_request("GET", f"/v1/subscriptions/{urllib.parse.quote(subscription_id)}")
-            update_user_from_stripe_subscription(conn, subscription)
+            update_user_from_stripe_subscription(conn, subscription, previous_role_override=previous_role)
             try:
                 send_subscription_receipt(conn, int(user_id), subscription, (session.get("metadata") or {}).get("plan"))
             except Exception as exc:
@@ -3542,7 +3556,14 @@ def admin_email_template_variables(user):
     }
 
 
-ADMIN_EMAIL_TEMPLATE_TRIGGERS = {"user_created", "inactive_30_days", "inactive_60_days", "inactive_90_days"}
+ADMIN_EMAIL_TEMPLATE_TRIGGERS = {
+    "user_created",
+    "inactive_30_days",
+    "inactive_60_days",
+    "inactive_90_days",
+    "subscription_upgraded_pro",
+    "subscription_downgraded_normal",
+}
 
 
 def admin_email_template_row(row):
@@ -3625,6 +3646,14 @@ def save_admin_email_template(conn, payload):
         (template_id,),
     ).fetchone()
     return {"ok": True, "template": admin_email_template_row(row), "templates": list_admin_email_templates(conn)["templates"]}
+
+
+def delete_admin_email_template(conn, template_id):
+    cursor = conn.execute("DELETE FROM admin_email_templates WHERE id = ?", (template_id,))
+    if cursor.rowcount == 0:
+        raise KeyError("Email template not found")
+    conn.commit()
+    return {"ok": True, "deleted": template_id, "templates": list_admin_email_templates(conn)["templates"]}
 
 
 ANNOUNCEMENT_STATUSES = {"draft", "published"}
@@ -3988,6 +4017,10 @@ def wallpaper_url(filename):
     return f"/media/wallpapers/{urllib.parse.quote(filename)}"
 
 
+def news_image_url(filename):
+    return f"/media/news-images/{urllib.parse.quote(filename)}"
+
+
 def site_wallpaper_row(row):
     return {
         "id": str(row["id"]),
@@ -4083,6 +4116,53 @@ def add_site_wallpaper(conn, admin_user_id, payload):
     }
 
 
+def clean_media_original_name(value, fallback):
+    text = re.sub(r"\s+", " ", (value or "").strip())
+    text = text.replace("/", "").replace("\\", "")
+    return text[:120] or fallback
+
+
+def decode_image_data_url(data_url, label, max_bytes):
+    text = (data_url or "").strip()
+    match = re.match(r"^data:(image/(?:png|jpe?g|webp|gif));base64,([A-Za-z0-9+/=\s]+)$", text, flags=re.I)
+    if not match:
+        raise ValueError(f"{label} must be a PNG, JPG, WebP, or GIF image.")
+    mime_type = match.group(1).lower()
+    extension = WALLPAPER_MIME_TYPES.get(mime_type)
+    if not extension:
+        raise ValueError(f"{label} must be a PNG, JPG, WebP, or GIF image.")
+    try:
+        image_bytes = base64.b64decode(re.sub(r"\s+", "", match.group(2)), validate=True)
+    except Exception as exc:
+        raise ValueError(f"{label} image data could not be decoded.") from exc
+    if not image_bytes:
+        raise ValueError(f"{label} image is empty.")
+    if len(image_bytes) > max_bytes:
+        raise ValueError(f"{label} is too large. Use an image under {max_bytes // (1024 * 1024)} MB.")
+    return mime_type, extension, image_bytes
+
+
+def add_news_image(conn, user, payload):
+    if not is_contributor_user(user):
+        raise ForbiddenError("Contributor access required.")
+    mime_type, extension, image_bytes = decode_image_data_url(payload.get("image"), "News image", MAX_NEWS_IMAGE_BYTES)
+    original_name = clean_media_original_name(payload.get("name") or payload.get("original_name"), "News image")
+    NEWS_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+    filename = f"{int(time.time())}-u{int(user['id'])}-{secrets.token_hex(8)}{extension}"
+    path = NEWS_IMAGE_DIR / filename
+    path.write_bytes(image_bytes)
+    url = news_image_url(filename)
+    return {
+        "ok": True,
+        "filename": filename,
+        "original_name": original_name,
+        "mime_type": mime_type,
+        "size_bytes": len(image_bytes),
+        "url": url,
+        "markdown": f"![{original_name}]({url})",
+    }
+
+
 def delete_site_wallpaper(conn, wallpaper_id):
     row = conn.execute(
         "SELECT id, filename FROM site_wallpapers WHERE id = ?",
@@ -4133,6 +4213,91 @@ def send_admin_email_template_test(conn, admin_user, payload):
         "status": result.get("status"),
         "message": f"Test successfully sent to {admin_user['email']}.",
     }
+
+
+def subscription_email_template_variables(subscription=None, plan="", membership_level=""):
+    details = stripe_subscription_receipt_details(subscription or {}, plan)
+    period_start = details.get("period_start") or ""
+    period_end = details.get("period_end") or ""
+    return {
+        "membershiplevel": membership_level or "Pro",
+        "subscriptionplan": details.get("plan_label") or "Pro",
+        "subscriptionstatus": details.get("status") or "",
+        "subscriptionid": details.get("subscription_id") or "",
+        "subscriptionrenewaldate": format_email_date(period_end),
+        "subscriptionrenews": format_email_date(period_end),
+        "subscriptionenddate": format_email_date(period_end),
+        "subscriptionends": format_email_date(period_end),
+        "subscriptionstartdate": format_email_date(period_start),
+        "billingurl": f"{verification_base_url()}/settings",
+    }
+
+
+def send_admin_email_templates_for_trigger(conn, user, trigger_key, extra_variables=None):
+    if trigger_key not in ADMIN_EMAIL_TEMPLATE_TRIGGERS:
+        raise ValueError("Choose a valid email trigger.")
+    if not user:
+        return {"ok": False, "skipped": "user_not_found", "sent": 0}
+    rows = conn.execute(
+        """
+        SELECT id, name, trigger_key, to_email, from_email, subject, body, created_at, updated_at
+        FROM admin_email_templates
+        WHERE trigger_key = ?
+        ORDER BY updated_at DESC, id DESC
+        """,
+        (trigger_key,),
+    ).fetchall()
+    if not rows:
+        return {"ok": True, "skipped": "no_templates", "sent": 0}
+    variables = admin_email_template_variables(user)
+    variables.update(extra_variables or {})
+    sent = []
+    for row in rows:
+        name = row["name"] or "Template"
+        to_email = render_email_template_text(row["to_email"] or "%email%", variables).strip()
+        from_email = render_email_template_text(row["from_email"] or "", variables).strip()
+        subject = render_email_template_text(row["subject"] or f"%appname%: {name}", variables).strip()
+        body = render_email_template_text(row["body"] or "", variables).strip()
+        if not body:
+            LOGGER.warning("Skipping email template %s for %s because the body is empty.", row["id"], trigger_key)
+            continue
+        if from_email and not sender_email(from_email, fallback=False):
+            LOGGER.warning("Skipping email template %s for %s because From is invalid.", row["id"], trigger_key)
+            continue
+        try:
+            result = send_email(
+                to_email,
+                subject,
+                body,
+                tags=["arcaneledger", trigger_key],
+                from_email=from_email or None,
+            )
+            sent.append({"id": row["id"], "provider": result.get("provider"), "status": result.get("status")})
+        except Exception as exc:
+            LOGGER.warning("Could not send email template %s for trigger %s to user %s: %s", row["id"], trigger_key, user["id"], exc)
+    return {"ok": True, "sent": len(sent), "templates": sent}
+
+
+def send_membership_role_change_emails(conn, user_id, previous_role, next_role, subscription=None, plan=""):
+    previous_role = clean_user_role(previous_role)
+    next_role = clean_user_role(next_role)
+    trigger_key = ""
+    membership_level = ""
+    if previous_role != "pro" and next_role == "pro":
+        trigger_key = "subscription_upgraded_pro"
+        membership_level = "Pro"
+    elif previous_role == "pro" and next_role == "normal":
+        trigger_key = "subscription_downgraded_normal"
+        membership_level = "Normal"
+    if not trigger_key:
+        return {"ok": True, "skipped": "no_membership_transition"}
+    user = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+    if not user:
+        return {"ok": False, "skipped": "user_not_found"}
+    variables = subscription_email_template_variables(subscription, plan, membership_level)
+    variables["previousrole"] = previous_role
+    variables["newrole"] = next_role
+    return send_admin_email_templates_for_trigger(conn, user, trigger_key, variables)
 
 
 def verification_url(token):
@@ -4541,6 +4706,7 @@ def update_admin_user(conn, acting_user_id, target_user_id, payload):
     target = conn.execute("SELECT * FROM users WHERE id = ?", (target_user_id,)).fetchone()
     if not target:
         raise KeyError("User not found.")
+    previous_role = effective_user_role(target)
     protected_admin = normalize_email(target["email"]) in ADMIN_EMAILS
     next_role = clean_user_role(payload.get("role", target["role"] if "role" in target.keys() else role_for_email(target["email"])))
     next_banned = bool_int(payload.get("is_banned", target["is_banned"] if "is_banned" in target.keys() else 0))
@@ -4557,8 +4723,9 @@ def update_admin_user(conn, acting_user_id, target_user_id, payload):
     )
     if next_banned:
         conn.execute("DELETE FROM sessions WHERE user_id = ?", (target_user_id,))
-    conn.commit()
     updated = conn.execute("SELECT * FROM users WHERE id = ?", (target_user_id,)).fetchone()
+    send_membership_role_change_emails(conn, target_user_id, previous_role, effective_user_role(updated))
+    conn.commit()
     return {"ok": True, "user": admin_user_payload(updated), **list_admin_users(conn)}
 
 
@@ -12496,6 +12663,7 @@ def export_json(conn, user_id):
 
 
 REPORT_FIELD_LABELS = {
+    "card_id": "Card ID",
     "card_name": "Card Name",
     "rules_name": "Rules Name",
     "flavor_name": "Printed Name",
@@ -12652,7 +12820,8 @@ def build_collection_report(conn, user_id, payload):
             WHERE d.user_id = ?
             GROUP BY dc.card_id, COALESCE(NULLIF(dc.variant, ''), 'Normal')
         )
-        SELECT COALESCE(NULLIF(c.flavor_name, ''), c.name) AS card_name,
+        SELECT col.card_id AS card_id,
+               COALESCE(NULLIF(c.flavor_name, ''), c.name) AS card_name,
                c.name AS rules_name,
                COALESCE(c.flavor_name, '') AS flavor_name,
                c.set_name,
@@ -12832,6 +13001,32 @@ class Handler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def send_news_image_file(self, filename):
+        filename = urllib.parse.unquote(filename or "")
+        if not re.match(r"^[A-Za-z0-9._-]+$", filename):
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+        path = (NEWS_IMAGE_DIR / filename).resolve()
+        image_root = NEWS_IMAGE_DIR.resolve()
+        if image_root not in path.parents or not path.exists() or not path.is_file():
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+        suffix = path.suffix.lower()
+        content_type = {
+            ".png": "image/png",
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".webp": "image/webp",
+            ".gif": "image/gif",
+        }.get(suffix, "application/octet-stream")
+        data = path.read_bytes()
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Cache-Control", "public, max-age=86400")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
     def session_token(self):
         return parse_cookies(self.headers.get("Cookie", "")).get(SESSION_COOKIE)
 
@@ -12859,6 +13054,9 @@ class Handler(SimpleHTTPRequestHandler):
         media_match = re.match(r"^/media/wallpapers/([^/]+)$", parsed.path)
         if media_match:
             return self.send_wallpaper_file(media_match.group(1))
+        media_match = re.match(r"^/media/news-images/([^/]+)$", parsed.path)
+        if media_match:
+            return self.send_news_image_file(media_match.group(1))
         try:
             with connect() as conn:
                 init_db(conn)
@@ -13191,6 +13389,9 @@ class Handler(SimpleHTTPRequestHandler):
                 if parsed.path == "/api/news":
                     user = self.require_user(conn)
                     return self.send_json(save_news_post(conn, user, self.read_json()), HTTPStatus.CREATED)
+                if parsed.path == "/api/news/images":
+                    user = self.require_user(conn)
+                    return self.send_json(add_news_image(conn, user, self.read_json()), HTTPStatus.CREATED)
                 match = re.match(r"^/api/news/([0-9]+)/unpublish$", parsed.path)
                 if match:
                     user = self.require_user(conn)
@@ -13478,6 +13679,10 @@ class Handler(SimpleHTTPRequestHandler):
                 if match:
                     self.require_admin(conn)
                     return self.send_json(delete_site_wallpaper(conn, int(match.group(1))))
+                match = re.match(r"^/api/admin/email-templates/([0-9]+)$", parsed.path)
+                if match:
+                    self.require_admin(conn)
+                    return self.send_json(delete_admin_email_template(conn, int(match.group(1))))
                 match = re.match(r"^/api/news/([0-9]+)$", parsed.path)
                 if match:
                     user = self.require_user(conn)

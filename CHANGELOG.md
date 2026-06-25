@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.4.6 beta
+
+### Added
+- Added delete controls for Admin email templates so stale or incorrect templates can be removed from the database.
+- Added Pro upgrade and Normal downgrade email-template triggers for Stripe membership changes and admin-managed role changes.
+- Added subscription-focused email template variables, including membership level, subscription plan, status, renewal/end dates, billing URL, and previous/new role.
+- Added contributor News image uploads with Markdown insertion and hosted image rendering in public News articles.
+- Added `card_id` as a selectable Reports field for exports that feed the container allocation import workflow.
+- Added a copyable Container ID chip to container detail modals for easier bulk allocation imports.
+
+### Changed
+- Bumped the app version and user agent to `0.4.6 beta`.
+- Bumped frontend asset versions for the admin template, News image, report field, and container detail updates.
+- Updated the README highlights to mention News image uploads, membership email triggers, and `card_id` report exports.
+
+### Fixed
+- Kept Stripe membership webhook processing resilient if a membership-trigger email template cannot be sent.
+- Preserved the true Normal to Pro transition during checkout so upgrade templates can fire once even when Stripe sends multiple related events.
+
 ## 0.4.5 beta
 
 ### Added

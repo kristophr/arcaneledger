@@ -132,6 +132,7 @@ function formatPercent(value) {
 }
 const cardConditions = ["Near Mint", "Lightly Played", "Moderately Played", "Heavily Played", "Damaged"];
 const reportFields = [
+  { key: "card_id", label: "Card ID" },
   { key: "card_name", label: "Card Name" },
   { key: "rules_name", label: "Rules Name" },
   { key: "flavor_name", label: "Printed Name" },
@@ -240,6 +241,8 @@ const els = {
   newsEditorPostId: document.querySelector("#newsEditorPostId"),
   newsEditorTitleInput: document.querySelector("#newsEditorTitleInput"),
   newsEditorBodyInput: document.querySelector("#newsEditorBodyInput"),
+  newsImageInput: document.querySelector("#newsImageInput"),
+  uploadNewsImageButton: document.querySelector("#uploadNewsImageButton"),
   newsScheduledAtInput: document.querySelector("#newsScheduledAtInput"),
   newsScheduleRow: document.querySelector("#newsScheduleRow"),
   saveNewsDraftButton: document.querySelector("#saveNewsDraftButton"),
@@ -4505,6 +4508,8 @@ function adminEmailTriggerOptions(selectedValue = "user_created") {
     { value: "inactive_30_days", label: "Inactive 30 days" },
     { value: "inactive_60_days", label: "Inactive 60 days" },
     { value: "inactive_90_days", label: "Inactive 90 days" },
+    { value: "subscription_upgraded_pro", label: "Upgraded to Pro" },
+    { value: "subscription_downgraded_normal", label: "Downgraded to Normal" },
   ];
   return triggers.map((trigger) => (
     `<option value="${escapeHtml(trigger.value)}" ${selectedValue === trigger.value ? "selected" : ""}>${escapeHtml(trigger.label)}</option>`
@@ -4549,6 +4554,9 @@ function renderAdminEmailTemplates() {
       </button>
       <button class="secondary-button compact-button admin-save-email-template-button" type="button">Save</button>
       <button class="secondary-button compact-button admin-edit-email-template-button" type="button">Edit Template</button>
+      <button class="danger-icon-button compact-button admin-delete-email-template-button icon-only-button" type="button" aria-label="Delete template" title="Delete template">
+        <span class="trash-icon" aria-hidden="true"></span>
+      </button>
     </article>
   `).join("");
   els.adminEmailTemplatesList.querySelectorAll(".admin-email-template-name").forEach((input) => {
@@ -4565,6 +4573,9 @@ function renderAdminEmailTemplates() {
   });
   els.adminEmailTemplatesList.querySelectorAll(".admin-test-email-template-button").forEach((button) => {
     button.addEventListener("click", () => sendAdminEmailTemplateTest(button).catch((error) => setStatus(`Test failed: ${error.message}`, "error", els.adminEmailStatus || els.adminStatus)));
+  });
+  els.adminEmailTemplatesList.querySelectorAll(".admin-delete-email-template-button").forEach((button) => {
+    button.addEventListener("click", () => deleteAdminEmailTemplate(button).catch((error) => setStatus(`Template delete failed: ${error.message}`, "error", els.adminEmailStatus || els.adminStatus)));
   });
 }
 
@@ -4692,6 +4703,34 @@ async function sendAdminEmailTemplateTest(button) {
       body: JSON.stringify(template),
     });
     setStatus(result.message || "Test successfully sent.", "success", target);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function deleteAdminEmailTemplate(button) {
+  const row = button?.closest(".admin-email-template-row");
+  const templateId = row?.dataset.templateId;
+  const template = (state.adminEmailTemplates || []).find((item) => item.id === templateId);
+  if (!template) return;
+  if (!/^\d+$/.test(String(template.id || ""))) {
+    state.adminEmailTemplates = (state.adminEmailTemplates || []).filter((item) => item.id !== template.id);
+    renderAdminEmailTemplates();
+    setStatus("Unsaved template removed.", "success", els.adminEmailStatus || els.adminStatus);
+    return;
+  }
+  const confirmed = window.confirm(`Delete email template "${template.name || "Template"}"? This cannot be undone.`);
+  if (!confirmed) return;
+  button.disabled = true;
+  const target = els.adminEmailStatus || els.adminStatus;
+  setStatus(`Deleting ${template.name || "template"}...`, "", target);
+  try {
+    const result = await api(`/api/admin/email-templates/${encodeURIComponent(template.id)}`, {
+      method: "DELETE",
+    });
+    state.adminEmailTemplates = result.templates || (state.adminEmailTemplates || []).filter((item) => item.id !== template.id);
+    renderAdminEmailTemplates();
+    setStatus("Template deleted.", "success", target);
   } finally {
     button.disabled = false;
   }
@@ -4897,6 +4936,55 @@ async function readAdminWallpaperFile(file) {
     reader.readAsDataURL(file);
   });
   return { image, name: file.name || "Wallpaper" };
+}
+
+async function readNewsImageFile(file) {
+  if (!file) {
+    throw new Error("Choose a news image first.");
+  }
+  if (!/^image\/(png|jpe?g|webp|gif)$/i.test(file.type || "")) {
+    throw new Error("Choose a PNG, JPG, WebP, or GIF image.");
+  }
+  if (file.size > 5 * 1024 * 1024) {
+    throw new Error("Choose an image under 5 MB.");
+  }
+  const image = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener("load", () => resolve(String(reader.result || "")));
+    reader.addEventListener("error", () => reject(new Error("Could not read that image.")));
+    reader.readAsDataURL(file);
+  });
+  return { image, name: file.name || "News image" };
+}
+
+async function uploadNewsImage() {
+  if (!isContributorUser()) {
+    setStatus("Contributor access required.", "error", els.newsEditorStatus);
+    return;
+  }
+  const file = els.newsImageInput?.files?.[0];
+  const button = els.uploadNewsImageButton;
+  if (button) button.disabled = true;
+  setStatus("Uploading image...", "", els.newsEditorStatus);
+  try {
+    const payload = await readNewsImageFile(file);
+    const result = await api("/api/news/images", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    const markdown = result.markdown || `![${payload.name}](${result.url})`;
+    const textarea = els.newsEditorBodyInput;
+    if (textarea) {
+      const start = textarea.selectionStart ?? textarea.value.length;
+      const spacer = textarea.value && !textarea.value.endsWith("\n") ? "\n\n" : "";
+      textarea.setRangeText(`${spacer}${markdown}\n\n`, start, textarea.selectionEnd ?? start, "end");
+      textarea.focus();
+    }
+    if (els.newsImageInput) els.newsImageInput.value = "";
+    setStatus("Image uploaded and inserted into the article.", "success", els.newsEditorStatus);
+  } finally {
+    if (button) button.disabled = false;
+  }
 }
 
 async function uploadAdminWallpaper() {
@@ -7668,7 +7756,20 @@ function renderContainerDetail(container) {
   const fill = capacity > 0 ? Math.min(100, Number(container.fill_percent || ((stored / capacity) * 100))) : 0;
   state.activeContainer = container;
   els.containerDetailTitle.textContent = container.name || "Container";
-  els.containerDetailMeta.textContent = [containerTypeLabel(container.storage_type), container.location, container.notes].filter(Boolean).join(" - ");
+  const metaText = [containerTypeLabel(container.storage_type), container.location, container.notes].filter(Boolean).join(" - ");
+  const containerId = String(container.id || "");
+  els.containerDetailMeta.innerHTML = `
+    ${containerId ? `<button class="copy-id-chip" type="button" title="Copy container id">Container ID ${escapeHtml(containerId)}</button>` : ""}
+    ${metaText ? `<span>${escapeHtml(metaText)}</span>` : ""}
+  `;
+  els.containerDetailMeta.querySelector(".copy-id-chip")?.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(containerId);
+      setStatus("Container ID copied.", "success", els.containersStatus);
+    } catch {
+      setStatus(`Container ID: ${containerId}`, "", els.containersStatus);
+    }
+  });
   els.containerDetailStats.innerHTML = `
     <section class="container-fill-card">
       <div class="container-fill-head">
@@ -9507,6 +9608,7 @@ function profileActorLink(actor) {
 
 function inlineMarkdownToHtml(value) {
   let text = escapeHtml(value);
+  text = text.replace(/!\[([^\]]*)\]\(((?:https?:\/\/|\/media\/news-images\/)[^)\s]+)\)/g, '<img src="$2" alt="$1" loading="lazy">');
   text = text.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>');
   text = text.replace(/`([^`]+)`/g, "<code>$1</code>");
   text = text.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
@@ -11579,6 +11681,12 @@ function wireEvents() {
   });
   els.newsStudioOverlay?.querySelectorAll("[data-markdown-action]")?.forEach((button) => {
     button.addEventListener("click", () => insertNewsMarkdown(button.dataset.markdownAction));
+  });
+  els.uploadNewsImageButton?.addEventListener("click", () => {
+    els.newsImageInput?.click();
+  });
+  els.newsImageInput?.addEventListener("change", () => {
+    uploadNewsImage().catch((error) => setStatus(error.message, "error", els.newsEditorStatus));
   });
   els.myProfileButton?.addEventListener("click", openMyProfile);
   window.addEventListener("popstate", () => {
