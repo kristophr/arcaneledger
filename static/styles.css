@@ -1350,12 +1350,17 @@ body:not(.is-authenticated) .nav-bottom {
 }
 
 .storage-check-icon,
-.storage-x-icon {
+.storage-x-icon,
+.storage-warning-icon {
   position: relative;
   display: inline-block;
   width: 20px;
   height: 20px;
   flex: 0 0 auto;
+}
+
+.storage-check-icon,
+.storage-x-icon {
   border: 1.8px solid currentColor;
   border-radius: 50%;
 }
@@ -1390,6 +1395,32 @@ body:not(.is-authenticated) .nav-bottom {
 
 .storage-x-icon::after {
   transform: rotate(-45deg);
+}
+
+.storage-warning-icon {
+  width: 22px;
+  height: 20px;
+}
+
+.storage-warning-icon::before {
+  content: "";
+  position: absolute;
+  inset: 1px 2px 2px;
+  background: currentColor;
+  clip-path: polygon(50% 0, 100% 100%, 0 100%);
+}
+
+.storage-warning-icon::after {
+  content: "!";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 4px;
+  color: var(--button-bg);
+  font-size: 11px;
+  font-weight: 950;
+  line-height: 1;
+  text-align: center;
 }
 
 .container-icon {
@@ -5388,6 +5419,12 @@ body:not(.is-authenticated) .nav-bottom {
   background: color-mix(in srgb, #d92d20 10%, var(--button-bg));
 }
 
+.detail-storage-button.is-partial-storage {
+  color: #9a6700;
+  border-color: color-mix(in srgb, #d69e2e 52%, var(--line));
+  background: color-mix(in srgb, #d69e2e 16%, var(--button-bg));
+}
+
 .detail-storage-button.is-add {
   color: var(--accent);
 }
@@ -7450,6 +7487,7 @@ body:not(.is-authenticated) .nav-bottom {
 }
 
 .import-source-grid textarea,
+.import-source-grid select,
 .import-mapping-row select,
 .import-wizard-row input,
 .import-wizard-row select {
@@ -7626,6 +7664,87 @@ body:not(.is-authenticated) .nav-bottom {
 
 .import-wizard-actions {
   justify-content: flex-end;
+}
+
+.container-allocation-import-text {
+  grid-column: 1 / -1;
+}
+
+.container-allocation-import-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.container-allocation-import-summary span {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 6px 10px;
+  color: var(--ink);
+  background: var(--field-bg);
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
+.container-allocation-import-rows {
+  display: grid;
+  gap: 10px;
+}
+
+.container-allocation-import-table {
+  display: grid;
+  gap: 8px;
+  overflow-x: auto;
+}
+
+.container-allocation-import-header,
+.container-allocation-import-row {
+  display: grid;
+  grid-template-columns: 42px minmax(180px, 1.2fr) minmax(150px, 0.9fr) 70px minmax(160px, 0.9fr) minmax(220px, 1.2fr);
+  gap: 10px;
+  align-items: center;
+  min-width: 940px;
+}
+
+.container-allocation-import-header {
+  padding: 0 10px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 950;
+  text-transform: uppercase;
+}
+
+.container-allocation-import-row {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--detail-bg);
+}
+
+.container-allocation-import-row.is-valid {
+  border-color: color-mix(in srgb, #1f9d55 32%, var(--line));
+}
+
+.container-allocation-import-row.is-blocked {
+  border-color: color-mix(in srgb, #d92d20 42%, var(--line));
+}
+
+.container-allocation-import-row strong,
+.container-allocation-import-row small {
+  display: block;
+}
+
+.container-allocation-import-row small {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 750;
+}
+
+.compact-checkbox {
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
 }
 
 .import-review-modal {
@@ -8452,6 +8571,41 @@ body:not(.is-authenticated) .nav-bottom {
 .card-decks-list {
   display: grid;
   gap: 9px;
+}
+
+.card-container-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: var(--ink);
+  background: var(--field-bg);
+  font-size: 0.85rem;
+  font-weight: 850;
+}
+
+.card-container-summary.is-stored {
+  color: #116b3a;
+  border-color: color-mix(in srgb, #1f9d55 38%, var(--line));
+  background: color-mix(in srgb, #1f9d55 9%, var(--field-bg));
+}
+
+.card-container-summary.is-partial-storage {
+  color: #8a5a00;
+  border-color: color-mix(in srgb, #d69e2e 45%, var(--line));
+  background: color-mix(in srgb, #d69e2e 12%, var(--field-bg));
+}
+
+.card-container-summary.is-missing-storage {
+  color: #b42318;
+  border-color: color-mix(in srgb, #d92d20 38%, var(--line));
+  background: color-mix(in srgb, #d92d20 9%, var(--field-bg));
+}
+
+.card-container-add-button {
+  justify-self: start;
 }
 
 .card-deck-link {

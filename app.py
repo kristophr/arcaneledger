@@ -107,8 +107,8 @@ SESSION_IDLE_MINUTES = int(os.environ.get("SESSION_IDLE_MINUTES", "30") or 30)
 EMAIL_VERIFICATION_MINUTES = int(os.environ.get("EMAIL_VERIFICATION_MINUTES", "30") or 30)
 PASSWORD_RESET_MINUTES = int(os.environ.get("PASSWORD_RESET_MINUTES", str(EMAIL_VERIFICATION_MINUTES)) or EMAIL_VERIFICATION_MINUTES)
 SUPPORTED_SCRYFALL_LANGUAGES = {"en"}
-APP_VERSION = "0.4.1 beta"
-USER_AGENT = "arcaneledger/0.4.1"
+APP_VERSION = "0.4.5 beta"
+USER_AGENT = "arcaneledger/0.4.5"
 PROCESS_STARTED_AT = datetime.now(timezone.utc).replace(microsecond=0)
 COLOR_ORDER = ("W", "U", "B", "R", "G")
 CARD_CONDITIONS = (
@@ -6193,6 +6193,273 @@ def commit_import_rows(conn, user_id, payload):
     for set_code in sorted(touched_sets):
         cache_set_catalog(conn, set_code)
     return {"ok": True, "imported_rows": imported, "skipped_rows": skipped}
+
+
+CONTAINER_ALLOCATION_IMPORT_FIELDS = [
+    {"key": "card_id", "label": "Card ID", "aliases": ["card_id", "scryfall_id", "scryfall id", "id"]},
+    {"key": "variant", "label": "Variant", "aliases": ["variant", "finish", "printing"]},
+    {"key": "card_condition", "label": "Condition", "aliases": ["condition", "card_condition", "card condition"]},
+    {"key": "quantity", "label": "Quantity", "aliases": ["quantity", "qty", "count", "quantity to allocate"]},
+    {"key": "container_id", "label": "Container ID", "aliases": ["container_id", "container id", "container", "box id", "binder id"]},
+]
+
+
+def parse_container_allocation_import_text(text, source_format=None):
+    text = (text or "").strip()
+    if not text:
+        raise ValueError("Container allocation import is empty.")
+    fmt = (source_format or "").strip().lower()
+    if fmt == "auto":
+        fmt = ""
+    if not fmt:
+        fmt = "json" if text[:1] in "[{" else "csv"
+    if fmt == "csv":
+        return parse_csv_import_text(text), "csv"
+    if fmt == "json":
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Invalid JSON: {exc}")
+        if isinstance(payload, dict):
+            rows = payload.get("allocations") or payload.get("rows") or payload.get("container_allocations")
+        else:
+            rows = payload
+        if not isinstance(rows, list):
+            raise ValueError("JSON container allocation import must be an array or contain an allocations array.")
+        if not rows:
+            raise ValueError("JSON container allocation import has no rows.")
+        if not all(isinstance(row, dict) for row in rows):
+            raise ValueError("Each container allocation row must be an object.")
+        return rows, "json"
+    raise ValueError("Choose CSV or JSON for container allocation import.")
+
+
+def container_allocation_entry_from_source(source, line_number):
+    card_id = source_value(source, "card_id", "scryfall_id", "Scryfall ID", "Card ID", "id")
+    variant = source_value(source, "variant", "Variant", "finish", "Finish") or "Normal"
+    condition = card_condition(source_value(source, "card_condition", "Condition", "Card Condition"))
+    quantity = int(money(source_value(source, "quantity", "Quantity", "qty", "Quantity to Allocate"), fallback=0))
+    container_id = int(money(source_value(source, "container_id", "Container ID", "container", "Container"), fallback=0))
+    return {
+        "line": line_number,
+        "card_id": (card_id or "").strip(),
+        "variant": (variant or "Normal").strip() or "Normal",
+        "card_condition": condition,
+        "quantity": quantity,
+        "container_id": container_id,
+    }
+
+
+def normalize_container_allocation_import_rows(rows):
+    entries = []
+    for index, source in enumerate(rows or [], start=1):
+        if not isinstance(source, dict):
+            continue
+        entry = container_allocation_entry_from_source(source, source.get("line") or index)
+        if source.get("checked") is not None:
+            entry["checked"] = bool(source.get("checked"))
+        entries.append(entry)
+    return entries
+
+
+def container_allocation_card_summary(row):
+    if not row:
+        return None
+    return {
+        "scryfall_id": row["scryfall_id"],
+        "name": row["name"],
+        "display_name": row["flavor_name"] or row["name"],
+        "set_code": row["set_code"],
+        "set_name": row["set_name"],
+        "collector_number": row["collector_number"],
+        "image_small": row["image_small"],
+        "image_normal": row["image_normal"],
+    }
+
+
+def validate_container_allocation_entries(conn, user_id, entries):
+    container_rows = conn.execute(
+        """
+        SELECT ct.id, ct.name, COALESCE(ct.storage_type, 'other') AS storage_type,
+               COALESCE(ct.capacity, 0) AS capacity,
+               COALESCE(SUM(cc.quantity), 0) AS stored_quantity
+        FROM containers ct
+        LEFT JOIN container_cards cc ON cc.container_id = ct.id
+        WHERE ct.user_id = ?
+        GROUP BY ct.id
+        """,
+        (user_id,),
+    ).fetchall()
+    containers = {int(row["id"]): dict(row) for row in container_rows}
+    requested_by_bucket = {}
+    requested_by_container = {}
+    preview_rows = []
+    valid_count = 0
+    valid_quantity = 0
+
+    for index, entry in enumerate(entries or [], start=1):
+        entry = dict(entry or {})
+        errors = []
+        warnings = []
+        card_id = (entry.get("card_id") or "").strip()
+        variant = (entry.get("variant") or "Normal").strip() or "Normal"
+        condition = card_condition(entry.get("card_condition"))
+        quantity = int(entry.get("quantity") or 0)
+        container_id = int(entry.get("container_id") or 0)
+        card = None
+        container = containers.get(container_id)
+        owned = 0
+        allocated = 0
+        available_before = 0
+        available_after = 0
+        remaining_before = None
+        remaining_after = None
+
+        if not card_id:
+            errors.append("Card ID is required.")
+        else:
+            card = conn.execute("SELECT * FROM cards WHERE scryfall_id = ?", (card_id,)).fetchone()
+            if not card:
+                errors.append("Card ID was not found in the local catalog.")
+        if quantity <= 0:
+            errors.append("Quantity must be at least 1.")
+        if not container_id:
+            errors.append("Container ID is required.")
+        elif not container:
+            errors.append("Container ID was not found for your account.")
+
+        if card and quantity > 0:
+            owned = condition_owned_quantity(conn, user_id, card_id, variant, condition)
+            allocated = allocated_quantity(conn, user_id, card_id, variant, condition)
+            available_before = max(0, owned - allocated)
+            bucket = (card_id, variant, condition)
+            already_requested = requested_by_bucket.get(bucket, 0)
+            available_for_row = max(0, available_before - already_requested)
+            available_after = max(0, available_for_row - quantity)
+            if owned <= 0:
+                errors.append("You do not own that card with this variant and condition.")
+            elif quantity > available_for_row:
+                errors.append(f"Only {available_for_row} uncontainered copy/copies are available.")
+
+        if container and quantity > 0:
+            capacity = int(container.get("capacity") or 0)
+            stored = int(container.get("stored_quantity") or 0)
+            if capacity > 0:
+                already_requested_container = requested_by_container.get(container_id, 0)
+                remaining_before = max(0, capacity - stored - already_requested_container)
+                remaining_after = max(0, remaining_before - quantity)
+                if quantity > remaining_before:
+                    errors.append(f"{container['name']} only has space for {remaining_before} more card/copy.")
+            else:
+                warnings.append("Container capacity is not set, so space was not limited.")
+
+        checked = bool(entry.get("checked", True)) and not errors
+        if checked:
+            requested_by_bucket[(card_id, variant, condition)] = requested_by_bucket.get((card_id, variant, condition), 0) + quantity
+            requested_by_container[container_id] = requested_by_container.get(container_id, 0) + quantity
+            valid_count += 1
+            valid_quantity += quantity
+
+        preview_rows.append({
+            "id": f"container-import-{index}",
+            "line": entry.get("line") or index,
+            "checked": checked,
+            "status": "valid" if not errors else "blocked",
+            "errors": errors,
+            "warnings": warnings,
+            "card_id": card_id,
+            "variant": variant,
+            "card_condition": condition,
+            "quantity": quantity,
+            "container_id": container_id,
+            "card": container_allocation_card_summary(card),
+            "container": {
+                "id": container_id,
+                "name": container["name"],
+                "storage_type": container["storage_type"],
+                "capacity": int(container["capacity"] or 0),
+                "stored_quantity": int(container["stored_quantity"] or 0),
+            } if container else None,
+            "owned_quantity": owned,
+            "allocated_quantity": allocated,
+            "available_before": available_before,
+            "available_after": available_after,
+            "container_remaining_before": remaining_before,
+            "container_remaining_after": remaining_after,
+        })
+
+    return {
+        "ok": True,
+        "rows": preview_rows,
+        "summary": {
+            "total_rows": len(preview_rows),
+            "valid_rows": valid_count,
+            "blocked_rows": len(preview_rows) - valid_count,
+            "valid_quantity": valid_quantity,
+        },
+    }
+
+
+def preview_container_allocation_import(conn, user_id, payload):
+    rows, source_format = parse_container_allocation_import_text(payload.get("text") or "", payload.get("format"))
+    entries = normalize_container_allocation_import_rows(rows)
+    preview = validate_container_allocation_entries(conn, user_id, entries)
+    preview["format"] = source_format
+    preview["fields"] = CONTAINER_ALLOCATION_IMPORT_FIELDS
+    return preview
+
+
+def commit_container_allocation_import(conn, user_id, payload):
+    source_rows = payload.get("rows") or []
+    if not isinstance(source_rows, list):
+        raise ValueError("Container allocation rows are required.")
+    requested = [row for row in source_rows if row.get("checked")]
+    if not requested:
+        raise ValueError("Choose at least one valid row to import.")
+    entries = normalize_container_allocation_import_rows(requested)
+    preview = validate_container_allocation_entries(conn, user_id, entries)
+    blocked = [row for row in preview["rows"] if row.get("errors")]
+    if blocked:
+        raise ValueError("Fix invalid container allocation rows before confirming.")
+    timestamp = now_iso()
+    touched_containers = set()
+    total_quantity = 0
+    for row in preview["rows"]:
+        quantity = int(row.get("quantity") or 0)
+        if quantity <= 0:
+            continue
+        conn.execute(
+            """
+            INSERT INTO container_cards (container_id, card_id, variant, card_condition, quantity, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(container_id, card_id, variant, card_condition) DO UPDATE SET
+                quantity = container_cards.quantity + excluded.quantity,
+                updated_at = excluded.updated_at
+            """,
+            (
+                int(row["container_id"]),
+                row["card_id"],
+                row["variant"] or "Normal",
+                card_condition(row["card_condition"]),
+                quantity,
+                timestamp,
+            ),
+        )
+        touched_containers.add(int(row["container_id"]))
+        total_quantity += quantity
+    if touched_containers:
+        placeholders = ", ".join("?" for _ in touched_containers)
+        conn.execute(
+            f"UPDATE containers SET updated_at = ? WHERE user_id = ? AND id IN ({placeholders})",
+            (timestamp, user_id, *sorted(touched_containers)),
+        )
+    conn.commit()
+    return {
+        "ok": True,
+        "imported_rows": len(preview["rows"]),
+        "allocated_quantity": total_quantity,
+        "containers": list_containers(conn, user_id),
+    }
 
 
 def current_price_sql(alias="c"):
@@ -12975,6 +13242,12 @@ class Handler(SimpleHTTPRequestHandler):
                 if parsed.path == "/api/import/json/commit":
                     user = self.require_user(conn)
                     return self.send_json(commit_import_wizard_json(conn, user["id"], self.read_json()))
+                if parsed.path == "/api/import/container-allocations/preview":
+                    user = self.require_user(conn)
+                    return self.send_json(preview_container_allocation_import(conn, user["id"], self.read_json()))
+                if parsed.path == "/api/import/container-allocations/commit":
+                    user = self.require_user(conn)
+                    return self.send_json(commit_container_allocation_import(conn, user["id"], self.read_json()))
                 if parsed.path == "/api/cards":
                     user = self.require_user(conn)
                     return self.send_json(add_card_to_collection(conn, user["id"], self.read_json()), HTTPStatus.CREATED)

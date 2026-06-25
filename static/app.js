@@ -95,6 +95,11 @@ const state = {
     busy: false,
     progress: { visible: false, label: "", current: 0, total: 0 },
   },
+  containerAllocationImport: {
+    rows: [],
+    summary: null,
+    busy: false,
+  },
   pendingDeckImport: null,
   selectedCards: new Map(),
   selectedSetMissingCards: new Map(),
@@ -359,6 +364,7 @@ const els = {
   catalogSearchButton: document.querySelector("#catalogSearchButton"),
   catalogOracleInput: document.querySelector("#catalogOracleInput"),
   catalogSetInput: document.querySelector("#catalogSetInput"),
+  catalogCollectorNumberInput: document.querySelector("#catalogCollectorNumberInput"),
   catalogColorSelect: document.querySelector("#catalogColorSelect"),
   catalogTypeSelect: document.querySelector("#catalogTypeSelect"),
   catalogRaritySelect: document.querySelector("#catalogRaritySelect"),
@@ -419,6 +425,14 @@ const els = {
   importWizardProgressLabel: document.querySelector("#importWizardProgressLabel"),
   importWizardProgressCount: document.querySelector("#importWizardProgressCount"),
   importWizardProgressBar: document.querySelector("#importWizardProgressBar"),
+  containerAllocationImportFile: document.querySelector("#containerAllocationImportFile"),
+  containerAllocationImportFormat: document.querySelector("#containerAllocationImportFormat"),
+  containerAllocationImportText: document.querySelector("#containerAllocationImportText"),
+  previewContainerAllocationImportButton: document.querySelector("#previewContainerAllocationImportButton"),
+  resetContainerAllocationImportButton: document.querySelector("#resetContainerAllocationImportButton"),
+  commitContainerAllocationImportButton: document.querySelector("#commitContainerAllocationImportButton"),
+  containerAllocationImportStatus: document.querySelector("#containerAllocationImportStatus"),
+  containerAllocationImportRows: document.querySelector("#containerAllocationImportRows"),
   importReviewOverlay: document.querySelector("#importReviewOverlay"),
   importReviewTitle: document.querySelector("#importReviewTitle"),
   importReviewCount: document.querySelector("#importReviewCount"),
@@ -3124,6 +3138,7 @@ function buildCatalogSearchQuery() {
   const text = els.catalogSearchInput.value.trim();
   const oracle = els.catalogOracleInput.value.trim();
   const setCode = els.catalogSetInput.value.trim().toLowerCase();
+  const collectorNumber = els.catalogCollectorNumberInput.value.trim();
   const color = els.catalogColorSelect.value;
   const type = els.catalogTypeSelect.value;
   const rarity = els.catalogRaritySelect.value;
@@ -3131,6 +3146,7 @@ function buildCatalogSearchQuery() {
   if (text) parts.push(text);
   if (oracle) parts.push(`o:${scryfallQuoted(oracle)}`);
   if (setCode) parts.push(`e:${setCode}`);
+  if (collectorNumber) parts.push(`cn:${scryfallQuoted(collectorNumber)}`);
   if (color === "multi") parts.push("c>=2");
   else if (color === "colorless") parts.push("c:c");
   else if (color) parts.push(`c:${color}`);
@@ -5692,6 +5708,46 @@ function containerMemberships(card) {
   return Array.isArray(card.container_memberships) ? card.container_memberships : [];
 }
 
+function cardContainerStorageStatus(card) {
+  const owned = totalVariantQuantity(card);
+  const stored = containerMemberships(card).reduce((total, container) => total + Number(container.quantity || 0), 0);
+  const unassigned = Math.max(0, owned - stored);
+  if (owned <= 0 || stored <= 0) {
+    return {
+      state: "missing",
+      className: "is-missing-storage",
+      iconHtml: '<span class="storage-x-icon" aria-hidden="true"></span>',
+      title: "Not in a container - add to container",
+      ariaLabel: "Not in a container",
+      owned,
+      stored,
+      unassigned,
+    };
+  }
+  if (stored >= owned) {
+    return {
+      state: "stored",
+      className: "is-stored",
+      iconHtml: '<span class="storage-check-icon" aria-hidden="true"></span>',
+      title: "All copies are in containers",
+      ariaLabel: "View containers",
+      owned,
+      stored,
+      unassigned: 0,
+    };
+  }
+  return {
+    state: "partial",
+    className: "is-partial-storage",
+    iconHtml: '<span class="storage-warning-icon" aria-hidden="true"></span>',
+    title: `${integer.format(unassigned)} unstored cop${unassigned === 1 ? "y" : "ies"} - assign to container`,
+    ariaLabel: "Some copies are not in containers",
+    owned,
+    stored,
+    unassigned,
+  };
+}
+
 function openCardDecksModal(card) {
   const decks = deckMemberships(card);
   if (!decks.length) return;
@@ -5716,15 +5772,22 @@ function openCardDecksModal(card) {
 
 function openCardContainersModal(card) {
   const containers = containerMemberships(card);
+  const storageStatus = cardContainerStorageStatus(card);
   if (!containers.length) return;
-  if (containers.length === 1 && containers[0].id) {
+  if (containers.length === 1 && containers[0].id && storageStatus.unassigned <= 0) {
     openContainerDetailModal(containers[0].id).catch((error) => {
       setStatus(error.message, "error");
     });
     return;
   }
   els.cardContainersTitle.textContent = cardTitle(card);
-  els.cardContainersList.innerHTML = containers.map((container) => `
+  const summaryHtml = `
+    <div class="card-container-summary ${storageStatus.className}">
+      ${storageStatus.iconHtml}
+      <span>${integer.format(storageStatus.stored)} stored / ${integer.format(storageStatus.owned)} owned${storageStatus.unassigned > 0 ? ` - ${integer.format(storageStatus.unassigned)} unstored` : ""}</span>
+    </div>
+  `;
+  const containerRows = containers.map((container) => `
     <button class="card-deck-link card-container-link" type="button" data-container-id="${escapeHtml(container.id || "")}">
       ${containerIconHtml(container.storage_type)}
       <span>
@@ -5733,6 +5796,12 @@ function openCardContainersModal(card) {
       </span>
     </button>
   `).join("");
+  const addButtonHtml = storageStatus.unassigned > 0 ? `
+    <button id="addUnstoredToContainerButton" class="secondary-button card-container-add-button" type="button">
+      <span aria-hidden="true">+</span> Add Unstored Copies
+    </button>
+  ` : "";
+  els.cardContainersList.innerHTML = `${summaryHtml}${containerRows}${addButtonHtml}`;
   for (const button of els.cardContainersList.querySelectorAll(".card-container-link")) {
     button.addEventListener("click", () => {
       const containerId = button.dataset.containerId;
@@ -5743,6 +5812,10 @@ function openCardContainersModal(card) {
       });
     });
   }
+  els.cardContainersList.querySelector("#addUnstoredToContainerButton")?.addEventListener("click", () => {
+    closeCardContainersModal();
+    openDetailAddToContainerModal(card).catch((error) => setStatus(error.message, "error"));
+  });
   els.cardContainersOverlay.hidden = false;
   document.body.classList.add("modal-open");
 }
@@ -8491,6 +8564,154 @@ function renderImportCard(card) {
   `;
 }
 
+async function containerAllocationImportSourceText() {
+  const file = els.containerAllocationImportFile?.files?.[0];
+  if (file) return file.text();
+  const text = (els.containerAllocationImportText?.value || "").trim();
+  if (!text) throw new Error("Upload or paste a container allocation import first.");
+  return text;
+}
+
+function resetContainerAllocationImport() {
+  state.containerAllocationImport = { rows: [], summary: null, busy: false };
+  if (els.containerAllocationImportFile) els.containerAllocationImportFile.value = "";
+  if (els.containerAllocationImportText) els.containerAllocationImportText.value = "";
+  if (els.containerAllocationImportFormat) els.containerAllocationImportFormat.value = "auto";
+  setStatus("", "", els.containerAllocationImportStatus);
+  renderContainerAllocationImportRows();
+}
+
+function renderContainerAllocationImportRows() {
+  const rows = state.containerAllocationImport.rows || [];
+  const summary = state.containerAllocationImport.summary || {};
+  if (!els.containerAllocationImportRows) return;
+  if (!rows.length) {
+    els.containerAllocationImportRows.innerHTML = '<div class="empty-state">Preview an allocation file to validate rows before saving.</div>';
+    if (els.commitContainerAllocationImportButton) els.commitContainerAllocationImportButton.disabled = true;
+    return;
+  }
+  const checkedValid = rows.filter((row) => row.checked && row.status === "valid").length;
+  if (els.commitContainerAllocationImportButton) {
+    els.commitContainerAllocationImportButton.disabled = state.containerAllocationImport.busy || checkedValid <= 0;
+  }
+  els.containerAllocationImportRows.innerHTML = `
+    <div class="container-allocation-import-summary">
+      <span>${integer.format(summary.valid_rows || 0)} valid</span>
+      <span>${integer.format(summary.blocked_rows || 0)} blocked</span>
+      <span>${integer.format(summary.valid_quantity || 0)} copies ready</span>
+    </div>
+    <div class="container-allocation-import-table">
+      <div class="container-allocation-import-header">
+        <span>Use</span>
+        <span>Card</span>
+        <span>Variant / Condition</span>
+        <span>Qty</span>
+        <span>Container</span>
+        <span>Validation</span>
+      </div>
+      ${rows.map((row, index) => {
+        const card = row.card || {};
+        const container = row.container || {};
+        const messages = [...(row.errors || []), ...(row.warnings || [])];
+        const statusText = messages.length ? messages.join(" ") : `Available after import: ${integer.format(row.available_after || 0)}`;
+        const spaceText = row.container_remaining_before === null || row.container_remaining_before === undefined
+          ? "No capacity limit"
+          : `${integer.format(row.container_remaining_before)} slots before`;
+        return `
+          <div class="container-allocation-import-row ${row.status === "valid" ? "is-valid" : "is-blocked"}">
+            <label class="compact-checkbox">
+              <input type="checkbox" data-container-allocation-row="${index}" ${row.checked ? "checked" : ""} ${row.status !== "valid" ? "disabled" : ""}>
+            </label>
+            <span>
+              <strong>${escapeHtml(card.display_name || card.name || row.card_id || "Unknown card")}</strong>
+              <small>${escapeHtml(card.set_name || "")}${card.collector_number ? ` #${escapeHtml(card.collector_number)}` : ""}</small>
+              <small>Line ${escapeHtml(row.line || index + 1)}</small>
+            </span>
+            <span>
+              <strong>${escapeHtml(row.variant || "Normal")}</strong>
+              <small>${escapeHtml(row.card_condition || "Near Mint")}</small>
+              <small>${integer.format(row.available_before || 0)} uncontainered before row</small>
+            </span>
+            <span>${integer.format(row.quantity || 0)}</span>
+            <span>
+              <strong>${escapeHtml(container.name || `Container ${row.container_id || ""}`)}</strong>
+              <small>ID ${escapeHtml(row.container_id || "")}</small>
+              <small>${escapeHtml(spaceText)}</small>
+            </span>
+            <span>
+              <strong>${row.status === "valid" ? "Ready" : "Blocked"}</strong>
+              <small>${escapeHtml(statusText)}</small>
+            </span>
+          </div>
+        `;
+      }).join("")}
+    </div>
+  `;
+  els.containerAllocationImportRows.querySelectorAll("[data-container-allocation-row]").forEach((checkbox) => {
+    checkbox.addEventListener("change", () => {
+      const row = rows[Number(checkbox.dataset.containerAllocationRow)];
+      if (!row || row.status !== "valid") return;
+      row.checked = checkbox.checked;
+      renderContainerAllocationImportRows();
+    });
+  });
+}
+
+async function previewContainerAllocationImport() {
+  if (state.containerAllocationImport.busy) return;
+  state.containerAllocationImport.busy = true;
+  renderContainerAllocationImportRows();
+  setStatus("Validating container allocation import...", "", els.containerAllocationImportStatus);
+  try {
+    const text = await containerAllocationImportSourceText();
+    const result = await api("/api/import/container-allocations/preview", {
+      method: "POST",
+      body: JSON.stringify({
+        text,
+        format: els.containerAllocationImportFormat?.value || "auto",
+      }),
+    });
+    state.containerAllocationImport.rows = result.rows || [];
+    state.containerAllocationImport.summary = result.summary || {};
+    const nextSummary = state.containerAllocationImport.summary;
+    setStatus(
+      `Validated ${integer.format(nextSummary.total_rows || 0)} row${Number(nextSummary.total_rows || 0) === 1 ? "" : "s"}: ${integer.format(nextSummary.valid_rows || 0)} ready, ${integer.format(nextSummary.blocked_rows || 0)} blocked.`,
+      nextSummary.blocked_rows ? "error" : "success",
+      els.containerAllocationImportStatus,
+    );
+  } finally {
+    state.containerAllocationImport.busy = false;
+    renderContainerAllocationImportRows();
+  }
+}
+
+async function commitContainerAllocationImport() {
+  if (state.containerAllocationImport.busy) return;
+  const rows = (state.containerAllocationImport.rows || []).filter((row) => row.checked && row.status === "valid");
+  if (!rows.length) {
+    setStatus("Choose at least one valid allocation row first.", "error", els.containerAllocationImportStatus);
+    return;
+  }
+  state.containerAllocationImport.busy = true;
+  renderContainerAllocationImportRows();
+  setStatus("Saving container allocations...", "", els.containerAllocationImportStatus);
+  try {
+    const result = await api("/api/import/container-allocations/commit", {
+      method: "POST",
+      body: JSON.stringify({ rows }),
+    });
+    setStatus(`Allocated ${integer.format(result.allocated_quantity || 0)} card/copy across ${integer.format(result.imported_rows || 0)} row${Number(result.imported_rows || 0) === 1 ? "" : "s"}.`, "success", els.containerAllocationImportStatus);
+    state.containerAllocationImport.rows = [];
+    state.containerAllocationImport.summary = null;
+    if (els.containerAllocationImportFile) els.containerAllocationImportFile.value = "";
+    if (els.containerAllocationImportText) els.containerAllocationImportText.value = "";
+    await Promise.all([loadContainers(), loadCards()]);
+  } finally {
+    state.containerAllocationImport.busy = false;
+    renderContainerAllocationImportRows();
+  }
+}
+
 function renderImportReview() {
   const checkedCount = state.importRows.filter((row) => row.checked).length;
   els.importReviewCount.textContent = `${integer.format(checkedCount)} of ${integer.format(state.importRows.length)} selected`;
@@ -9968,6 +10189,7 @@ function renderCardDetail(card) {
   const summaries = variantSummaries(card);
   const hasDecks = deckMemberships(card).length > 0;
   const hasContainers = containerMemberships(card).length > 0;
+  const storageStatus = cardContainerStorageStatus(card);
   const listedForSale = Number(card.sale_quantity || 0) > 0;
   const totalValue = Number(card.total_value ?? card.owned_value ?? totalVariantMarketValue(card) ?? 0);
   const totalPaid = Number(card.total_paid ?? (Number(card.paid_price || 0) * ownedQuantity) ?? 0);
@@ -10027,8 +10249,8 @@ function renderCardDetail(card) {
             ${owned ? `<button class="detail-storage-button detail-decks-button ${hasDecks ? "is-linked" : "is-add"}" type="button" aria-label="${hasDecks ? "View decks" : "Add to deck"}" title="${hasDecks ? "View decks" : "Add to deck"}">
               ${hasDecks ? '<span class="deck-icon" aria-hidden="true"></span>' : '<span class="add-to-deck-icon" aria-hidden="true"></span>'}
             </button>
-            <button class="detail-storage-button detail-containers-button ${hasContainers ? "is-stored" : "is-missing-storage"}" type="button" aria-label="${hasContainers ? "View container" : "Not in a container"}" title="${hasContainers ? "View container" : "Not in a container - add to container"}">
-              ${hasContainers ? '<span class="storage-check-icon" aria-hidden="true"></span>' : '<span class="storage-x-icon" aria-hidden="true"></span>'}
+            <button class="detail-storage-button detail-containers-button ${storageStatus.className}" type="button" aria-label="${escapeAttribute(storageStatus.ariaLabel)}" title="${escapeAttribute(storageStatus.title)}">
+              ${storageStatus.iconHtml}
             </button>
             ${listedForSale ? '<button class="detail-storage-button detail-store-button" type="button" aria-label="Manage sale listing" title="Manage sale listing"><span class="sale-icon" aria-hidden="true"></span></button>' : ""}` : ""}
             ${owned ? '<button class="detail-storage-button detail-ledger-button" type="button" aria-label="View ledger" title="View ledger"><span class="ledger-icon" aria-hidden="true"></span></button>' : ""}
@@ -11701,6 +11923,37 @@ function wireEvents() {
       clearImportProgress();
       setStatus(error.message, "error", els.importStatus);
     });
+  });
+  els.previewContainerAllocationImportButton?.addEventListener("click", () => {
+    previewContainerAllocationImport().catch((error) => {
+      state.containerAllocationImport.busy = false;
+      renderContainerAllocationImportRows();
+      setStatus(error.message, "error", els.containerAllocationImportStatus);
+    });
+  });
+  els.resetContainerAllocationImportButton?.addEventListener("click", resetContainerAllocationImport);
+  els.commitContainerAllocationImportButton?.addEventListener("click", () => {
+    commitContainerAllocationImport().catch((error) => {
+      state.containerAllocationImport.busy = false;
+      renderContainerAllocationImportRows();
+      setStatus(error.message, "error", els.containerAllocationImportStatus);
+    });
+  });
+  els.containerAllocationImportFile?.addEventListener("change", () => {
+    if (els.containerAllocationImportFile.files?.length && els.containerAllocationImportText) {
+      els.containerAllocationImportText.value = "";
+    }
+    state.containerAllocationImport.rows = [];
+    state.containerAllocationImport.summary = null;
+    renderContainerAllocationImportRows();
+  });
+  els.containerAllocationImportText?.addEventListener("input", () => {
+    if (els.containerAllocationImportText.value.trim() && els.containerAllocationImportFile) {
+      els.containerAllocationImportFile.value = "";
+    }
+    state.containerAllocationImport.rows = [];
+    state.containerAllocationImport.summary = null;
+    renderContainerAllocationImportRows();
   });
   els.importWizardFile?.addEventListener("change", () => {
     if (els.importWizardFile.files?.length && els.importWizardJsonText) {

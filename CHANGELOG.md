@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.4.5 beta
+
+### Added
+- Added a dedicated Container Allocation Import workflow on the Import page for bulk assigning already-owned cards into physical containers.
+- Added CSV and JSON support for container allocation imports using `card_id`, `variant`, `condition`, `quantity`, and `container_id`.
+- Added pre-commit validation for container allocation imports, including card existence, owned variant and condition quantity, uncontainered availability, container ownership, and remaining container capacity.
+- Added cumulative capacity validation so multiple import rows targeting the same container cannot overfill it during one bulk import.
+- Added row-level review controls so users can uncheck valid allocation rows and skip blocked rows before confirming.
+- Added a Collector # field to the public catalog Search page for narrowing Scryfall searches to exact collector numbers.
+- Added a partial-container state on card detail pages for cards where some copies are stored and some are still unassigned.
+
+### Changed
+- Bumped the app version and user agent to `0.4.5 beta`.
+- Updated card detail container status icons to distinguish no storage, partial storage, and fully stored cards.
+- Updated mixed container-status modals to show stored versus owned counts and provide an Add Unstored Copies action.
+- Bumped frontend asset versions for the search, card detail container status, and container allocation import updates.
+
+### Fixed
+- Fixed card detail container UX where any stored copy made the card look fully stored, even when other owned copies were still uncontainered.
+- Fixed exact-printing searches that needed collector numbers such as `205`, `001`, or `60s`.
+- Added backend revalidation on container allocation commit so stale previews cannot write invalid storage assignments.
+
 ## 0.4.1 beta
 
 ### Added

@@ -1,6 +1,6 @@
 # Arcane Ledger
 
-**Version:** 0.4.1 beta
+**Version:** 0.4.5 beta
 
 A Magic: The Gathering collection tracker. It uses Scryfall as the catalog and price source, stores data in SQLite, tracks collection value and purchase/sale history, manages decks, containers, wishlists, reports, store listings, profiles, public sharing, contributor news, and exports your data back to CSV or spreadsheet-friendly formats.
 
@@ -9,6 +9,7 @@ A Magic: The Gathering collection tracker. It uses Scryfall as the catalog and p
 - Track owned cards by exact printing, variant, condition, quantity, purchase price, current market value, and ledger history.
 - Build decks from owned or wanted cards, share public deck pages, and browse public decks from other users.
 - Organize physical storage with containers, capacity tracking, and per-card allocations by variant and condition.
+- Bulk import container allocations from CSV or JSON with validation for card ownership, variant, condition, available uncontainered quantity, and container capacity.
 - Build wishlists, favorites, store listings, profile posts, and public comments around cards and decks.
 - Share cards, decks, sets, containers, wishlists, and favorites from one clean modal with copy-link and email options.
 - Publish and share contributor-written News articles with drafts, Markdown editing, scheduled publishing, public reading/search, copy-link sharing, and email sharing.
