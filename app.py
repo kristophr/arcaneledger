@@ -12726,9 +12726,9 @@ def build_collection_report(conn, user_id, payload):
     filters = payload.get("filters") or {}
     fields = selected_report_fields(payload)
     price_expr = current_price_sql("c")
-    total_paid_expr = "COALESCE(purchase.total_paid, COALESCE(col.quantity, 0) * COALESCE(col.paid_price, 0), 0)"
-    where = ["col.user_id = ?", "col.quantity > 0"]
-    params = [user_id]
+    total_paid_expr = "COALESCE(inv.total_paid, 0)"
+    where = ["COALESCE(inv.quantity, 0) > 0"]
+    params = []
     search = str(filters.get("search") or "").strip()
     if search:
         like = f"%{search.lower()}%"
@@ -12757,25 +12757,25 @@ def build_collection_report(conn, user_id, payload):
             params.extend([like, like])
     variant = str(filters.get("variant") or "").strip()
     if variant:
-        where.append("lower(COALESCE(col.variant, 'Normal')) = lower(?)")
+        where.append("lower(inv.variant) = lower(?)")
         params.append(variant)
     condition = str(filters.get("condition") or "").strip()
     if condition:
-        where.append("lower(COALESCE(col.card_condition, ?)) = lower(?)")
-        params.extend([DEFAULT_CARD_CONDITION, condition])
+        where.append("lower(inv.condition) = lower(?)")
+        params.append(condition)
     try:
         min_quantity = int(filters.get("min_quantity") or 0)
     except (TypeError, ValueError):
         min_quantity = 0
     if min_quantity > 0:
-        where.append("COALESCE(col.quantity, 0) >= ?")
+        where.append("COALESCE(inv.quantity, 0) >= ?")
         params.append(min_quantity)
     try:
         max_quantity = int(filters.get("max_quantity") or 0)
     except (TypeError, ValueError):
         max_quantity = 0
     if max_quantity > 0:
-        where.append("COALESCE(col.quantity, 0) <= ?")
+        where.append("COALESCE(inv.quantity, 0) <= ?")
         params.append(max_quantity)
     if filters.get("favorites_only"):
         where.append("COALESCE(meta.favorite, 0) = 1")
@@ -12783,33 +12783,38 @@ def build_collection_report(conn, user_id, payload):
         where.append("COALESCE(sale.for_sale_quantity, 0) > 0")
     rows = conn.execute(
         f"""
-        WITH purchase AS (
-            SELECT card_id,
+        WITH inventory AS (
+            SELECT user_id,
+                   card_id,
                    COALESCE(NULLIF(variant, ''), 'Normal') AS variant,
+                   COALESCE(NULLIF(card_condition, ''), ?) AS condition,
                    SUM(COALESCE(total_price, 0)) AS total_paid,
-                   SUM(COALESCE(quantity, 0)) AS purchase_quantity,
+                   SUM(COALESCE(quantity, 0)) AS quantity,
                    MIN(purchase_date) AS first_obtained
             FROM card_purchases
             WHERE user_id = ?
-            GROUP BY card_id, COALESCE(NULLIF(variant, ''), 'Normal')
+              AND COALESCE(quantity, 0) > 0
+            GROUP BY user_id, card_id, COALESCE(NULLIF(variant, ''), 'Normal'), COALESCE(NULLIF(card_condition, ''), ?)
         ),
         sale AS (
             SELECT card_id,
                    COALESCE(NULLIF(variant, ''), 'Normal') AS variant,
+                   COALESCE(NULLIF(card_condition, ''), ?) AS condition,
                    SUM(COALESCE(quantity, 0)) AS for_sale_quantity,
                    AVG(COALESCE(asking_price, 0)) AS asking_price
             FROM card_sales
             WHERE user_id = ?
-            GROUP BY card_id, COALESCE(NULLIF(variant, ''), 'Normal')
+            GROUP BY card_id, COALESCE(NULLIF(variant, ''), 'Normal'), COALESCE(NULLIF(card_condition, ''), ?)
         ),
         container_totals AS (
             SELECT cc.card_id,
                    COALESCE(NULLIF(cc.variant, ''), 'Normal') AS variant,
+                   COALESCE(NULLIF(cc.card_condition, ''), ?) AS condition,
                    SUM(COALESCE(cc.quantity, 0)) AS container_quantity
             FROM container_cards cc
             JOIN containers con ON con.id = cc.container_id
             WHERE con.user_id = ?
-            GROUP BY cc.card_id, COALESCE(NULLIF(cc.variant, ''), 'Normal')
+            GROUP BY cc.card_id, COALESCE(NULLIF(cc.variant, ''), 'Normal'), COALESCE(NULLIF(cc.card_condition, ''), ?)
         ),
         deck_totals AS (
             SELECT dc.card_id,
@@ -12820,46 +12825,52 @@ def build_collection_report(conn, user_id, payload):
             WHERE d.user_id = ?
             GROUP BY dc.card_id, COALESCE(NULLIF(dc.variant, ''), 'Normal')
         )
-        SELECT col.card_id AS card_id,
+        SELECT inv.card_id AS card_id,
                COALESCE(NULLIF(c.flavor_name, ''), c.name) AS card_name,
                c.name AS rules_name,
                COALESCE(c.flavor_name, '') AS flavor_name,
                c.set_name,
                c.set_code,
                c.collector_number,
-               COALESCE(col.variant, 'Normal') AS variant,
-               COALESCE(col.card_condition, ?) AS condition,
-               COALESCE(col.quantity, 0) AS quantity,
+               inv.variant AS variant,
+               inv.condition AS condition,
+               COALESCE(inv.quantity, 0) AS quantity,
                ({price_expr}) AS market_price,
-               COALESCE(col.quantity, 0) * ({price_expr}) AS total_value,
+               COALESCE(inv.quantity, 0) * ({price_expr}) AS total_value,
                CASE
-                   WHEN COALESCE(purchase.purchase_quantity, 0) > 0 THEN COALESCE(purchase.total_paid, 0) / purchase.purchase_quantity
+                   WHEN COALESCE(inv.quantity, 0) > 0 THEN COALESCE(inv.total_paid, 0) / inv.quantity
                    ELSE COALESCE(col.paid_price, 0)
                END AS average_paid,
                {total_paid_expr} AS total_paid,
-               (COALESCE(col.quantity, 0) * ({price_expr})) - ({total_paid_expr}) AS delta,
+               (COALESCE(inv.quantity, 0) * ({price_expr})) - ({total_paid_expr}) AS delta,
                COALESCE(c.type_line, '') AS type_line,
                COALESCE(c.colors, '') AS colors,
                COALESCE(c.rarity, '') AS rarity,
-               COALESCE(purchase.first_obtained, col.acquired_date, '') AS first_obtained,
+               COALESCE(inv.first_obtained, col.acquired_date, '') AS first_obtained,
                COALESCE(meta.favorite, 0) AS favorite,
                COALESCE(sale.for_sale_quantity, 0) AS for_sale_quantity,
                COALESCE(sale.asking_price, 0) AS asking_price,
                COALESCE(container_totals.container_quantity, 0) AS container_quantity,
                COALESCE(deck_totals.deck_quantity, 0) AS deck_quantity,
                COALESCE(col.notes, '') AS notes
-        FROM collection col
-        JOIN cards c ON c.scryfall_id = col.card_id
-        LEFT JOIN card_meta meta ON meta.user_id = col.user_id AND meta.card_id = col.card_id AND meta.variant = col.variant
-        LEFT JOIN purchase ON purchase.card_id = col.card_id AND purchase.variant = COALESCE(col.variant, 'Normal')
-        LEFT JOIN sale ON sale.card_id = col.card_id AND sale.variant = COALESCE(col.variant, 'Normal')
-        LEFT JOIN container_totals ON container_totals.card_id = col.card_id AND container_totals.variant = COALESCE(col.variant, 'Normal')
-        LEFT JOIN deck_totals ON deck_totals.card_id = col.card_id AND deck_totals.variant = COALESCE(col.variant, 'Normal')
+        FROM inventory inv
+        JOIN cards c ON c.scryfall_id = inv.card_id
+        LEFT JOIN collection col ON col.user_id = inv.user_id AND col.card_id = inv.card_id AND COALESCE(col.variant, 'Normal') = inv.variant
+        LEFT JOIN card_meta meta ON meta.user_id = inv.user_id AND meta.card_id = inv.card_id AND meta.variant = inv.variant
+        LEFT JOIN sale ON sale.card_id = inv.card_id AND sale.variant = inv.variant AND sale.condition = inv.condition
+        LEFT JOIN container_totals ON container_totals.card_id = inv.card_id AND container_totals.variant = inv.variant AND container_totals.condition = inv.condition
+        LEFT JOIN deck_totals ON deck_totals.card_id = inv.card_id AND deck_totals.variant = inv.variant
         WHERE {" AND ".join(where)}
-        ORDER BY total_value DESC, c.name COLLATE NOCASE, col.variant COLLATE NOCASE
+        ORDER BY total_value DESC, c.name COLLATE NOCASE, inv.variant COLLATE NOCASE, inv.condition COLLATE NOCASE
         LIMIT 1000
         """,
-        (user_id, user_id, user_id, user_id, DEFAULT_CARD_CONDITION, *params),
+        (
+            DEFAULT_CARD_CONDITION, user_id, DEFAULT_CARD_CONDITION,
+            DEFAULT_CARD_CONDITION, user_id, DEFAULT_CARD_CONDITION,
+            DEFAULT_CARD_CONDITION, user_id, DEFAULT_CARD_CONDITION,
+            user_id,
+            *params,
+        ),
     ).fetchall()
     return {
         "fields": fields,
