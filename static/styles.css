@@ -3787,6 +3787,13 @@ body:not(.is-authenticated) .nav-bottom {
   resize: vertical;
 }
 
+.profile-picture-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: -6px;
+}
+
 .profile-image-preview {
   display: flex;
   gap: 12px;

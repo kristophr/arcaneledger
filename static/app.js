@@ -697,6 +697,8 @@ const els = {
   profileForm: document.querySelector("#profileForm"),
   profileImageInput: document.querySelector("#profileImageInput"),
   profileImagePreview: document.querySelector("#profileImagePreview"),
+  useGravatarButton: document.querySelector("#useGravatarButton"),
+  removeProfileImageButton: document.querySelector("#removeProfileImageButton"),
   profileStatus: document.querySelector("#profileStatus"),
   closeProfileButton: document.querySelector("#closeProfileButton"),
   cancelProfileButton: document.querySelector("#cancelProfileButton"),
@@ -6735,12 +6737,15 @@ function renderProfileImagePreview(dataUrl) {
     els.profileImagePreview.innerHTML = '<span>No profile picture selected.</span>';
     return;
   }
-  els.profileImagePreview.innerHTML = `<img src="${escapeHtml(dataUrl)}" alt="Profile picture preview"><button class="secondary-button compact-button" type="button">Remove</button>`;
-  els.profileImagePreview.querySelector("button")?.addEventListener("click", () => {
-    if (els.profileForm) els.profileForm.profile_image.value = "";
-    if (els.profileImageInput) els.profileImageInput.value = "";
-    renderProfileImagePreview("");
-  });
+  const sourceLabel = String(dataUrl).includes("gravatar.com/avatar/") ? "Using Gravatar" : "Uploaded profile picture";
+  els.profileImagePreview.innerHTML = `<img src="${escapeHtml(dataUrl)}" alt="Profile picture preview"><span>${escapeHtml(sourceLabel)}</span>`;
+}
+
+function setProfileImageValue(value) {
+  if (!els.profileForm) return;
+  els.profileForm.profile_image.value = value || "";
+  if (els.profileImageInput) els.profileImageInput.value = "";
+  renderProfileImagePreview(value || "");
 }
 
 function openProfileModal() {
@@ -12802,13 +12807,25 @@ function wireEvents() {
   els.profileImageInput?.addEventListener("change", async () => {
     try {
       const dataUrl = await readProfileImageFile(els.profileImageInput.files?.[0]);
-      els.profileForm.profile_image.value = dataUrl;
-      renderProfileImagePreview(dataUrl);
+      setProfileImageValue(dataUrl);
       setStatus("", "", els.profileStatus);
     } catch (error) {
       els.profileImageInput.value = "";
       setStatus(error.message, "error", els.profileStatus);
     }
+  });
+  els.useGravatarButton?.addEventListener("click", () => {
+    const gravatarUrl = state.user?.gravatar_url || "";
+    if (!gravatarUrl) {
+      setStatus("Your account email could not be used for Gravatar.", "error", els.profileStatus);
+      return;
+    }
+    setProfileImageValue(gravatarUrl);
+    setStatus("Gravatar selected. Save Profile to keep it.", "success", els.profileStatus);
+  });
+  els.removeProfileImageButton?.addEventListener("click", () => {
+    setProfileImageValue("");
+    setStatus("Profile picture removed. Save Profile to keep it removed.", "", els.profileStatus);
   });
   els.profileForm?.addEventListener("submit", async (event) => {
     event.preventDefault();

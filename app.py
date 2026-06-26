@@ -545,11 +545,21 @@ def clean_profile_image(value):
     text = (value or "").strip()
     if not text:
         return ""
+    if re.match(r"^https://(?:www\.)?gravatar\.com/avatar/[a-f0-9]{32}(?:\?[A-Za-z0-9._~=&%-]*)?$", text, flags=re.I):
+        return text[:500]
     if len(text) > 900_000:
         raise ValueError("Profile picture is too large. Use an image under about 650 KB.")
     if not re.match(r"^data:image/(png|jpe?g|webp|gif);base64,[A-Za-z0-9+/=]+$", text, flags=re.I):
         raise ValueError("Profile picture must be a PNG, JPG, WebP, or GIF image.")
     return text
+
+
+def gravatar_url(email, size=256):
+    normalized = normalize_email(email)
+    if not normalized:
+        return ""
+    digest = hashlib.md5(normalized.encode("utf-8"), usedforsecurity=False).hexdigest()
+    return f"https://www.gravatar.com/avatar/{digest}?s={int(size)}&d=identicon&r=g"
 
 
 def hash_password(password, salt=None, iterations=260000):
@@ -2998,6 +3008,7 @@ def user_payload(row):
         "contact_threads": row["contact_threads"] if "contact_threads" in row.keys() else "",
         "about_me": row["about_me"] if "about_me" in row.keys() else "",
         "profile_image": row["profile_image"] if "profile_image" in row.keys() else "",
+        "gravatar_url": gravatar_url(row["email"]),
         "default_purchase_price": money(row["default_purchase_price"] if "default_purchase_price" in row.keys() else 0.01, fallback=0.01),
         "default_sell_price": money(row["default_sell_price"] if "default_sell_price" in row.keys() else 0, fallback=0),
         "profile_slug": row["profile_slug"] if "profile_slug" in row.keys() else profile_slug(row["name"] if "name" in row.keys() else row["email"]),
