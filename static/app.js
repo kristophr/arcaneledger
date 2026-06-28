@@ -621,6 +621,7 @@ const els = {
   confirmAddCardToContainerButton: document.querySelector("#confirmAddCardToContainerButton"),
   containerDetailStats: document.querySelector("#containerDetailStats"),
   containerDetailCards: document.querySelector("#containerDetailCards"),
+  exportContainerJsonButton: document.querySelector("#exportContainerJsonButton"),
   addCardToContainerButton: document.querySelector("#addCardToContainerButton"),
   editContainerButton: document.querySelector("#editContainerButton"),
   shareContainerButton: document.querySelector("#shareContainerButton"),
@@ -6032,6 +6033,7 @@ function deckJsonPayload(deck, includeNotes = false) {
 
 function openDeckJsonModal(deck, includeNotes = false) {
   if (!deck) return;
+  els.deckJsonOverlay.classList.remove("modal-overlay-stacked");
   els.deckJsonTitle.textContent = includeNotes ? "Export Full Deck" : "Export Deck List";
   els.deckJsonText.value = JSON.stringify(deckJsonPayload(deck, includeNotes), null, 2);
   setStatus("", "", els.deckJsonStatus);
@@ -6041,8 +6043,56 @@ function openDeckJsonModal(deck, includeNotes = false) {
   els.deckJsonText.select();
 }
 
+function containerJsonCard(card) {
+  return {
+    card_id: card.scryfall_id || card.card_id || "",
+    name: cardTitle(card),
+    set_code: card.set_code || "",
+    set_name: card.set_name || "",
+    collector_number: card.collector_number || "",
+    variant: card.variant || "Normal",
+    condition: conditionText(card),
+    quantity: Number(card.stored_quantity || card.quantity || 0),
+    type_line: card.type_line || "",
+    colors: card.colors || "",
+    image_small: card.image_small || "",
+    image_normal: card.image_normal || "",
+    scryfall_uri: card.scryfall_uri || "",
+  };
+}
+
+function containerJsonPayload(container) {
+  return {
+    format: "arcaneledger.container",
+    version: 1,
+    exported_at: new Date().toISOString(),
+    id: container.id || "",
+    share_id: container.share_id || "",
+    name: container.name || "Container",
+    storage_type: container.storage_type || "other",
+    capacity: Number(container.capacity || 0),
+    strict_unique: Boolean(container.strict_unique),
+    location: container.location || "",
+    notes: container.notes || "",
+    cards: (container.cards || []).map(containerJsonCard),
+  };
+}
+
+function openContainerJsonModal(container = state.activeContainer) {
+  if (!container) return;
+  els.deckJsonOverlay.classList.add("modal-overlay-stacked");
+  els.deckJsonTitle.textContent = "Export Container";
+  els.deckJsonText.value = JSON.stringify(containerJsonPayload(container), null, 2);
+  setStatus("", "", els.deckJsonStatus);
+  els.deckJsonOverlay.hidden = false;
+  document.body.classList.add("modal-open");
+  els.deckJsonText.focus();
+  els.deckJsonText.select();
+}
+
 function closeDeckJsonModal() {
   els.deckJsonOverlay.hidden = true;
+  els.deckJsonOverlay.classList.remove("modal-overlay-stacked");
   document.body.classList.remove("modal-open");
   els.deckJsonText.value = "";
   setStatus("", "", els.deckJsonStatus);
@@ -6051,13 +6101,14 @@ function closeDeckJsonModal() {
 async function copyDeckJson() {
   const text = els.deckJsonText.value;
   if (!text) return;
+  const label = els.deckJsonTitle?.textContent?.includes("Container") ? "Container JSON" : "Deck JSON";
   try {
     await navigator.clipboard.writeText(text);
-    setStatus("Deck JSON copied.", "success", els.deckJsonStatus);
+    setStatus(`${label} copied.`, "success", els.deckJsonStatus);
   } catch {
     els.deckJsonText.focus();
     els.deckJsonText.select();
-    setStatus("Deck JSON selected.", "", els.deckJsonStatus);
+    setStatus(`${label} selected.`, "", els.deckJsonStatus);
   }
 }
 
@@ -7738,7 +7789,7 @@ function renderContainers(containers) {
     item.setAttribute("aria-label", `Open ${container.name}`);
     item.innerHTML = `
       <div>
-        <p class="eyebrow">${escapeHtml(containerTypeLabel(container.storage_type))}</p>
+        <p class="eyebrow">${escapeHtml(containerTypeLabel(container.storage_type))}${container.strict_unique ? " - Strict" : ""}</p>
         <h3>${containerIconHtml(container.storage_type)}<span>${escapeHtml(container.name)}</span></h3>
         ${container.location ? `<span class="container-location">${escapeHtml(container.location)}</span>` : ""}
       </div>
@@ -7761,7 +7812,7 @@ function renderContainerDetail(container) {
   const fill = capacity > 0 ? Math.min(100, Number(container.fill_percent || ((stored / capacity) * 100))) : 0;
   state.activeContainer = container;
   els.containerDetailTitle.textContent = container.name || "Container";
-  const metaText = [containerTypeLabel(container.storage_type), container.location, container.notes].filter(Boolean).join(" - ");
+  const metaText = [containerTypeLabel(container.storage_type), container.strict_unique ? "Strict: 1 per set/collector #" : "", container.location, container.notes].filter(Boolean).join(" - ");
   const containerId = String(container.id || "");
   els.containerDetailMeta.innerHTML = `
     ${containerId ? `<button class="copy-id-chip" type="button" title="Copy container id">Container ID ${escapeHtml(containerId)}</button>` : ""}
@@ -8935,6 +8986,7 @@ function openAddContainerModal() {
   els.addContainerForm.id.value = "";
   els.addContainerForm.storage_type.value = "other";
   els.addContainerForm.capacity.value = "";
+  els.addContainerForm.strict_unique.checked = false;
   els.addContainerEyebrow.textContent = "New container";
   els.addContainerTitle.textContent = "Add Container";
   els.saveContainerButton.textContent = "Add";
@@ -8955,6 +9007,7 @@ function openEditContainerModal(container) {
   els.addContainerForm.name.value = container.name || "";
   els.addContainerForm.storage_type.value = containerType(container.storage_type);
   els.addContainerForm.capacity.value = container.capacity || "";
+  els.addContainerForm.strict_unique.checked = Boolean(container.strict_unique);
   els.addContainerForm.location.value = container.location || "";
   els.addContainerForm.notes.value = container.notes || "";
   els.addContainerEyebrow.textContent = "Edit container";
@@ -12369,6 +12422,7 @@ function wireEvents() {
     }
   });
   els.closeContainerDetailButton.addEventListener("click", closeContainerDetailModal);
+  els.exportContainerJsonButton?.addEventListener("click", () => openContainerJsonModal());
   els.addCardToContainerButton?.addEventListener("click", () => toggleContainerCardSearch());
   els.containerCardSearchInput?.addEventListener("input", () => {
     clearTimeout(state.containerCardSearchTimer);

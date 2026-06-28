@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Arcane Ledger</title>
-    <link rel="stylesheet" href="/styles.css?v=185">
+    <link rel="stylesheet" href="/styles.css?v=186">
   </head>
   <body>
     <header class="topbar">
@@ -2075,6 +2075,13 @@
             Capacity
             <input name="capacity" type="number" min="1" step="1" required placeholder="Cards this container holds">
           </label>
+          <label class="container-strict-toggle">
+            <input name="strict_unique" type="checkbox" value="1">
+            <span>
+              <strong>Enable Strict</strong>
+              <small>if enabled - only 1 card is allowed per set in this container</small>
+            </span>
+          </label>
           <label>
             Container Location
             <input name="location" type="text" maxlength="30" placeholder="30 characters max">
@@ -2191,6 +2198,7 @@
             <span id="containerDetailMeta" class="modal-subtitle"></span>
           </div>
           <div class="deck-modal-actions">
+            <button id="exportContainerJsonButton" class="share-button" type="button" aria-label="Export container JSON" title="Export JSON"><span aria-hidden="true">{}</span></button>
             <button id="addCardToContainerButton" class="share-button" type="button" aria-label="Add card to container" title="Add card"><span aria-hidden="true">+</span></button>
             <button id="shareContainerButton" class="share-button" type="button" aria-label="Share container" title="Share container">&#8599;</button>
             <button id="closeContainerDetailButton" class="share-button" type="button" aria-label="Close container dialog" title="Close">x</button>
@@ -2507,6 +2515,6 @@
       </section>
     </div>
 
-    <script src="/app.js?v=208"></script>
+    <script src="/app.js?v=209"></script>
   </body>
 </html>

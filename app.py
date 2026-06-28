@@ -1925,6 +1925,7 @@ def init_db(conn):
             name TEXT NOT NULL,
             storage_type TEXT NOT NULL DEFAULT 'other',
             capacity INTEGER NOT NULL DEFAULT 0,
+            strict_unique INTEGER NOT NULL DEFAULT 0,
             location TEXT NOT NULL DEFAULT '',
             notes TEXT NOT NULL DEFAULT '',
             created_at TEXT NOT NULL,
@@ -2174,6 +2175,8 @@ def migrate_containers_schema(conn):
         conn.execute("ALTER TABLE containers ADD COLUMN storage_type TEXT NOT NULL DEFAULT 'other'")
     if "capacity" not in columns:
         conn.execute("ALTER TABLE containers ADD COLUMN capacity INTEGER NOT NULL DEFAULT 0")
+    if "strict_unique" not in columns:
+        conn.execute("ALTER TABLE containers ADD COLUMN strict_unique INTEGER NOT NULL DEFAULT 0")
     placeholders = ", ".join("?" for _ in CONTAINER_TYPES)
     conn.execute(
         f"""
@@ -2190,6 +2193,13 @@ def migrate_containers_schema(conn):
         UPDATE containers
         SET capacity = 0
         WHERE capacity IS NULL OR capacity < 0
+        """
+    )
+    conn.execute(
+        """
+        UPDATE containers
+        SET strict_unique = 0
+        WHERE strict_unique IS NULL OR strict_unique NOT IN (0, 1)
         """
     )
     card_columns = table_columns(conn, "container_cards")
@@ -6459,6 +6469,7 @@ def validate_container_allocation_entries(conn, user_id, entries):
     container_rows = conn.execute(
         """
         SELECT ct.id, ct.name, COALESCE(ct.storage_type, 'other') AS storage_type,
+               COALESCE(ct.strict_unique, 0) AS strict_unique,
                COALESCE(ct.capacity, 0) AS capacity,
                COALESCE(SUM(cc.quantity), 0) AS stored_quantity
         FROM containers ct
@@ -6471,6 +6482,7 @@ def validate_container_allocation_entries(conn, user_id, entries):
     containers = {int(row["id"]): dict(row) for row in container_rows}
     requested_by_bucket = {}
     requested_by_container = {}
+    requested_by_strict_slot = {}
     preview_rows = []
     valid_count = 0
     valid_quantity = 0
@@ -6530,11 +6542,27 @@ def validate_container_allocation_entries(conn, user_id, entries):
                     errors.append(f"{container['name']} only has space for {remaining_before} more card/copy.")
             else:
                 warnings.append("Container capacity is not set, so space was not limited.")
+            if card and int(container.get("strict_unique") or 0):
+                existing_strict_quantity, strict_card = container_strict_existing_quantity(conn, container_id, card_id)
+                strict_key = (container_id, strict_card["set_code"] if strict_card else "", strict_card["collector_number"] if strict_card else "")
+                already_requested_strict = requested_by_strict_slot.get(strict_key, 0)
+                strict_remaining = max(0, 1 - existing_strict_quantity - already_requested_strict)
+                if quantity > strict_remaining:
+                    errors.append(
+                        f"{container['name']} has Strict enabled. Only {strict_remaining} more card/copy is allowed for {container_strict_slot_label(strict_card)}."
+                    )
 
         checked = bool(entry.get("checked", True)) and not errors
         if checked:
             requested_by_bucket[(card_id, variant, condition)] = requested_by_bucket.get((card_id, variant, condition), 0) + quantity
             requested_by_container[container_id] = requested_by_container.get(container_id, 0) + quantity
+            if container and int(container.get("strict_unique") or 0) and card:
+                strict_quantity_row = conn.execute(
+                    "SELECT set_code, collector_number FROM cards WHERE scryfall_id = ?",
+                    (card_id,),
+                ).fetchone()
+                strict_key = (container_id, strict_quantity_row["set_code"], strict_quantity_row["collector_number"])
+                requested_by_strict_slot[strict_key] = requested_by_strict_slot.get(strict_key, 0) + quantity
             valid_count += 1
             valid_quantity += quantity
 
@@ -6555,6 +6583,7 @@ def validate_container_allocation_entries(conn, user_id, entries):
                 "id": container_id,
                 "name": container["name"],
                 "storage_type": container["storage_type"],
+                "strict_unique": bool(container["strict_unique"]),
                 "capacity": int(container["capacity"] or 0),
                 "stored_quantity": int(container["stored_quantity"] or 0),
             } if container else None,
@@ -8532,6 +8561,7 @@ def list_containers(conn, user_id):
     rows = conn.execute(
         f"""
         SELECT ct.id, ct.share_id, ct.name, COALESCE(ct.storage_type, 'other') AS storage_type,
+               COALESCE(ct.strict_unique, 0) AS strict_unique,
                COALESCE(ct.capacity, 0) AS capacity,
                ct.location, ct.notes, ct.created_at, ct.updated_at,
                COUNT(cc.card_id) AS card_count,
@@ -8615,6 +8645,107 @@ def clean_container_capacity(value):
     return capacity
 
 
+def container_strict_slot_label(row):
+    if not row:
+        return "that collector number"
+    return f"{(row['set_code'] or '').upper()} #{row['collector_number'] or '?'}"
+
+
+def validate_container_strict_existing(conn, container_id, container_name):
+    duplicate = conn.execute(
+        """
+        SELECT c.set_code, c.collector_number, COALESCE(SUM(cc.quantity), 0) AS quantity
+        FROM container_cards cc
+        JOIN cards c ON c.scryfall_id = cc.card_id
+        WHERE cc.container_id = ?
+        GROUP BY c.set_code, c.collector_number
+        HAVING COALESCE(SUM(cc.quantity), 0) > 1
+        ORDER BY c.set_code COLLATE NOCASE, c.collector_number COLLATE NOCASE
+        LIMIT 1
+        """,
+        (container_id,),
+    ).fetchone()
+    if duplicate:
+        raise ValueError(
+            f"{container_name} already has {int(duplicate['quantity'] or 0)} cards for {container_strict_slot_label(duplicate)}. "
+            "Remove extras before enabling Strict."
+        )
+
+
+def validate_container_strict_additions(conn, container_id, additions, exclude_card_id=None):
+    additions = [item for item in additions or [] if int(item.get("quantity") or 0) > 0 and item.get("card_id")]
+    if not additions:
+        return
+    container = conn.execute(
+        "SELECT id, name, COALESCE(strict_unique, 0) AS strict_unique FROM containers WHERE id = ?",
+        (container_id,),
+    ).fetchone()
+    if not container or not int(container["strict_unique"] or 0):
+        return
+    existing_params = [container_id]
+    exclude_sql = ""
+    if exclude_card_id:
+        exclude_sql = " AND cc.card_id != ?"
+        existing_params.append(exclude_card_id)
+    existing_rows = conn.execute(
+        f"""
+        SELECT c.set_code, c.collector_number, COALESCE(SUM(cc.quantity), 0) AS quantity
+        FROM container_cards cc
+        JOIN cards c ON c.scryfall_id = cc.card_id
+        WHERE cc.container_id = ?{exclude_sql}
+        GROUP BY c.set_code, c.collector_number
+        """,
+        existing_params,
+    ).fetchall()
+    slot_counts = {
+        (row["set_code"] or "", row["collector_number"] or ""): int(row["quantity"] or 0)
+        for row in existing_rows
+    }
+    card_ids = sorted({item["card_id"] for item in additions})
+    placeholders = ", ".join("?" for _ in card_ids)
+    card_rows = conn.execute(
+        f"""
+        SELECT scryfall_id, set_code, collector_number
+        FROM cards
+        WHERE scryfall_id IN ({placeholders})
+        """,
+        card_ids,
+    ).fetchall()
+    cards = {row["scryfall_id"]: row for row in card_rows}
+    for item in additions:
+        card = cards.get(item["card_id"])
+        if not card:
+            continue
+        key = (card["set_code"] or "", card["collector_number"] or "")
+        slot_counts[key] = slot_counts.get(key, 0) + int(item.get("quantity") or 0)
+        if slot_counts[key] > 1:
+            raise ValueError(
+                f"{container['name']} has Strict enabled. Only 1 card is allowed for {container_strict_slot_label(card)}."
+            )
+
+
+def container_strict_existing_quantity(conn, container_id, card_id):
+    row = conn.execute(
+        """
+        SELECT c.set_code, c.collector_number,
+               (
+                 SELECT COALESCE(SUM(cc.quantity), 0)
+                 FROM container_cards cc
+                 JOIN cards existing ON existing.scryfall_id = cc.card_id
+                 WHERE cc.container_id = ?
+                   AND existing.set_code = c.set_code
+                   AND existing.collector_number = c.collector_number
+               ) AS quantity
+        FROM cards c
+        WHERE c.scryfall_id = ?
+        """,
+        (container_id, card_id),
+    ).fetchone()
+    if not row:
+        return 0, None
+    return int(row["quantity"] or 0), row
+
+
 def create_container(conn, user_id, payload):
     name = validate_user_content_name(payload.get("name"), "Container name", 30)
     if name_exists(conn, "containers", name, user_id):
@@ -8622,6 +8753,7 @@ def create_container(conn, user_id, payload):
     enforce_role_limit(conn, user_id, "containers", "containers", "containers")
     storage_type = clean_container_type(payload.get("storage_type"))
     capacity = clean_container_capacity(payload.get("capacity"))
+    strict_unique = bool_int(payload.get("strict_unique"))
     location = clean_limited_text(payload, "location", "Container location", 30)
     notes = (payload.get("notes") or "").strip()
     if len(notes) > 500:
@@ -8630,10 +8762,10 @@ def create_container(conn, user_id, payload):
     share_id = new_container_share_id(conn)
     cursor = conn.execute(
         """
-        INSERT INTO containers (user_id, share_id, name, storage_type, capacity, location, notes, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO containers (user_id, share_id, name, storage_type, capacity, strict_unique, location, notes, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (user_id, share_id, name, storage_type, capacity, location, notes, timestamp, timestamp),
+        (user_id, share_id, name, storage_type, capacity, strict_unique, location, notes, timestamp, timestamp),
     )
     conn.commit()
     return {
@@ -8644,6 +8776,7 @@ def create_container(conn, user_id, payload):
             "name": name,
             "storage_type": storage_type,
             "capacity": capacity,
+            "strict_unique": bool(strict_unique),
             "location": location,
             "notes": notes,
             "created_at": timestamp,
@@ -8666,6 +8799,7 @@ def update_container(conn, user_id, container_id, payload):
         raise ValueError("Container name must be unique across your decks, containers, and wishlists.")
     storage_type = clean_container_type(payload.get("storage_type"))
     capacity = clean_container_capacity(payload.get("capacity"))
+    strict_unique = bool_int(payload.get("strict_unique"))
     stored = conn.execute(
         """
         SELECT COALESCE(SUM(quantity), 0) AS stored_quantity
@@ -8677,6 +8811,8 @@ def update_container(conn, user_id, container_id, payload):
     stored_quantity = int(stored["stored_quantity"] or 0) if stored else 0
     if capacity < stored_quantity:
         raise ValueError(f"Container capacity cannot be lower than the {stored_quantity} cards currently stored.")
+    if strict_unique:
+        validate_container_strict_existing(conn, container_id, name)
     location = clean_limited_text(payload, "location", "Container location", 30)
     notes = (payload.get("notes") or "").strip()
     if len(notes) > 500:
@@ -8685,10 +8821,10 @@ def update_container(conn, user_id, container_id, payload):
     conn.execute(
         """
         UPDATE containers
-        SET name = ?, storage_type = ?, capacity = ?, location = ?, notes = ?, updated_at = ?
+        SET name = ?, storage_type = ?, capacity = ?, strict_unique = ?, location = ?, notes = ?, updated_at = ?
         WHERE id = ? AND user_id = ?
         """,
-        (name, storage_type, capacity, location, notes, timestamp, container_id, user_id),
+        (name, storage_type, capacity, strict_unique, location, notes, timestamp, container_id, user_id),
     )
     conn.commit()
     container = container_detail(conn, user_id, container_id)
@@ -8731,6 +8867,7 @@ def container_detail(conn, user_id, container_id):
     container = conn.execute(
         """
         SELECT c.id, c.share_id, c.name, COALESCE(c.storage_type, 'other') AS storage_type,
+               COALESCE(c.strict_unique, 0) AS strict_unique,
                COALESCE(c.capacity, 0) AS capacity,
                c.location, c.notes, c.created_at, c.updated_at,
                COUNT(cc.card_id) AS card_count,
@@ -8768,6 +8905,7 @@ def add_cards_to_container(conn, user_id, container_id, payload):
     container = conn.execute(
         """
         SELECT ct.id, ct.name, COALESCE(ct.capacity, 0) AS capacity,
+               COALESCE(ct.strict_unique, 0) AS strict_unique,
                COALESCE(SUM(cc.quantity), 0) AS stored_quantity
         FROM containers ct
         LEFT JOIN container_cards cc ON cc.container_id = ct.id
@@ -8786,6 +8924,13 @@ def add_cards_to_container(conn, user_id, container_id, payload):
     added = 0
     capacity = int(container["capacity"] or 0)
     remaining_capacity = capacity - int(container["stored_quantity"] or 0) if capacity > 0 else None
+    validate_container_strict_additions(conn, container_id, [
+        {
+            "card_id": item.get("card_id") or item.get("scryfall_id"),
+            "quantity": max(0, int(item.get("quantity") or 0)),
+        }
+        for item in cards
+    ])
     for item in cards:
         card_id = item.get("card_id") or item.get("scryfall_id")
         variant = item.get("variant") or "Normal"
@@ -8910,6 +9055,17 @@ def update_card_container_allocations(conn, user_id, card_id, payload):
         available_space = max(0, limit["capacity"] - limit["stored_other"])
         if quantity > available_space:
             raise ValueError(f"{limit['name']} only has space for {available_space} more card/copy.")
+    for container_id in {item["container_id"] for item in normalized}:
+        validate_container_strict_additions(
+            conn,
+            container_id,
+            [
+                {"card_id": card_id, "quantity": item["quantity"]}
+                for item in normalized
+                if item["container_id"] == container_id
+            ],
+            exclude_card_id=card_id,
+        )
 
     previous_rows = conn.execute(
         """

@@ -3794,6 +3794,36 @@ body:not(.is-authenticated) .nav-bottom {
   margin-top: -6px;
 }
 
+.container-strict-toggle {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: var(--detail-bg);
+  cursor: pointer;
+}
+
+.container-strict-toggle input {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  accent-color: var(--accent);
+}
+
+.container-strict-toggle strong,
+.container-strict-toggle small {
+  display: block;
+}
+
+.container-strict-toggle small {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
 .profile-image-preview {
   display: flex;
   gap: 12px;
