@@ -8712,7 +8712,15 @@ def container_cards(conn, user_id, container_id):
         JOIN cards c ON c.scryfall_id = cc.card_id
         LEFT JOIN collection col ON col.user_id = ? AND col.card_id = cc.card_id AND col.variant = cc.variant
         WHERE cc.container_id = ?
-        ORDER BY c.name COLLATE NOCASE, cc.variant, cc.card_condition
+        ORDER BY c.set_code COLLATE NOCASE,
+                 CASE
+                     WHEN c.collector_number GLOB '[0-9]*' THEN CAST(c.collector_number AS INTEGER)
+                     ELSE 999999
+                 END,
+                 c.collector_number COLLATE NOCASE,
+                 c.name COLLATE NOCASE,
+                 cc.variant COLLATE NOCASE,
+                 cc.card_condition COLLATE NOCASE
         """,
         (DEFAULT_CARD_CONDITION, user_id, container_id),
     ).fetchall()
