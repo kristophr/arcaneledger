@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Arcane Ledger</title>
-    <link rel="stylesheet" href="/styles.css?v=186">
+    <link rel="stylesheet" href="/styles.css?v=187">
   </head>
   <body>
     <header class="topbar">
@@ -364,6 +364,7 @@
             </div>
             <div class="export-actions" aria-label="Export collection">
               <a href="/api/export.csv">CSV</a>
+              <a href="/api/export.moxfield.csv">Moxfield</a>
               <a href="/api/export.json">JSON</a>
             </div>
           </div>
@@ -516,10 +517,48 @@
             <p class="eyebrow">Physical storage</p>
             <h2>Containers</h2>
           </div>
-          <button id="addContainerButton" class="primary-button" type="button">Add Container</button>
+          <div class="panel-head-actions">
+            <button id="openContainerAllocationImportButton" class="secondary-button" type="button">Import Allocations</button>
+            <button id="addContainerButton" class="primary-button" type="button">Add Container</button>
+          </div>
         </div>
         <div id="containersStatus" class="status" aria-live="polite"></div>
         <div id="containersGrid" class="decks-grid containers-grid"></div>
+        <div id="containerAllocationImportPanel" class="container-allocation-import import-wizard" hidden>
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">Bulk storage</p>
+              <h3>Container Allocation Import</h3>
+            </div>
+            <span>CSV or JSON</span>
+          </div>
+          <p class="settings-help">Use this when your cards already exist in your collection and you want to bulk assign physical copies into containers. Required fields: <code>card_id</code>, <code>variant</code>, <code>condition</code>, <code>quantity</code>, and <code>container_id</code>.</p>
+          <div class="import-source-grid">
+            <label class="file-import-field">
+              Upload allocation file
+              <input id="containerAllocationImportFile" type="file" accept=".csv,.json,text/csv,application/json">
+            </label>
+            <label>
+              Format
+              <select id="containerAllocationImportFormat">
+                <option value="auto">Auto detect</option>
+                <option value="csv">CSV</option>
+                <option value="json">JSON</option>
+              </select>
+            </label>
+            <label class="container-allocation-import-text">
+              Paste CSV or JSON
+              <textarea id="containerAllocationImportText" rows="7" spellcheck="false" placeholder="card_id,variant,condition,quantity,container_id&#10;1a67a991-1e52-4676-a2e3-2bc7aa943ab3,Normal,Near Mint,25,3"></textarea>
+            </label>
+          </div>
+          <div class="modal-actions import-wizard-actions">
+            <button id="previewContainerAllocationImportButton" class="secondary-button" type="button">Preview Allocation</button>
+            <button id="resetContainerAllocationImportButton" class="secondary-button" type="button">Reset</button>
+            <button id="commitContainerAllocationImportButton" class="primary-button" type="button" disabled>Confirm Allocation</button>
+          </div>
+          <div id="containerAllocationImportStatus" class="status" aria-live="polite"></div>
+          <div id="containerAllocationImportRows" class="container-allocation-import-rows"></div>
+        </div>
       </section>
 
       <section class="missing-band app-page" data-page="missing-list" hidden>
@@ -721,11 +760,19 @@
                 <input id="importWizardFile" type="file" accept=".csv,.json,text/csv,application/json">
               </label>
               <label>
+                Import format
+                <select id="importWizardFormat">
+                  <option value="auto">Auto detect</option>
+                  <option value="arcaneledger">Arcane Ledger CSV / JSON</option>
+                  <option value="moxfield">Moxfield CSV</option>
+                </select>
+              </label>
+              <label>
                 Paste JSON
                 <textarea id="importWizardJsonText" rows="9" spellcheck="false" placeholder="Paste Arcane Ledger JSON here"></textarea>
               </label>
             </div>
-            <p class="settings-help">CSV files can come from anywhere as long as the first row contains headers. JSON can be an Arcane Ledger collection export, deck export, or supported Arcane Ledger data bundle.</p>
+            <p class="settings-help">CSV files can come from anywhere as long as the first row contains headers. Moxfield CSV imports expect Count, Name, Edition, Condition, Language, Foil, Collector Number, Alter, Playtest Card, and Purchase Price. JSON can be an Arcane Ledger collection export, deck export, or supported Arcane Ledger data bundle.</p>
           </section>
           <section class="import-step-panel" data-import-step="map" hidden>
             <div class="panel-head">
@@ -765,41 +812,6 @@
             <button id="importWizardNextButton" class="primary-button" type="button">Next</button>
             <button id="importWizardSaveButton" class="primary-button" type="button" hidden>Save</button>
           </div>
-        </div>
-        <div class="container-allocation-import import-wizard">
-          <div class="panel-head">
-            <div>
-              <p class="eyebrow">Bulk storage</p>
-              <h3>Container Allocation Import</h3>
-            </div>
-            <span>CSV or JSON</span>
-          </div>
-          <p class="settings-help">Use this when your cards already exist in your collection and you want to bulk assign physical copies into containers. Required fields: <code>card_id</code>, <code>variant</code>, <code>condition</code>, <code>quantity</code>, and <code>container_id</code>.</p>
-          <div class="import-source-grid">
-            <label class="file-import-field">
-              Upload allocation file
-              <input id="containerAllocationImportFile" type="file" accept=".csv,.json,text/csv,application/json">
-            </label>
-            <label>
-              Format
-              <select id="containerAllocationImportFormat">
-                <option value="auto">Auto detect</option>
-                <option value="csv">CSV</option>
-                <option value="json">JSON</option>
-              </select>
-            </label>
-            <label class="container-allocation-import-text">
-              Paste CSV or JSON
-              <textarea id="containerAllocationImportText" rows="7" spellcheck="false" placeholder="card_id,variant,condition,quantity,container_id&#10;1a67a991-1e52-4676-a2e3-2bc7aa943ab3,Normal,Near Mint,25,3"></textarea>
-            </label>
-          </div>
-          <div class="modal-actions import-wizard-actions">
-            <button id="previewContainerAllocationImportButton" class="secondary-button" type="button">Preview Allocation</button>
-            <button id="resetContainerAllocationImportButton" class="secondary-button" type="button">Reset</button>
-            <button id="commitContainerAllocationImportButton" class="primary-button" type="button" disabled>Confirm Allocation</button>
-          </div>
-          <div id="containerAllocationImportStatus" class="status" aria-live="polite"></div>
-          <div id="containerAllocationImportRows" class="container-allocation-import-rows"></div>
         </div>
       </section>
 
@@ -2515,6 +2527,6 @@
       </section>
     </div>
 
-    <script src="/app.js?v=209"></script>
+    <script src="/app.js?v=210"></script>
   </body>
 </html>

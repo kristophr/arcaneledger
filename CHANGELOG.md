@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.4.8 beta
+
+### Added
+- Added Moxfield CSV as an explicit Import page option using Moxfield headers for Count, Name, Edition, Condition, Language, Foil, Collector Number, Alter, Playtest Card, and Purchase Price.
+- Added Moxfield CSV collection export with Alter and Playtest Card emitted as `false` for compatibility.
+- Added a dedicated Moxfield export link beside the existing collection CSV and JSON exports.
+
+### Changed
+- Moved Container Allocation Import out of the Import page and into the Containers page behind an `Import Allocations` button.
+- Updated Moxfield CSV parsing so the Foil column maps cleanly to Arcane Ledger variants.
+- Updated README import guidance for Moxfield CSV and container allocation imports.
+- Bumped the app version and user agent to `0.4.8 beta`.
+- Bumped frontend asset versions for the Import and Containers page updates.
+
+### Fixed
+- Prevented the Import page from mixing general collection imports with physical container allocation imports.
+
 ## 0.4.6 beta
 
 ### Added

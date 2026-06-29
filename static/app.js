@@ -409,6 +409,7 @@ const els = {
   previewJsonImportButton: document.querySelector("#previewJsonImportButton"),
   previewCsvImportButton: document.querySelector("#previewCsvImportButton"),
   importWizardFile: document.querySelector("#importWizardFile"),
+  importWizardFormat: document.querySelector("#importWizardFormat"),
   importWizardJsonText: document.querySelector("#importWizardJsonText"),
   importWizardBackButton: document.querySelector("#importWizardBackButton"),
   importWizardResetButton: document.querySelector("#importWizardResetButton"),
@@ -428,6 +429,8 @@ const els = {
   importWizardProgressLabel: document.querySelector("#importWizardProgressLabel"),
   importWizardProgressCount: document.querySelector("#importWizardProgressCount"),
   importWizardProgressBar: document.querySelector("#importWizardProgressBar"),
+  openContainerAllocationImportButton: document.querySelector("#openContainerAllocationImportButton"),
+  containerAllocationImportPanel: document.querySelector("#containerAllocationImportPanel"),
   containerAllocationImportFile: document.querySelector("#containerAllocationImportFile"),
   containerAllocationImportFormat: document.querySelector("#containerAllocationImportFormat"),
   containerAllocationImportText: document.querySelector("#containerAllocationImportText"),
@@ -8098,6 +8101,7 @@ function resetImportWizard() {
     progress: { visible: false, label: "", current: 0, total: 0 },
   };
   if (els.importWizardFile) els.importWizardFile.value = "";
+  if (els.importWizardFormat) els.importWizardFormat.value = "auto";
   if (els.importWizardJsonText) els.importWizardJsonText.value = "";
   setStatus("", "", els.importStatus);
   renderImportWizard();
@@ -8161,7 +8165,7 @@ function renderImportWizard() {
   }
   renderImportProgress();
   if (wizard.step === "map") {
-    if (wizard.format === "csv") renderImportMappingStep();
+    if (wizard.format === "csv" || wizard.format === "moxfield") renderImportMappingStep();
     else renderImportJsonPreviewStep();
   }
   if (wizard.step === "review") renderImportWizardReview();
@@ -8171,6 +8175,7 @@ function renderImportWizard() {
 async function importWizardSourceNext() {
   const file = els.importWizardFile?.files?.[0];
   const pastedJson = (els.importWizardJsonText?.value || "").trim();
+  const requestedFormat = els.importWizardFormat?.value || "auto";
   if (!file && !pastedJson) {
     setStatus("Upload a CSV/JSON file or paste JSON first.", "error", els.importStatus);
     return;
@@ -8183,18 +8188,25 @@ async function importWizardSourceNext() {
     const name = file.name.toLowerCase();
     format = name.endsWith(".csv") || file.type.includes("csv") ? "csv" : "json";
   }
+  if (requestedFormat === "moxfield") {
+    if (format !== "csv") {
+      setStatus("Moxfield imports must be CSV files.", "error", els.importStatus);
+      return;
+    }
+    format = "moxfield";
+  }
   state.importWizard.text = text;
   state.importWizard.format = format;
-  if (format === "csv") {
+  if (format === "csv" || format === "moxfield") {
     const result = await api("/api/import/csv/headers", {
       method: "POST",
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text, format }),
     });
     state.importWizard.headers = result.headers || [];
     state.importWizard.mapping = result.mapping || {};
     state.importWizard.fields = result.fields || [];
     state.importWizard.rowCount = result.row_count || 0;
-    setStatus(`Loaded CSV with ${integer.format(state.importWizard.rowCount)} row${Number(state.importWizard.rowCount) === 1 ? "" : "s"}.`, "success", els.importStatus);
+    setStatus(`Loaded ${format === "moxfield" ? "Moxfield " : ""}CSV with ${integer.format(state.importWizard.rowCount)} row${Number(state.importWizard.rowCount) === 1 ? "" : "s"}.`, "success", els.importStatus);
   } else {
     const result = await api("/api/import/json/preview", {
       method: "POST",
@@ -8212,7 +8224,7 @@ async function importWizardSourceNext() {
 
 function renderImportMappingStep() {
   const wizard = state.importWizard;
-  if (els.importMapTitle) els.importMapTitle.textContent = "Map CSV Columns";
+  if (els.importMapTitle) els.importMapTitle.textContent = wizard.format === "moxfield" ? "Review Moxfield Columns" : "Map CSV Columns";
   if (els.importMapSubtitle) els.importMapSubtitle.textContent = `${integer.format(wizard.headers.length)} headers · ${integer.format(wizard.rowCount || 0)} rows`;
   if (els.importJsonPreview) els.importJsonPreview.innerHTML = "";
   const headers = ["", ...wizard.headers];
@@ -8409,7 +8421,7 @@ async function importWizardMatchCsvRows(wizard) {
 
 async function importWizardMapNext() {
   const wizard = state.importWizard;
-  if (wizard.format === "csv") {
+  if (wizard.format === "csv" || wizard.format === "moxfield") {
     if (!wizard.mapping.name && !wizard.mapping.scryfall_id) {
       setStatus("Map at least Card title or Scryfall ID before continuing.", "error", els.importStatus);
       return;
@@ -8736,6 +8748,15 @@ function resetContainerAllocationImport() {
   if (els.containerAllocationImportFormat) els.containerAllocationImportFormat.value = "auto";
   setStatus("", "", els.containerAllocationImportStatus);
   renderContainerAllocationImportRows();
+}
+
+function openContainerAllocationImportPanel() {
+  if (!els.containerAllocationImportPanel) return;
+  els.containerAllocationImportPanel.hidden = !els.containerAllocationImportPanel.hidden;
+  if (!els.containerAllocationImportPanel.hidden) {
+    resetContainerAllocationImport();
+    els.containerAllocationImportPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
 }
 
 function renderContainerAllocationImportRows() {
@@ -12090,6 +12111,7 @@ function wireEvents() {
       setStatus(error.message, "error", els.importStatus);
     });
   });
+  els.openContainerAllocationImportButton?.addEventListener("click", openContainerAllocationImportPanel);
   els.previewContainerAllocationImportButton?.addEventListener("click", () => {
     previewContainerAllocationImport().catch((error) => {
       state.containerAllocationImport.busy = false;

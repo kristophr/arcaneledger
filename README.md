@@ -1,15 +1,16 @@
 # Arcane Ledger
 
-**Version:** 0.4.6 beta
+**Version:** 0.4.8 beta
 
-A Magic: The Gathering collection tracker. It uses Scryfall as the catalog and price source, stores data in SQLite, tracks collection value and purchase/sale history, manages decks, containers, wishlists, reports, store listings, profiles, public sharing, contributor news, and exports your data back to CSV or spreadsheet-friendly formats.
+A Magic: The Gathering collection tracker. It uses Scryfall as the catalog and price source, stores data in SQLite, tracks collection value and purchase/sale history, manages decks, containers, wishlists, reports, store listings, profiles, public sharing, contributor news, and exports your data back to CSV, Moxfield CSV, or spreadsheet-friendly formats.
 
 ## Highlights
 
 - Track owned cards by exact printing, variant, condition, quantity, purchase price, current market value, and ledger history.
 - Build decks from owned or wanted cards, share public deck pages, and browse public decks from other users.
 - Organize physical storage with containers, capacity tracking, and per-card allocations by variant and condition.
-- Bulk import container allocations from CSV or JSON with validation for card ownership, variant, condition, available uncontainered quantity, and container capacity.
+- Import Arcane Ledger CSV/JSON data or Moxfield CSV exports with guided review before saving.
+- Bulk import container allocations from the Containers page using CSV or JSON with validation for card ownership, variant, condition, available uncontainered quantity, and container capacity.
 - Build wishlists, favorites, store listings, profile posts, and public comments around cards and decks.
 - Share cards, decks, sets, containers, wishlists, and favorites from one clean modal with copy-link and email options.
 - Publish and share contributor-written News articles with drafts, Markdown editing, image uploads, scheduled publishing, public reading/search, copy-link sharing, and email sharing.
@@ -109,6 +110,16 @@ To replace the collection from a new CSV export:
 cp "/path/to/new-export.csv" imports/export.csv
 docker compose exec arcaneledger python app.py import /imports/export.csv
 ```
+
+The web Import page supports Arcane Ledger JSON/CSV and Moxfield CSV uploads. Moxfield imports expect these headers:
+
+```text
+Count, Name, Edition, Condition, Language, Foil, Collector Number, Alter, Playtest Card, Purchase Price
+```
+
+`Alter` and `Playtest Card` are ignored during import. Arcane Ledger Moxfield exports include those columns as `false`.
+
+Container allocation imports now live on the Containers page under `Import Allocations`. Use that workflow when cards already exist in your collection and you want to assign physical copies to containers by `card_id`, `variant`, `condition`, `quantity`, and `container_id`.
 
 ## Email
 

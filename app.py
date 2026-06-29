@@ -108,8 +108,8 @@ SESSION_IDLE_MINUTES = int(os.environ.get("SESSION_IDLE_MINUTES", "30") or 30)
 EMAIL_VERIFICATION_MINUTES = int(os.environ.get("EMAIL_VERIFICATION_MINUTES", "30") or 30)
 PASSWORD_RESET_MINUTES = int(os.environ.get("PASSWORD_RESET_MINUTES", str(EMAIL_VERIFICATION_MINUTES)) or EMAIL_VERIFICATION_MINUTES)
 SUPPORTED_SCRYFALL_LANGUAGES = {"en"}
-APP_VERSION = "0.4.6 beta"
-USER_AGENT = "arcaneledger/0.4.6"
+APP_VERSION = "0.4.8 beta"
+USER_AGENT = "arcaneledger/0.4.8"
 PROCESS_STARTED_AT = datetime.now(timezone.utc).replace(microsecond=0)
 COLOR_ORDER = ("W", "U", "B", "R", "G")
 CARD_CONDITIONS = (
@@ -776,6 +776,20 @@ def product_name_candidates(value):
 
 
 def import_variant(source):
+    explicit = source_value(source, "variant", "Variant", "finish", "Finish", "foil", "Foil")
+    if explicit:
+        explicit_text = explicit.strip().lower()
+        if explicit_text in {"0", "false", "no", "n", "nonfoil", "non-foil", "normal"}:
+            return "Normal"
+        if "surge" in explicit_text and "foil" in explicit_text:
+            return "Surge Foil"
+        if "chocobo" in explicit_text and "foil" in explicit_text:
+            return "Chocobo Track Foil"
+        if "etched" in explicit_text:
+            return "Etched Foil"
+        if explicit_text in {"1", "true", "yes", "y"} or "foil" in explicit_text:
+            return "Foil"
+        return explicit.strip()
     text = " ".join([
         source.get("Variance") or "",
         source.get("Product Name") or "",
@@ -5887,12 +5901,12 @@ def source_value(source, *names):
 def import_row_from_source(source, line_number, source_format):
     name = source_value(source, "name", "Name", "Product Name", "card_name")
     set_name = source_value(source, "set_name", "Set", "Set Name", "set")
-    set_code = source_value(source, "set_code", "Set Code")
+    set_code = source_value(source, "set_code", "Set Code", "Edition")
     collector_number = source_value(source, "collector_number", "Card Number", "Collector Number", "number")
-    quantity = int(money(source_value(source, "quantity", "Quantity"), fallback=0))
+    quantity = int(money(source_value(source, "quantity", "Quantity", "Count"), fallback=0))
     if quantity <= 0:
         quantity = 1 if name else 0
-    paid_price = money(source_value(source, "paid_price", "Price Paid", "Average Cost Paid"), fallback=0.01)
+    paid_price = money(source_value(source, "paid_price", "Price Paid", "Average Cost Paid", "Purchase Price"), fallback=0.01)
     if paid_price <= 0:
         paid_price = 0.01
     entry = {
@@ -5906,7 +5920,7 @@ def import_row_from_source(source, line_number, source_format):
         "quantity": quantity,
         "paid_price": paid_price,
         "acquired_date": source_value(source, "acquired_date", "Date Acquired", "Date Added") or today_iso(),
-        "variant": source_value(source, "variant", "Variant", "Variance") or import_variant(source),
+        "variant": import_variant(source),
         "card_condition": card_condition(source_value(source, "card_condition", "Condition", "Card Condition")),
         "graded": bool_int(source_value(source, "graded", "Graded")),
         "notes": source_value(source, "notes", "Notes"),
@@ -6113,12 +6127,41 @@ IMPORT_FIELD_DEFINITIONS = [
     {"key": "scryfall_id", "label": "Scryfall ID", "required": False, "aliases": ["scryfall id", "scryfall_id", "card_id", "id"]},
 ]
 
+MOXFIELD_CSV_HEADERS = [
+    "Count",
+    "Name",
+    "Edition",
+    "Condition",
+    "Language",
+    "Foil",
+    "Collector Number",
+    "Alter",
+    "Playtest Card",
+    "Purchase Price",
+]
 
-def csv_import_headers(text):
+MOXFIELD_IMPORT_MAPPING = {
+    "name": "Name",
+    "set_name": "",
+    "set_code": "Edition",
+    "collector_number": "Collector Number",
+    "quantity": "Count",
+    "paid_price": "Purchase Price",
+    "acquired_date": "",
+    "variant": "Foil",
+    "card_condition": "Condition",
+    "graded": "",
+    "notes": "",
+    "scryfall_id": "",
+}
+
+
+def csv_import_headers(text, source_format=None):
     rows = parse_csv_import_text(text)
     reader = csv.DictReader(io.StringIO(text))
     headers = [header for header in (reader.fieldnames or []) if header]
-    return {"headers": headers, "row_count": len(rows), "mapping": suggest_csv_import_mapping(headers), "fields": IMPORT_FIELD_DEFINITIONS}
+    mapping = dict(MOXFIELD_IMPORT_MAPPING) if (source_format or "").lower() == "moxfield" else suggest_csv_import_mapping(headers)
+    return {"headers": headers, "row_count": len(rows), "mapping": mapping, "fields": IMPORT_FIELD_DEFINITIONS}
 
 
 def suggest_csv_import_mapping(headers):
@@ -12822,6 +12865,27 @@ def export_csv(conn, user_id):
     return output.getvalue()
 
 
+def export_moxfield_csv(conn, user_id):
+    rows = export_rows(conn, user_id)
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=MOXFIELD_CSV_HEADERS)
+    writer.writeheader()
+    for row in rows:
+        writer.writerow({
+            "Count": int(row["quantity"] or 0),
+            "Name": row["name"],
+            "Edition": row["set_code"],
+            "Condition": row["card_condition"],
+            "Language": "English",
+            "Foil": "true" if str(row["variant"] or "").lower() != "normal" else "false",
+            "Collector Number": row["collector_number"],
+            "Alter": "false",
+            "Playtest Card": "false",
+            "Purchase Price": row["paid_price"],
+        })
+    return output.getvalue()
+
+
 def export_keys():
     return [
         "scryfall_id", "name", "set_code", "set_name", "collector_number", "rarity", "type_line", "type_category", "colors", "color_identity", "quantity", "acquired_date",
@@ -13490,6 +13554,16 @@ class Handler(SimpleHTTPRequestHandler):
                     self.end_headers()
                     self.wfile.write(data)
                     return
+                if parsed.path == "/api/export.moxfield.csv":
+                    user = self.require_user(conn)
+                    data = export_moxfield_csv(conn, user["id"]).encode("utf-8")
+                    self.send_response(HTTPStatus.OK)
+                    self.send_header("Content-Type", "text/csv; charset=utf-8")
+                    self.send_header("Content-Disposition", "attachment; filename=arcaneledger-moxfield-collection.csv")
+                    self.send_header("Content-Length", str(len(data)))
+                    self.end_headers()
+                    self.wfile.write(data)
+                    return
                 if parsed.path == "/api/export.json":
                     user = self.require_user(conn)
                     data = json.dumps(export_json(conn, user["id"]), indent=2).encode("utf-8")
@@ -13610,7 +13684,8 @@ class Handler(SimpleHTTPRequestHandler):
                     return self.send_json(import_preview(conn, self.read_json()))
                 if parsed.path == "/api/import/csv/headers":
                     self.require_user(conn)
-                    return self.send_json(csv_import_headers((self.read_json()).get("text") or ""))
+                    payload = self.read_json()
+                    return self.send_json(csv_import_headers(payload.get("text") or "", payload.get("format")))
                 if parsed.path == "/api/import/csv/entries":
                     self.require_user(conn)
                     return self.send_json(import_csv_mapped_entries(self.read_json()))
