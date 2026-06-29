@@ -371,6 +371,7 @@ const els = {
   catalogColorSelect: document.querySelector("#catalogColorSelect"),
   catalogTypeSelect: document.querySelector("#catalogTypeSelect"),
   catalogRaritySelect: document.querySelector("#catalogRaritySelect"),
+  catalogPrintTypeSelect: document.querySelector("#catalogPrintTypeSelect"),
   catalogFormatSelect: document.querySelector("#catalogFormatSelect"),
   catalogHideOwnedFilter: document.querySelector("#catalogHideOwnedFilter"),
   ownedFilter: document.querySelector("#ownedFilter"),
@@ -3152,6 +3153,7 @@ function buildCatalogSearchQuery() {
   const color = els.catalogColorSelect.value;
   const type = els.catalogTypeSelect.value;
   const rarity = els.catalogRaritySelect.value;
+  const printType = els.catalogPrintTypeSelect.value;
   const format = els.catalogFormatSelect.value;
   if (text) parts.push(text);
   if (oracle) parts.push(`o:${scryfallQuoted(oracle)}`);
@@ -3162,6 +3164,8 @@ function buildCatalogSearchQuery() {
   else if (color) parts.push(`c:${color}`);
   if (type) parts.push(`t:${type}`);
   if (rarity) parts.push(`r:${rarity}`);
+  if (printType === "promo") parts.push("is:promo");
+  if (printType === "prerelease") parts.push("is:prerelease");
   if (format) parts.push(`legal:${format}`);
   return parts.join(" ").trim();
 }
@@ -3887,6 +3891,16 @@ async function loadCatalogHeroCards() {
   renderCatalogHeroCards(state.catalogHeroCards);
 }
 
+function catalogPrintTypePills(card) {
+  const promoTypes = Array.isArray(card.promo_types) ? card.promo_types : [];
+  const pills = [];
+  if (promoTypes.includes("prerelease")) pills.push("Prerelease");
+  else if (card.promo || card.set_type === "promo") pills.push("Promo");
+  if (promoTypes.includes("datestamped")) pills.push("Date-stamped");
+  if (promoTypes.includes("boosterfun")) pills.push("Booster fun");
+  return pills.map((label) => `<span>${escapeHtml(label)}</span>`).join("");
+}
+
 function renderCatalogSearchResults() {
   els.catalogSearchGrid.innerHTML = "";
   if (!state.catalogSearchResults.length) {
@@ -3914,6 +3928,7 @@ function renderCatalogSearchResults() {
         <div class="catalog-result-pills">
           <span>${escapeHtml(cardTypeLabel(card))}</span>
           <span>${escapeHtml(cardColorLabel(card))}</span>
+          ${catalogPrintTypePills(card)}
           <span>${dollars.format(priceForVariant(card, "Normal"))}</span>
           <span>Owned ${integer.format(card.owned_quantity || 0)}</span>
         </div>
