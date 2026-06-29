@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Arcane Ledger</title>
-    <link rel="stylesheet" href="/styles.css?v=187">
+    <link rel="stylesheet" href="/styles.css?v=188">
   </head>
   <body>
     <header class="topbar">
@@ -1855,12 +1855,14 @@
           <div class="import-mode-row" role="group" aria-label="Deck import format">
             <label><input type="radio" name="deck_import_format" value="json" checked> JSON</label>
             <label><input type="radio" name="deck_import_format" value="csv"> CSV</label>
+            <label><input type="radio" name="deck_import_format" value="moxfield_deck"> Moxfield Deck</label>
           </div>
           <label class="file-import-field">
             Upload JSON or CSV
             <input id="importDeckFileInput" type="file" accept=".json,.csv,application/json,text/csv">
           </label>
           <textarea id="importDeckJsonText" spellcheck="false" placeholder="Paste Arcane Ledger deck JSON or deck CSV here"></textarea>
+          <p id="importDeckMoxfieldHelp" class="settings-help" hidden>Paste one card per line using: <code>AMOUNT CARDNAME (SETCODE) NUMBER *F*</code>. Set code, collector number, and <code>*F*</code> are optional.</p>
           <div id="importDeckPreview" class="deck-import-preview" hidden></div>
           <div id="importDeckStatus" class="status" aria-live="polite"></div>
           <div class="modal-actions">
@@ -2527,6 +2529,6 @@
       </section>
     </div>
 
-    <script src="/app.js?v=210"></script>
+    <script src="/app.js?v=211"></script>
   </body>
 </html>

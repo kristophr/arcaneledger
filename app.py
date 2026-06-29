@@ -5995,13 +5995,15 @@ def scryfall_import_match(entry):
         return {"source": "scryfall", "confidence": "exact id", "card": card_summary(card)}
     name = entry.get("name") or ""
     number = entry.get("collector_number") or ""
+    set_code = (entry.get("set_code") or "").strip().lower()
+    set_filter = f" e:{set_code}" if set_code else ""
     queries = []
     if name and number:
-        queries.append(f'!"{name}" cn:{number} game:paper')
-        queries.append(f'{name} cn:{number} game:paper')
+        queries.append(f'!"{name}" cn:{number}{set_filter} game:paper')
+        queries.append(f'{name} cn:{number}{set_filter} game:paper')
     if name:
-        queries.append(f'!"{name}" game:paper')
-        queries.append(f'{name} game:paper')
+        queries.append(f'!"{name}"{set_filter} game:paper')
+        queries.append(f'{name}{set_filter} game:paper')
     for query in queries:
         payload = request_json(f"{SCRYFALL_SEARCH_URL}?{urllib.parse.urlencode({'q': scryfall_query_with_language(query), 'unique': 'prints', 'order': 'set'})}")
         cards = payload.get("data") or []
@@ -7469,6 +7471,154 @@ def parse_decks_csv(text):
         raise ValueError(f"CSV is not valid: {exc}") from exc
 
 
+def parse_moxfield_deck_line(line, row_number):
+    raw = (line or "").strip()
+    if not raw or raw.startswith("#"):
+        return None
+    match = re.match(r"^\s*(\d+)\s+(.+?)\s*$", raw)
+    if not match:
+        return {
+            "row_number": row_number,
+            "raw": raw,
+            "error": "Line must start with an amount followed by a card name.",
+        }
+    quantity = max(1, int(match.group(1)))
+    rest = match.group(2).strip()
+    variant = "Foil" if re.search(r"\*F\*", rest, flags=re.IGNORECASE) else "Normal"
+    rest = re.sub(r"\s*\*F\*\s*", " ", rest, flags=re.IGNORECASE).strip()
+    set_code = ""
+    set_match = re.search(r"\(([A-Za-z0-9:_-]{2,12})\)", rest)
+    if set_match:
+        set_code = set_match.group(1).strip().lower()
+        rest = (rest[:set_match.start()] + " " + rest[set_match.end():]).strip()
+    collector_number = ""
+    number_match = re.search(r"\s+([A-Za-z0-9][A-Za-z0-9-]*[A-Za-z]?)\s*$", rest)
+    if number_match and any(char.isdigit() for char in number_match.group(1)):
+        collector_number = number_match.group(1).strip()
+        rest = rest[:number_match.start()].strip()
+    name = re.sub(r"\s+", " ", rest).strip()
+    if not name:
+        return {
+            "row_number": row_number,
+            "raw": raw,
+            "error": "Card name is missing.",
+        }
+    return {
+        "row_number": row_number,
+        "raw": raw,
+        "quantity": quantity,
+        "name": name,
+        "set_code": set_code,
+        "collector_number": collector_number,
+        "variant": variant,
+    }
+
+
+def parse_moxfield_deck_text(text):
+    rows = []
+    errors = []
+    for row_number, line in enumerate((text or "").splitlines(), start=1):
+        parsed = parse_moxfield_deck_line(line, row_number)
+        if not parsed:
+            continue
+        if parsed.get("error"):
+            errors.append(parsed)
+        else:
+            rows.append(parsed)
+    if not rows and errors:
+        raise ValueError("Moxfield deck import did not include any usable card rows.")
+    if not rows:
+        raise ValueError("Paste at least one Moxfield deck line.")
+    return rows, errors
+
+
+def preview_moxfield_deck_import(conn, user_id, payload):
+    content = payload.get("content") or payload.get("text") or ""
+    rows, parse_errors = parse_moxfield_deck_text(content)
+    entries = []
+    for row in rows:
+        entries.append({
+            "line": row["row_number"],
+            "format": "moxfield_deck",
+            "name": row["name"],
+            "set_code": row.get("set_code") or "",
+            "set_name": "",
+            "collector_number": row.get("collector_number") or "",
+            "quantity": row["quantity"],
+            "paid_price": 0.01,
+            "acquired_date": today_iso(),
+            "variant": row.get("variant") or "Normal",
+            "card_condition": DEFAULT_CARD_CONDITION,
+            "graded": 0,
+            "raw": row.get("raw") or "",
+        })
+    matched = preview_import_entries(conn, entries)
+    card_rows = []
+    cards = []
+    card_count = 0
+    unique_cards = set()
+    for row in matched.get("rows") or []:
+        entry = row.get("entry") or {}
+        match_card = ((row.get("match") or {}).get("card") or {})
+        card_id = match_card.get("scryfall_id") or ""
+        variant = entry.get("variant") or "Normal"
+        quantity = max(1, int(entry.get("quantity") or 1))
+        if card_id:
+            cards.append({
+                **match_card,
+                "scryfall_id": card_id,
+                "variant": variant,
+                "quantity": quantity,
+                "deck_quantity": quantity,
+                "row_number": entry.get("line"),
+                "raw": entry.get("raw") or "",
+            })
+            card_count += quantity
+            unique_cards.add((card_id, variant))
+        card_rows.append({
+            **row,
+            "quantity": quantity,
+            "variant": variant,
+            "raw": entry.get("raw") or "",
+        })
+    deck = {
+        "index": 1,
+        "name": re.sub(r"\s+", " ", (payload.get("name") or "Moxfield Deck").strip())[:20] or "Moxfield Deck",
+        "original_name": payload.get("name") or "Moxfield Deck",
+        "description": "",
+        "internal_notes": "",
+        "external_notes": "",
+        "is_private": 0,
+        "cards": cards,
+    }
+    issues_by_index = deck_import_name_issues(conn, user_id, [deck])
+    parse_issue_messages = [
+        f"Line {item['row_number']}: {item['error']}"
+        for item in parse_errors
+    ]
+    unmatched = [row for row in card_rows if not ((row.get("match") or {}).get("card") or {}).get("scryfall_id")]
+    issues = list(dict.fromkeys((issues_by_index.get(1, []) or []) + parse_issue_messages))
+    if unmatched:
+        issues.append(f"{len(unmatched)} card row(s) need a Scryfall match before importing.")
+    preview = {
+        "index": 1,
+        "name": deck["name"],
+        "original_name": deck["original_name"],
+        "card_count": card_count,
+        "unique_card_count": len(unique_cards),
+        "issues": issues,
+        "needs_rename": bool(issues_by_index.get(1)),
+    }
+    return {
+        "ok": True,
+        "format": "moxfield_deck",
+        "decks": [preview],
+        "normalized_decks": [deck],
+        "card_rows": card_rows,
+        "issues": matched.get("issues") or [],
+    }
+
+
 def normalize_import_deck_source(payload):
     payload = payload or {}
     source = payload.get("decks") if isinstance(payload.get("decks"), list) else None
@@ -7539,6 +7689,8 @@ def deck_import_name_issues(conn, user_id, decks):
 
 
 def preview_deck_import(conn, user_id, payload):
+    if (payload.get("format") or "").lower() == "moxfield_deck":
+        return preview_moxfield_deck_import(conn, user_id, payload)
     decks = normalize_import_deck_source(payload)
     issues_by_index = deck_import_name_issues(conn, user_id, decks)
     preview = []

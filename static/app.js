@@ -683,6 +683,7 @@ const els = {
   importDeckForm: document.querySelector("#importDeckForm"),
   importDeckJsonText: document.querySelector("#importDeckJsonText"),
   importDeckFileInput: document.querySelector("#importDeckFileInput"),
+  importDeckMoxfieldHelp: document.querySelector("#importDeckMoxfieldHelp"),
   importDeckPreview: document.querySelector("#importDeckPreview"),
   importDeckStatus: document.querySelector("#importDeckStatus"),
   closeImportDeckButton: document.querySelector("#closeImportDeckButton"),
@@ -6121,6 +6122,7 @@ function openImportDeckModal() {
   renderDeckImportPreview([]);
   setStatus("", "", els.importDeckStatus);
   els.commitImportDeckButton.disabled = true;
+  updateDeckImportModeUI();
   els.importDeckOverlay.hidden = false;
   document.body.classList.add("modal-open");
   els.importDeckJsonText.focus();
@@ -6133,6 +6135,7 @@ function closeImportDeckModal() {
   state.pendingDeckImport = null;
   renderDeckImportPreview([]);
   els.commitImportDeckButton.disabled = true;
+  updateDeckImportModeUI();
   setStatus("", "", els.importDeckStatus);
 }
 
@@ -6158,11 +6161,62 @@ function deckImportFormat() {
   return els.importDeckForm.deck_import_format?.value || "json";
 }
 
+function updateDeckImportModeUI() {
+  const format = deckImportFormat();
+  if (els.importDeckMoxfieldHelp) els.importDeckMoxfieldHelp.hidden = format !== "moxfield_deck";
+  if (els.importDeckJsonText) {
+    els.importDeckJsonText.placeholder = format === "moxfield_deck"
+      ? "1 Lightning Bolt (CLU) 141 *F*\n4 Island (FIN) 281\n2 Sol Ring"
+      : "Paste Arcane Ledger deck JSON or deck CSV here";
+  }
+}
+
 function deckImportPayloadFromText(text) {
   return {
     format: deckImportFormat(),
     content: text,
   };
+}
+
+function deckImportIsMoxfield() {
+  return state.pendingDeckImport?.format === "moxfield_deck";
+}
+
+function moxfieldDeckCardRows() {
+  return state.pendingDeckImport?.card_rows || [];
+}
+
+function moxfieldDeckRowsHaveMatches() {
+  return moxfieldDeckCardRows().every((row) => row.match?.card?.scryfall_id);
+}
+
+function rebuildMoxfieldDeckCards() {
+  if (!deckImportIsMoxfield()) return;
+  const deck = state.pendingDeckImport.normalized_decks?.[0];
+  if (!deck) return;
+  deck.cards = moxfieldDeckCardRows()
+    .filter((row) => row.match?.card?.scryfall_id)
+    .map((row) => {
+      const card = row.match.card;
+      const quantity = Math.max(1, Number(row.quantity || row.entry?.quantity || 1));
+      const variant = row.variant || row.entry?.variant || "Normal";
+      return {
+        ...card,
+        scryfall_id: card.scryfall_id,
+        variant,
+        quantity,
+        deck_quantity: quantity,
+        row_number: row.entry?.line || row.line,
+        raw: row.raw || row.entry?.raw || "",
+      };
+    });
+  const cardCount = deck.cards.reduce((total, card) => total + Number(card.quantity || 1), 0);
+  const unique = new Set(deck.cards.map((card) => `${card.scryfall_id}::${card.variant || "Normal"}`));
+  const preview = state.pendingDeckImport.decks?.[0];
+  if (preview) {
+    preview.card_count = cardCount;
+    preview.unique_card_count = unique.size;
+  }
 }
 
 function renderDeckImportPreview(decks = []) {
@@ -6191,7 +6245,93 @@ function renderDeckImportPreview(decks = []) {
         </article>
       `).join("")}
     </div>
+    ${deckImportIsMoxfield() ? renderMoxfieldDeckCardReview() : ""}
   `;
+  bindMoxfieldDeckCardReview();
+}
+
+function renderMoxfieldDeckCardReview() {
+  const rows = moxfieldDeckCardRows();
+  if (!rows.length) return '<div class="empty-state compact-empty">No Moxfield card rows found.</div>';
+  return `
+    <div class="deck-import-preview-head moxfield-card-review-head">
+      <strong>${integer.format(rows.length)} card row${rows.length === 1 ? "" : "s"} parsed</strong>
+      <span>Search and replace any match before importing.</span>
+    </div>
+    <div class="moxfield-deck-card-review">
+      ${rows.map((row, index) => {
+        const entry = row.entry || {};
+        const card = row.match?.card;
+        const hasMatch = Boolean(card?.scryfall_id);
+        return `
+          <article class="moxfield-deck-card-row ${hasMatch ? "" : "needs-review"}" data-moxfield-row="${index}">
+            <div class="import-row-source">
+              <strong>${escapeHtml(entry.name || "Unknown card")}</strong>
+              <span>${escapeHtml(row.raw || entry.raw || "")}</span>
+              <small>Qty ${integer.format(row.quantity || entry.quantity || 1)} · ${escapeHtml(row.variant || entry.variant || "Normal")}${entry.set_code ? ` · ${escapeHtml(String(entry.set_code).toUpperCase())}` : ""}${entry.collector_number ? ` #${escapeHtml(entry.collector_number)}` : ""}</small>
+            </div>
+            <div class="import-row-match">${renderImportCard(card)}</div>
+            <div class="import-row-tools">
+              <div class="search-control">
+                <input class="moxfield-deck-match-search" type="search" value="${escapeAttribute(entry.name || "")}" placeholder="Search Scryfall">
+                <button class="search-button moxfield-deck-match-button" type="button" data-moxfield-row="${index}" aria-label="Search Scryfall">&#8981;</button>
+              </div>
+              <select class="moxfield-deck-match-results" data-moxfield-row="${index}" hidden></select>
+            </div>
+          </article>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function bindMoxfieldDeckCardReview() {
+  if (!deckImportIsMoxfield()) return;
+  els.importDeckPreview.querySelectorAll(".moxfield-deck-match-button").forEach((button) => {
+    button.addEventListener("click", () => {
+      const rowEl = button.closest(".moxfield-deck-card-row");
+      const input = rowEl?.querySelector(".moxfield-deck-match-search");
+      const select = rowEl?.querySelector(".moxfield-deck-match-results");
+      searchMoxfieldDeckRow(Number(button.dataset.moxfieldRow), input, select, rowEl).catch((error) => setStatus(error.message, "error", els.importDeckStatus));
+    });
+  });
+  els.importDeckPreview.querySelectorAll(".moxfield-deck-match-search").forEach((input) => {
+    input.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+      input.closest(".moxfield-deck-card-row")?.querySelector(".moxfield-deck-match-button")?.click();
+    });
+  });
+  els.importDeckPreview.querySelectorAll(".moxfield-deck-match-results").forEach((select) => {
+    select.addEventListener("change", () => {
+      const row = moxfieldDeckCardRows()[Number(select.dataset.moxfieldRow)];
+      const selected = select._cards?.find((card) => card.scryfall_id === select.value);
+      if (!row || !selected) return;
+      row.match = { source: "scryfall", confidence: "user selected", card: selected };
+      row.status = "matched";
+      row.checked = true;
+      rebuildMoxfieldDeckCards();
+      renderDeckImportPreview(state.pendingDeckImport.decks || []);
+      refreshDeckImportReviewState();
+    });
+  });
+}
+
+async function searchMoxfieldDeckRow(rowIndex, input, select, rowEl) {
+  const query = input?.value?.trim() || "";
+  if (query.length < 2) return;
+  rowEl?.classList.add("is-searching");
+  try {
+    const result = await api(`/api/scryfall/search?q=${encodeURIComponent(query)}`);
+    const cards = result.cards || [];
+    select._cards = cards;
+    select.innerHTML = cards.length
+      ? '<option value="">Choose a Scryfall match</option>' + cards.map((card) => `<option value="${escapeHtml(card.scryfall_id)}">${escapeHtml(card.display_name || card.name)} - ${escapeHtml(card.set_name)} #${escapeHtml(card.collector_number)}</option>`).join("")
+      : '<option value="">No matches</option>';
+    select.hidden = false;
+  } finally {
+    rowEl?.classList.remove("is-searching");
+  }
 }
 
 function deckImportNamesFromPreview() {
@@ -6261,11 +6401,12 @@ async function previewDeckImport() {
     body: JSON.stringify(deckImportPayloadFromText(text)),
   });
   state.pendingDeckImport = preview;
+  rebuildMoxfieldDeckCards();
   renderDeckImportPreview(preview.decks || []);
-  const needsReview = (preview.decks || []).some((deck) => deck.needs_rename || deck.issues?.length);
+  const needsReview = (preview.decks || []).some((deck) => deck.needs_rename || deck.issues?.length) || (deckImportIsMoxfield() && !moxfieldDeckRowsHaveMatches());
   els.commitImportDeckButton.disabled = needsReview;
   setStatus(
-    needsReview ? "Rename the highlighted decks before importing." : "Import looks good.",
+    needsReview ? (deckImportIsMoxfield() ? "Review highlighted deck/card rows before importing." : "Rename the highlighted decks before importing.") : "Import looks good.",
     needsReview ? "error" : "success",
     els.importDeckStatus,
   );
@@ -6285,9 +6426,9 @@ function refreshDeckImportReviewState() {
     };
   });
   renderDeckImportPreview(previewDecks);
-  els.commitImportDeckButton.disabled = previewDecks.some((deck) => deck.needs_rename);
+  els.commitImportDeckButton.disabled = previewDecks.some((deck) => deck.needs_rename) || (deckImportIsMoxfield() && !moxfieldDeckRowsHaveMatches());
   if (els.commitImportDeckButton.disabled) {
-    setStatus("Resolve highlighted deck names before importing.", "error", els.importDeckStatus);
+    setStatus(deckImportIsMoxfield() ? "Resolve highlighted deck names and card matches before importing." : "Resolve highlighted deck names before importing.", "error", els.importDeckStatus);
   } else {
     setStatus("Names look good. Ready to import.", "success", els.importDeckStatus);
   }
@@ -6300,7 +6441,7 @@ async function commitDeckImport() {
   }
   const decks = applyDeckImportPreviewNames();
   const issues = deckImportClientNameIssues(decks);
-  if (issues.size) {
+  if (issues.size || (deckImportIsMoxfield() && !moxfieldDeckRowsHaveMatches())) {
     refreshDeckImportReviewState();
     return;
   }
@@ -12264,7 +12405,17 @@ function wireEvents() {
     state.pendingDeckImport = null;
     renderDeckImportPreview([]);
     els.commitImportDeckButton.disabled = true;
+    updateDeckImportModeUI();
     setStatus("File loaded. Review it before importing.", "", els.importDeckStatus);
+  });
+  els.importDeckForm.querySelectorAll('input[name="deck_import_format"]').forEach((input) => {
+    input.addEventListener("change", () => {
+      state.pendingDeckImport = null;
+      renderDeckImportPreview([]);
+      els.commitImportDeckButton.disabled = true;
+      updateDeckImportModeUI();
+      setStatus("", "", els.importDeckStatus);
+    });
   });
   els.importDeckJsonText.addEventListener("input", () => {
     state.pendingDeckImport = null;
