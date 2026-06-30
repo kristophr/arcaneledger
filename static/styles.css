@@ -4203,7 +4203,7 @@ body:not(.is-authenticated) .nav-bottom {
 
 .sale-card-row {
   display: grid;
-  grid-template-columns: 64px minmax(170px, 1fr) max-content max-content minmax(72px, 88px) minmax(94px, 112px) 34px 34px;
+  grid-template-columns: 64px minmax(150px, 1fr) max-content max-content minmax(72px, 88px) minmax(94px, 112px) minmax(150px, 220px) 34px 34px;
   gap: 10px;
   align-items: center;
   overflow: hidden;
@@ -4292,7 +4292,7 @@ body:not(.is-authenticated) .nav-bottom {
 .store-front-sellers-head,
 .store-front-seller-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 90px 120px 42px;
+  grid-template-columns: minmax(0, 1fr) 90px 120px minmax(80px, max-content) 42px;
   gap: 10px;
   align-items: center;
 }
@@ -7325,6 +7325,25 @@ body:not(.is-authenticated) .nav-bottom {
   color: var(--accent-3);
 }
 
+.container-set-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 9px;
+}
+
+.container-set-pills span {
+  border: 1px solid color-mix(in srgb, var(--accent-3) 46%, var(--line));
+  border-radius: 999px;
+  padding: 3px 7px;
+  background: color-mix(in srgb, var(--accent-soft) 74%, var(--panel));
+  color: var(--ink);
+  font-size: 0.7rem;
+  font-weight: 900;
+  letter-spacing: 0;
+  line-height: 1;
+}
+
 .wishlist-list-card h3 .wishlist-icon {
   color: var(--accent-2);
 }
@@ -9035,6 +9054,10 @@ body:not(.is-authenticated) .nav-bottom {
   border-radius: 8px;
   padding: 8px;
   background: var(--detail-bg);
+}
+
+.sale-modal-row .sale-whatnot-field {
+  grid-column: 3 / -1;
 }
 
 .sale-modal-check {

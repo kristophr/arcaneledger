@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Arcane Ledger</title>
-    <link rel="stylesheet" href="/styles.css?v=189">
+    <link rel="stylesheet" href="/styles.css?v=191">
   </head>
   <body>
     <header class="topbar">
@@ -773,6 +773,7 @@
                   <option value="auto">Auto detect</option>
                   <option value="arcaneledger">Arcane Ledger CSV / JSON</option>
                   <option value="moxfield">Moxfield CSV</option>
+                  <option value="arena">Magic: The Gathering Arena CSV</option>
                 </select>
               </label>
               <label>
@@ -780,7 +781,7 @@
                 <textarea id="importWizardJsonText" rows="9" spellcheck="false" placeholder="Paste Arcane Ledger JSON here"></textarea>
               </label>
             </div>
-            <p class="settings-help">CSV files can come from anywhere as long as the first row contains headers. Moxfield CSV imports expect Count, Name, Edition, Condition, Language, Foil, Collector Number, Alter, Playtest Card, and Purchase Price. JSON can be an Arcane Ledger collection export, deck export, or supported Arcane Ledger data bundle.</p>
+            <p class="settings-help">CSV files can come from anywhere as long as the first row contains headers. Moxfield and Magic: The Gathering Arena CSV imports use Count, Name, Edition, Condition, Language, Foil, Collector Number, Alter, Playtest Card, and Purchase Price. JSON can be an Arcane Ledger collection export, deck export, or supported Arcane Ledger data bundle.</p>
           </section>
           <section class="import-step-panel" data-import-step="map" hidden>
             <div class="panel-head">
@@ -901,6 +902,10 @@
                 <label>
                   Website
                   <input name="contact_website" type="text" maxlength="160" autocomplete="url" placeholder="https://example.com">
+                </label>
+                <label>
+                  Whatnot Username
+                  <input name="contact_whatnot" type="text" maxlength="80" autocomplete="off" placeholder="jeff_occ">
                 </label>
               </fieldset>
               <div class="modal-actions">
@@ -1864,6 +1869,7 @@
             <label><input type="radio" name="deck_import_format" value="json" checked> JSON</label>
             <label><input type="radio" name="deck_import_format" value="csv"> CSV</label>
             <label><input type="radio" name="deck_import_format" value="moxfield_deck"> Moxfield Deck</label>
+            <label><input type="radio" name="deck_import_format" value="arena_deck"> Magic Arena Deck</label>
           </div>
           <label class="file-import-field">
             Upload JSON or CSV
@@ -2537,6 +2543,6 @@
       </section>
     </div>
 
-    <script src="/app.js?v=212"></script>
+    <script src="/app.js?v=215"></script>
   </body>
 </html>

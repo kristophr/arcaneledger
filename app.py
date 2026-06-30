@@ -108,8 +108,8 @@ SESSION_IDLE_MINUTES = int(os.environ.get("SESSION_IDLE_MINUTES", "30") or 30)
 EMAIL_VERIFICATION_MINUTES = int(os.environ.get("EMAIL_VERIFICATION_MINUTES", "30") or 30)
 PASSWORD_RESET_MINUTES = int(os.environ.get("PASSWORD_RESET_MINUTES", str(EMAIL_VERIFICATION_MINUTES)) or EMAIL_VERIFICATION_MINUTES)
 SUPPORTED_SCRYFALL_LANGUAGES = {"en"}
-APP_VERSION = "0.4.8 beta"
-USER_AGENT = "arcaneledger/0.4.8"
+APP_VERSION = "0.4.10 beta"
+USER_AGENT = "arcaneledger/0.4.10"
 PROCESS_STARTED_AT = datetime.now(timezone.utc).replace(microsecond=0)
 COLOR_ORDER = ("W", "U", "B", "R", "G")
 CARD_CONDITIONS = (
@@ -512,6 +512,28 @@ def clean_contact_url(value):
     if text and (parsed.scheme not in {"http", "https"} or not parsed.netloc or " " in text):
         raise ValueError("Enter a valid website URL.")
     return text
+
+
+def whatnot_profile_url(username):
+    handle = clean_contact_handle(username, "Whatnot username").lstrip("@")
+    if not handle:
+        return ""
+    return f"https://www.whatnot.com/user/{urllib.parse.quote(handle)}"
+
+
+def clean_whatnot_listing_url(value):
+    text = clean_contact_handle(value, "Whatnot listing URL", 260)
+    if not text:
+        return ""
+    if not re.match(r"^https?://", text, flags=re.I):
+        text = f"https://{text}"
+    parsed = urllib.parse.urlparse(text)
+    host = (parsed.hostname or "").lower()
+    if parsed.scheme not in {"http", "https"} or not host or " " in text:
+        raise ValueError("Enter a valid Whatnot listing URL.")
+    if host != "whatnot.com" and not host.endswith(".whatnot.com"):
+        raise ValueError("Whatnot listing URL must be on whatnot.com.")
+    return urllib.parse.urlunparse(("https", parsed.netloc, parsed.path or "/", "", parsed.query, ""))
 
 
 def clean_profile_text(value, limit=1200):
@@ -1486,6 +1508,7 @@ def init_db(conn):
             contact_telegram TEXT NOT NULL DEFAULT '',
             contact_discord TEXT NOT NULL DEFAULT '',
             contact_website TEXT NOT NULL DEFAULT '',
+            contact_whatnot TEXT NOT NULL DEFAULT '',
             contact_instagram TEXT NOT NULL DEFAULT '',
             contact_bluesky TEXT NOT NULL DEFAULT '',
             contact_threads TEXT NOT NULL DEFAULT '',
@@ -1743,6 +1766,7 @@ def init_db(conn):
             card_condition TEXT NOT NULL DEFAULT 'Near Mint',
             quantity INTEGER NOT NULL DEFAULT 1,
             asking_price REAL NOT NULL DEFAULT 0.01,
+            whatnot_url TEXT NOT NULL DEFAULT '',
             updated_at TEXT NOT NULL,
             PRIMARY KEY (user_id, card_id, variant, card_condition),
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
@@ -2262,6 +2286,9 @@ def migrate_card_sales_schema(conn):
     columns = conn.execute("PRAGMA table_info(card_sales)").fetchall()
     column_names = {col["name"] for col in columns}
     if "user_id" in column_names:
+        if "whatnot_url" not in column_names:
+            conn.execute("ALTER TABLE card_sales ADD COLUMN whatnot_url TEXT NOT NULL DEFAULT ''")
+        conn.execute("UPDATE card_sales SET whatnot_url = '' WHERE whatnot_url IS NULL")
         placeholders = ", ".join("?" for _ in CARD_CONDITIONS)
         conn.execute(
             f"""
@@ -2288,34 +2315,38 @@ def migrate_card_sales_schema(conn):
                 card_condition TEXT NOT NULL DEFAULT 'Near Mint',
                 quantity INTEGER NOT NULL DEFAULT 1,
                 asking_price REAL NOT NULL DEFAULT 0.01,
+                whatnot_url TEXT NOT NULL DEFAULT '',
                 updated_at TEXT NOT NULL,
                 PRIMARY KEY (card_id, variant, card_condition),
                 FOREIGN KEY (card_id) REFERENCES cards(scryfall_id) ON DELETE CASCADE
             );
             """
         )
+        whatnot_select = "COALESCE(whatnot_url, '')" if "whatnot_url" in column_names else "''"
         if "card_condition" in column_names:
             conn.execute(
-                """
-                INSERT INTO card_sales (card_id, variant, card_condition, quantity, asking_price, updated_at)
+                f"""
+                INSERT INTO card_sales (card_id, variant, card_condition, quantity, asking_price, whatnot_url, updated_at)
                 SELECT card_id,
                        COALESCE(NULLIF(variant, ''), 'Normal'),
                        COALESCE(NULLIF(card_condition, ''), 'Near Mint'),
                        quantity,
                        asking_price,
+                       {whatnot_select},
                        updated_at
                 FROM card_sales_old
                 """
             )
         else:
             conn.execute(
-                """
-                INSERT INTO card_sales (card_id, variant, card_condition, quantity, asking_price, updated_at)
+                f"""
+                INSERT INTO card_sales (card_id, variant, card_condition, quantity, asking_price, whatnot_url, updated_at)
                 SELECT card_id,
                        COALESCE(NULLIF(variant, ''), 'Normal'),
                        'Near Mint',
                        quantity,
                        asking_price,
+                       {whatnot_select},
                        updated_at
                 FROM card_sales_old
                 """
@@ -2335,6 +2366,9 @@ def migrate_card_sales_schema(conn):
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_card_sales_card ON card_sales(card_id, variant, card_condition)"
     )
+    if "whatnot_url" not in table_columns(conn, "card_sales"):
+        conn.execute("ALTER TABLE card_sales ADD COLUMN whatnot_url TEXT NOT NULL DEFAULT ''")
+    conn.execute("UPDATE card_sales SET whatnot_url = '' WHERE whatnot_url IS NULL")
 
 
 def table_columns(conn, table):
@@ -2643,6 +2677,9 @@ def migrate_legacy_wishlists(conn):
 def migrate_card_sales_user_schema(conn):
     columns = table_columns(conn, "card_sales")
     if "user_id" in columns and table_pk(conn, "card_sales") == ["user_id", "card_id", "variant", "card_condition"]:
+        if "whatnot_url" not in columns:
+            conn.execute("ALTER TABLE card_sales ADD COLUMN whatnot_url TEXT NOT NULL DEFAULT ''")
+        conn.execute("UPDATE card_sales SET whatnot_url = '' WHERE whatnot_url IS NULL")
         return
     conn.executescript(
         """
@@ -2654,6 +2691,7 @@ def migrate_card_sales_user_schema(conn):
             card_condition TEXT NOT NULL DEFAULT 'Near Mint',
             quantity INTEGER NOT NULL DEFAULT 1,
             asking_price REAL NOT NULL DEFAULT 0.01,
+            whatnot_url TEXT NOT NULL DEFAULT '',
             updated_at TEXT NOT NULL,
             PRIMARY KEY (user_id, card_id, variant, card_condition),
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
@@ -2662,11 +2700,12 @@ def migrate_card_sales_user_schema(conn):
         """
     )
     user_select = "user_id" if "user_id" in columns else "NULL"
+    whatnot_select = "COALESCE(whatnot_url, '')" if "whatnot_url" in columns else "''"
     conn.execute(
         f"""
-        INSERT INTO card_sales (user_id, card_id, variant, card_condition, quantity, asking_price, updated_at)
+        INSERT INTO card_sales (user_id, card_id, variant, card_condition, quantity, asking_price, whatnot_url, updated_at)
         SELECT {user_select}, card_id, COALESCE(NULLIF(variant, ''), 'Normal'),
-               COALESCE(NULLIF(card_condition, ''), ?), quantity, asking_price, updated_at
+               COALESCE(NULLIF(card_condition, ''), ?), quantity, asking_price, {whatnot_select}, updated_at
         FROM card_sales_old_user_migration
         """,
         (DEFAULT_CARD_CONDITION,),
@@ -2901,7 +2940,7 @@ def migrate_user_schema(conn):
             conn.execute(f"ALTER TABLE users ADD COLUMN {column} {definition}")
     for column in (
         "public_email", "contact_whatsapp", "contact_signal", "contact_telegram", "contact_discord",
-        "contact_website", "contact_instagram", "contact_bluesky", "contact_threads", "about_me", "profile_image",
+        "contact_website", "contact_whatnot", "contact_instagram", "contact_bluesky", "contact_threads", "about_me", "profile_image",
     ):
         if column not in user_columns:
             conn.execute(f"ALTER TABLE users ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
@@ -3027,6 +3066,8 @@ def user_payload(row):
         "contact_telegram": row["contact_telegram"] if "contact_telegram" in row.keys() else "",
         "contact_discord": row["contact_discord"] if "contact_discord" in row.keys() else "",
         "contact_website": row["contact_website"] if "contact_website" in row.keys() else "",
+        "contact_whatnot": row["contact_whatnot"] if "contact_whatnot" in row.keys() else "",
+        "whatnot_url": whatnot_profile_url(row["contact_whatnot"]) if "contact_whatnot" in row.keys() and row["contact_whatnot"] else "",
         "contact_instagram": row["contact_instagram"] if "contact_instagram" in row.keys() else "",
         "contact_bluesky": row["contact_bluesky"] if "contact_bluesky" in row.keys() else "",
         "contact_threads": row["contact_threads"] if "contact_threads" in row.keys() else "",
@@ -4586,6 +4627,7 @@ def update_user_settings(conn, user_id, payload):
     contact_telegram = clean_contact_handle(payload.get("contact_telegram"), "Telegram username")
     contact_discord = clean_contact_handle(payload.get("contact_discord"), "Discord username")
     contact_website = clean_contact_url(payload.get("contact_website"))
+    contact_whatnot = clean_contact_handle(payload.get("contact_whatnot"), "Whatnot username")
     contact_instagram = clean_contact_handle(payload.get("contact_instagram"), "Instagram username")
     contact_bluesky = clean_contact_handle(payload.get("contact_bluesky"), "Bluesky username")
     contact_threads = clean_contact_handle(payload.get("contact_threads"), "Threads username")
@@ -4602,7 +4644,7 @@ def update_user_settings(conn, user_id, payload):
         UPDATE users
         SET name = ?, profile_slug = ?, language = ?, theme = ?, public_email = ?, contact_whatsapp = ?,
             contact_signal = ?, contact_telegram = ?, contact_discord = ?, contact_website = ?,
-            contact_instagram = ?, contact_bluesky = ?, contact_threads = ?, about_me = ?, profile_image = ?,
+            contact_whatnot = ?, contact_instagram = ?, contact_bluesky = ?, contact_threads = ?, about_me = ?, profile_image = ?,
             default_purchase_price = ?, default_sell_price = ?, updated_at = ?
         WHERE id = ?
         """,
@@ -4617,6 +4659,7 @@ def update_user_settings(conn, user_id, payload):
             contact_telegram,
             contact_discord,
             contact_website,
+            contact_whatnot,
             contact_instagram,
             contact_bluesky,
             contact_threads,
@@ -6161,11 +6204,15 @@ MOXFIELD_IMPORT_MAPPING = {
 }
 
 
+def is_moxfield_like_import(source_format):
+    return (source_format or "").lower() in {"moxfield", "arena"}
+
+
 def csv_import_headers(text, source_format=None):
     rows = parse_csv_import_text(text)
     reader = csv.DictReader(io.StringIO(text))
     headers = [header for header in (reader.fieldnames or []) if header]
-    mapping = dict(MOXFIELD_IMPORT_MAPPING) if (source_format or "").lower() == "moxfield" else suggest_csv_import_mapping(headers)
+    mapping = dict(MOXFIELD_IMPORT_MAPPING) if is_moxfield_like_import(source_format) else suggest_csv_import_mapping(headers)
     return {"headers": headers, "row_count": len(rows), "mapping": mapping, "fields": IMPORT_FIELD_DEFINITIONS}
 
 
@@ -7535,14 +7582,20 @@ def parse_moxfield_deck_text(text):
     return rows, errors
 
 
+def is_moxfield_like_deck_import(source_format):
+    return (source_format or "").lower() in {"moxfield_deck", "arena_deck"}
+
+
 def preview_moxfield_deck_import(conn, user_id, payload):
     content = payload.get("content") or payload.get("text") or ""
+    source_format = (payload.get("format") or "moxfield_deck").lower()
+    deck_label = "Magic Arena Deck" if source_format == "arena_deck" else "Moxfield Deck"
     rows, parse_errors = parse_moxfield_deck_text(content)
     entries = []
     for row in rows:
         entries.append({
             "line": row["row_number"],
-            "format": "moxfield_deck",
+            "format": source_format if is_moxfield_like_deck_import(source_format) else "moxfield_deck",
             "name": row["name"],
             "set_code": row.get("set_code") or "",
             "set_name": "",
@@ -7586,8 +7639,8 @@ def preview_moxfield_deck_import(conn, user_id, payload):
         })
     deck = {
         "index": 1,
-        "name": re.sub(r"\s+", " ", (payload.get("name") or "Moxfield Deck").strip())[:20] or "Moxfield Deck",
-        "original_name": payload.get("name") or "Moxfield Deck",
+        "name": re.sub(r"\s+", " ", (payload.get("name") or deck_label).strip())[:20] or deck_label,
+        "original_name": payload.get("name") or deck_label,
         "description": "",
         "internal_notes": "",
         "external_notes": "",
@@ -7614,7 +7667,7 @@ def preview_moxfield_deck_import(conn, user_id, payload):
     }
     return {
         "ok": True,
-        "format": "moxfield_deck",
+        "format": source_format if is_moxfield_like_deck_import(source_format) else "moxfield_deck",
         "decks": [preview],
         "normalized_decks": [deck],
         "card_rows": card_rows,
@@ -7692,7 +7745,7 @@ def deck_import_name_issues(conn, user_id, decks):
 
 
 def preview_deck_import(conn, user_id, payload):
-    if (payload.get("format") or "").lower() == "moxfield_deck":
+    if is_moxfield_like_deck_import(payload.get("format")):
         return preview_moxfield_deck_import(conn, user_id, payload)
     decks = normalize_import_deck_source(payload)
     issues_by_index = deck_import_name_issues(conn, user_id, decks)
@@ -8775,9 +8828,25 @@ def list_containers(conn, user_id):
         (user_id,),
     ).fetchall()
     containers = rows_to_dicts(rows)
+    set_rows = conn.execute(
+        """
+        SELECT cc.container_id, lower(c.set_code) AS set_code
+        FROM container_cards cc
+        JOIN containers ct ON ct.id = cc.container_id
+        JOIN cards c ON c.scryfall_id = cc.card_id
+        WHERE ct.user_id = ? AND COALESCE(cc.quantity, 0) > 0
+        GROUP BY cc.container_id, lower(c.set_code)
+        ORDER BY lower(c.set_code) COLLATE NOCASE
+        """,
+        (user_id,),
+    ).fetchall()
+    set_codes_by_container = {}
+    for row in set_rows:
+        set_codes_by_container.setdefault(int(row["container_id"]), []).append((row["set_code"] or "").upper())
     for container in containers:
         capacity = int(container.get("capacity") or 0)
         stored = int(container.get("stored_quantity") or 0)
+        container["set_codes"] = set_codes_by_container.get(int(container.get("id") or 0), [])
         container["remaining_capacity"] = max(0, capacity - stored) if capacity > 0 else None
         container["fill_percent"] = round(min(100, (stored / capacity) * 100), 1) if capacity > 0 else None
     return containers
@@ -9429,6 +9498,7 @@ def list_cards(conn, query, user_id):
                COALESCE(col.card_condition, 'Near Mint') AS card_condition,
                COALESCE(col.graded, 0) AS graded,
                col.notes,
+               COALESCE(sale.whatnot_url, '') AS whatnot_url,
                COALESCE(meta.favorite, 0) AS favorite,
                COALESCE(meta.missing_list, 0) AS missing_list,
                COALESCE(meta.wishlist, 0) AS wishlist,
@@ -9445,7 +9515,7 @@ def list_cards(conn, query, user_id):
         LEFT JOIN collection col ON col.user_id = ? AND col.card_id = c.scryfall_id
         LEFT JOIN card_meta meta ON meta.user_id = ? AND meta.card_id = c.scryfall_id AND meta.variant = COALESCE(col.variant, 'Normal')
         LEFT JOIN (
-            SELECT card_id, variant, SUM(quantity) AS sale_quantity, MAX(asking_price) AS sale_price
+            SELECT card_id, variant, SUM(quantity) AS sale_quantity, MAX(asking_price) AS sale_price, MAX(whatnot_url) AS whatnot_url
             FROM card_sales
             WHERE user_id = ?
             GROUP BY card_id, variant
@@ -9483,7 +9553,8 @@ def list_cards(conn, query, user_id):
             SELECT card_id, COALESCE(NULLIF(variant, ''), 'Normal') AS variant,
                    COALESCE(NULLIF(card_condition, ''), ?) AS card_condition,
                    quantity AS sale_quantity,
-                   asking_price AS sale_price
+                   asking_price AS sale_price,
+                   COALESCE(whatnot_url, '') AS whatnot_url
             FROM card_sales
             WHERE user_id = ?
             """,
@@ -9505,6 +9576,7 @@ def list_cards(conn, query, user_id):
                 sale = sale_lookup.get((key[0], key[1], bucket["card_condition"]))
                 bucket["sale_quantity"] = sale["sale_quantity"] if sale else 0
                 bucket["sale_price"] = sale["sale_price"] if sale else card.get("display_price") or 0.01
+                bucket["whatnot_url"] = sale["whatnot_url"] if sale else ""
                 bucket_quantity = int(bucket.get("quantity") or 0)
                 bucket["sale_available_quantity"] = bucket_quantity
             card["condition_inventory"] = buckets
@@ -10542,7 +10614,8 @@ def store_front_card_detail(conn, card_id, current_user_id=None):
                COALESCE(NULLIF(sale.variant, ''), 'Normal') AS variant,
                COALESCE(NULLIF(sale.card_condition, ''), ?) AS card_condition,
                COALESCE(sale.quantity, 0) AS sale_quantity,
-               sale.asking_price
+               sale.asking_price,
+               COALESCE(sale.whatnot_url, '') AS whatnot_url
         FROM card_sales sale
         JOIN users u ON u.id = sale.user_id
         WHERE sale.card_id = ? AND COALESCE(sale.quantity, 0) > 0
@@ -10596,6 +10669,7 @@ def public_profile_contacts(user):
         {"label": "Signal", "value": user["contact_signal"], "href": ""},
         {"label": "Telegram", "value": user["contact_telegram"], "href": f"https://t.me/{user['contact_telegram'].lstrip('@')}" if user["contact_telegram"] else ""},
         {"label": "Website", "value": user["contact_website"], "href": user["contact_website"]},
+        {"label": "Whatnot", "value": user["contact_whatnot"], "href": whatnot_profile_url(user["contact_whatnot"]) if user["contact_whatnot"] else ""},
     ]
     return [contact for contact in contacts if contact["value"]]
 
@@ -10690,7 +10764,7 @@ def profile_user_by_slug(conn, slug):
     user = conn.execute(
         """
         SELECT id, name, email, created_at, store_share_id, public_email, contact_whatsapp, contact_signal,
-               contact_telegram, contact_discord, contact_website, contact_instagram, contact_bluesky,
+               contact_telegram, contact_discord, contact_website, contact_whatnot, contact_instagram, contact_bluesky,
                contact_threads, about_me, profile_image, profile_slug, role, subscription_status
         FROM users
         WHERE profile_slug = ? AND COALESCE(is_banned, 0) = 0
@@ -10960,6 +11034,8 @@ def public_user_profile(conn, slug, viewer_user_id=None):
         "about_me": user["about_me"],
         "member_since": user["created_at"],
         "contacts": public_profile_contacts(user),
+        "whatnot_username": user["contact_whatnot"],
+        "whatnot_url": whatnot_profile_url(user["contact_whatnot"]) if user["contact_whatnot"] else "",
         "stats": stats,
         "favorites": favorite_cards,
         "public_decks": public_profile_decks(conn, user["id"]),
@@ -11074,7 +11150,7 @@ def shared_store(conn, share_id):
     user = conn.execute(
         """
         SELECT id, name, email, store_share_id, public_email, contact_whatsapp, contact_signal,
-               contact_telegram, contact_discord, contact_website, role, subscription_status
+               contact_telegram, contact_discord, contact_website, contact_whatnot, role, subscription_status
         FROM users
         WHERE store_share_id = ?
         """,
@@ -11091,6 +11167,7 @@ def shared_store(conn, share_id):
         {"label": "Telegram", "value": user["contact_telegram"], "href": f"https://t.me/{user['contact_telegram'].lstrip('@')}" if user["contact_telegram"] else ""},
         {"label": "Discord", "value": user["contact_discord"], "href": ""},
         {"label": "Website", "value": user["contact_website"], "href": user["contact_website"]},
+        {"label": "Whatnot", "value": user["contact_whatnot"], "href": whatnot_profile_url(user["contact_whatnot"]) if user["contact_whatnot"] else ""},
     ]
     seller_role = effective_user_role(user)
     return {
@@ -11424,19 +11501,39 @@ def condition_inventory_for_card(conn, user_id, card_id):
             (user_id, card_id),
         ).fetchall()
     }
+    sale_by_bucket = {
+        (row["variant"], card_condition(row["card_condition"])): row
+        for row in conn.execute(
+            """
+            SELECT COALESCE(NULLIF(variant, ''), 'Normal') AS variant,
+                   COALESCE(NULLIF(card_condition, ''), ?) AS card_condition,
+                   COALESCE(quantity, 0) AS sale_quantity,
+                   COALESCE(asking_price, 0.01) AS sale_price,
+                   COALESCE(whatnot_url, '') AS whatnot_url
+            FROM card_sales
+            WHERE user_id = ? AND card_id = ?
+            """,
+            (DEFAULT_CARD_CONDITION, user_id, card_id),
+        ).fetchall()
+    }
     inventory = []
     saleable_remaining = {variant: max(0, total - deck_by_variant.get(variant, 0)) for variant, total in total_by_variant.items()}
     for row in rows:
         variant = row["variant"]
+        condition = card_condition(row["card_condition"])
+        sale_row = sale_by_bucket.get((variant, condition))
         quantity = int(row["quantity"] or 0)
         available = min(quantity, saleable_remaining.get(variant, quantity))
         saleable_remaining[variant] = max(0, saleable_remaining.get(variant, 0) - quantity)
         inventory.append({
             "variant": variant,
-            "card_condition": card_condition(row["card_condition"]),
+            "card_condition": condition,
             "quantity": quantity,
             "available_quantity": available,
             "sale_available_quantity": quantity,
+            "sale_quantity": int(sale_row["sale_quantity"] or 0) if sale_row else 0,
+            "sale_price": float(sale_row["sale_price"] or 0.01) if sale_row else 0.01,
+            "whatnot_url": sale_row["whatnot_url"] if sale_row else "",
             "deck_reserved_quantity": max(0, deck_by_variant.get(variant, 0)),
         })
     return inventory
@@ -11772,7 +11869,8 @@ def card_detail(conn, user_id, card_id, variant="Normal"):
     sale = conn.execute(
         """
         SELECT COALESCE(SUM(quantity), 0) AS sale_quantity,
-               COALESCE(MAX(asking_price), 0) AS sale_price
+               COALESCE(MAX(asking_price), 0) AS sale_price,
+               COALESCE(MAX(whatnot_url), '') AS whatnot_url
         FROM card_sales
         WHERE user_id = ? AND card_id = ? AND COALESCE(NULLIF(variant, ''), 'Normal') = ?
         """,
@@ -11783,6 +11881,7 @@ def card_detail(conn, user_id, card_id, variant="Normal"):
     card["unassigned_quantity"] = max(0, int(card.get("quantity") or 0) - container_quantity)
     card["sale_quantity"] = int(sale["sale_quantity"] or 0) if sale else 0
     card["sale_price"] = float(sale["sale_price"] or 0) if sale else 0
+    card["whatnot_url"] = sale["whatnot_url"] if sale else ""
     card["price_history"] = card_price_history(conn, card_id, variant)
     variants = [item.get("variant") for item in card.get("variant_summaries") or []] or [variant]
     card["price_histories"] = card_price_histories(conn, card_id, variants)
@@ -12531,16 +12630,18 @@ def update_cards_for_sale(conn, user_id, payload):
         asking_price = money(item.get("asking_price"), fallback=fallback_price)
         if asking_price <= 0:
             asking_price = 0.01
+        whatnot_url = clean_whatnot_listing_url(item.get("whatnot_url"))
         conn.execute(
             """
-            INSERT INTO card_sales (user_id, card_id, variant, card_condition, quantity, asking_price, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO card_sales (user_id, card_id, variant, card_condition, quantity, asking_price, whatnot_url, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(user_id, card_id, variant, card_condition) DO UPDATE SET
                 quantity = excluded.quantity,
                 asking_price = excluded.asking_price,
+                whatnot_url = excluded.whatnot_url,
                 updated_at = excluded.updated_at
             """,
-            (user_id, card_id, variant, sale_condition, quantity, asking_price, timestamp),
+            (user_id, card_id, variant, sale_condition, quantity, asking_price, whatnot_url, timestamp),
         )
         notifications += notify_wishlist_users_for_sale(conn, user_id, card_id, variant, sale_condition, quantity, asking_price)
         updated += 1

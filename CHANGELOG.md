@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.4.10 beta
+
+### Added
+- Added Whatnot usernames to Store Contact settings and profile pages, including a profile button that opens the user's Whatnot profile in a new tab.
+- Added optional Whatnot listing URLs to card sale listings, with validation that only accepts `whatnot.com` URLs.
+- Added Whatnot listing links to Store Front seller rows and shared store listings when a seller provides a direct listing URL.
+- Added Magic: The Gathering Arena CSV as an Import page option using the same reviewed column workflow as Moxfield imports.
+- Added Magic Arena Deck as a Deck import option using the same `AMOUNT CARDNAME (SETCODE) NUMBER *F*` review workflow as Moxfield deck imports.
+- Added set-code pills to Containers list cards so users can quickly see which sets are stored in each container.
+
+### Changed
+- Updated README import guidance for Magic: The Gathering Arena CSV/deck imports and Moxfield-compatible export wording.
+- Bumped the app version and user agent to `0.4.10 beta`.
+- Bumped frontend asset versions for the Whatnot, Arena import, and container set-code pill updates.
+
 ## 0.4.8 beta
 
 ### Added

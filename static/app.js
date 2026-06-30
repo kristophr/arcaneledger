@@ -130,6 +130,17 @@ function formatPercent(value) {
   const percent = Number(value || 0);
   return `${Number.isFinite(percent) ? percent.toFixed(1) : "0.0"}%`;
 }
+function isWhatnotUrl(value) {
+  const text = String(value || "").trim();
+  if (!text) return true;
+  try {
+    const url = new URL(/^https?:\/\//i.test(text) ? text : `https://${text}`);
+    const host = url.hostname.toLowerCase();
+    return host === "whatnot.com" || host.endsWith(".whatnot.com");
+  } catch {
+    return false;
+  }
+}
 const cardConditions = ["Near Mint", "Lightly Played", "Moderately Played", "Heavily Played", "Damaged"];
 const reportFields = [
   { key: "card_id", label: "Card ID" },
@@ -4104,6 +4115,10 @@ function renderSaleList() {
         Asking
         <input name="asking_price" type="number" min="0.01" step="0.01" value="${Number(card.sale_price || card.display_price || 0.01).toFixed(2)}">
       </label>
+      <label class="sale-inline-field sale-whatnot-field">
+        Whatnot URL
+        <input name="whatnot_url" type="url" value="${escapeAttribute(card.whatnot_url || "")}" placeholder="https://www.whatnot.com/...">
+      </label>
       <button class="mark-sold-button" type="button" aria-label="Mark sold" title="Mark sold">
         <span class="sold-icon" aria-hidden="true">$$</span>
       </button>
@@ -4224,6 +4239,7 @@ function renderStoreFrontCardDetail(card, sellers) {
       </span>
       <b>${integer.format(seller.sale_quantity || 0)}</b>
       <b>${dollars.format(seller.asking_price || 0)}</b>
+      ${seller.whatnot_url ? `<a class="secondary-button compact-button" href="${escapeHtml(seller.whatnot_url)}" target="_blank" rel="noreferrer" aria-label="Open Whatnot listing">Whatnot</a>` : "<span></span>"}
       <button class="share-button store-front-favorite-button ${seller.favorite_store ? "is-favorite" : ""}" type="button" aria-label="${seller.favorite_store ? "Remove store favorite" : "Favorite store listing"}" title="${seller.is_current_user ? "This is your listing" : seller.favorite_store ? "Remove favorite" : "Favorite listing"}" ${seller.is_current_user ? "disabled" : ""}>☆</button>
     </article>
   `).join("") : '<div class="empty-state">No sellers currently have this card listed.</div>';
@@ -4271,6 +4287,7 @@ function renderStoreFrontCardDetail(card, sellers) {
         <span>Seller</span>
         <span>Qty</span>
         <span>Ask each</span>
+        <span>Listing</span>
         <span>Save</span>
       </div>
       ${sellerRows}
@@ -4295,7 +4312,8 @@ function renderStoreFrontCardDetail(card, sellers) {
         setStatus(error.message, "error", els.storeFrontStatus);
       }
     });
-    row.addEventListener("click", () => {
+    row.addEventListener("click", (event) => {
+      if (event.target.closest("a, button")) return;
       if (row.dataset.ownStore === "1") {
         closeStoreFrontCardDetail();
         if (els.saleSearchInput) els.saleSearchInput.value = row.dataset.cardTitle || "";
@@ -5201,12 +5219,14 @@ function formatDuration(seconds) {
 function salePayloadFromRow(row) {
   const quantityInput = row.querySelector('input[name="quantity"]');
   const priceInput = row.querySelector('input[name="asking_price"]');
+  const whatnotInput = row.querySelector('input[name="whatnot_url"]');
   return {
     card_id: row.dataset.cardId,
     variant: row.dataset.variant || "Normal",
     card_condition: row.dataset.condition || "Near Mint",
     quantity: Number(quantityInput?.value || 0),
     asking_price: Number(priceInput?.value || 0),
+    whatnot_url: whatnotInput?.value.trim() || "",
   };
 }
 
@@ -5218,6 +5238,9 @@ async function saveSaleRow(row) {
   }
   if (payload.asking_price <= 0) {
     throw new Error("Asking price must be greater than $0.00.");
+  }
+  if (!isWhatnotUrl(payload.whatnot_url)) {
+    throw new Error("Whatnot listing URL must be on whatnot.com.");
   }
   await api("/api/cards/for-sale", {
     method: "POST",
@@ -6176,11 +6199,15 @@ function deckImportFormat() {
   return els.importDeckForm.deck_import_format?.value || "json";
 }
 
+function deckImportIsMoxfieldLikeFormat(format) {
+  return ["moxfield_deck", "arena_deck"].includes(format || "");
+}
+
 function updateDeckImportModeUI() {
   const format = deckImportFormat();
-  if (els.importDeckMoxfieldHelp) els.importDeckMoxfieldHelp.hidden = format !== "moxfield_deck";
+  if (els.importDeckMoxfieldHelp) els.importDeckMoxfieldHelp.hidden = !deckImportIsMoxfieldLikeFormat(format);
   if (els.importDeckJsonText) {
-    els.importDeckJsonText.placeholder = format === "moxfield_deck"
+    els.importDeckJsonText.placeholder = deckImportIsMoxfieldLikeFormat(format)
       ? "1 Lightning Bolt (CLU) 141 *F*\n4 Island (FIN) 281\n2 Sol Ring"
       : "Paste Arcane Ledger deck JSON or deck CSV here";
   }
@@ -6194,7 +6221,7 @@ function deckImportPayloadFromText(text) {
 }
 
 function deckImportIsMoxfield() {
-  return state.pendingDeckImport?.format === "moxfield_deck";
+  return deckImportIsMoxfieldLikeFormat(state.pendingDeckImport?.format);
 }
 
 function moxfieldDeckCardRows() {
@@ -6829,6 +6856,7 @@ function renderSettingsPage() {
   els.settingsPageForm.contact_telegram.value = user.contact_telegram || "";
   els.settingsPageForm.contact_discord.value = user.contact_discord || "";
   els.settingsPageForm.contact_website.value = user.contact_website || "";
+  els.settingsPageForm.contact_whatnot.value = user.contact_whatnot || "";
   els.settingsPageForm.language.value = settings.language || "en";
   els.settingsPageForm.theme.value = settings.theme || "light";
   els.settingsPageForm.default_purchase_price.value = userDefaultPurchasePrice().toFixed(2);
@@ -7025,6 +7053,7 @@ function userSettingsPayload(overrides = {}) {
     contact_telegram: user.contact_telegram || "",
     contact_discord: user.contact_discord || "",
     contact_website: user.contact_website || "",
+    contact_whatnot: user.contact_whatnot || "",
     contact_instagram: user.contact_instagram || "",
     contact_bluesky: user.contact_bluesky || "",
     contact_threads: user.contact_threads || "",
@@ -7847,6 +7876,7 @@ function selectCardForDetailAssignment(card) {
     display_price: Number(card.display_price || card.market_price || 0),
     sale_quantity: Number(card.sale_quantity || 0),
     sale_price: Number(card.sale_price || card.display_price || card.market_price || 0),
+    whatnot_url: card.whatnot_url || "",
     card_condition: conditionText(card),
     condition_inventory: Array.isArray(card.condition_inventory) ? card.condition_inventory : [],
     container_memberships: Array.isArray(card.container_memberships) ? card.container_memberships : [],
@@ -7934,6 +7964,19 @@ function closeAssignDeckModal() {
   els.assignDeckCards.innerHTML = "";
 }
 
+function containerSetPills(container) {
+  const setCodes = Array.isArray(container.set_codes) ? container.set_codes.filter(Boolean) : [];
+  if (!setCodes.length) return "";
+  const visible = setCodes.slice(0, 7);
+  const hiddenCount = Math.max(0, setCodes.length - visible.length);
+  return `
+    <div class="container-set-pills" aria-label="Stored sets">
+      ${visible.map((code) => `<span>${escapeHtml(String(code).toUpperCase())}</span>`).join("")}
+      ${hiddenCount ? `<span>+${integer.format(hiddenCount)}</span>` : ""}
+    </div>
+  `;
+}
+
 function renderContainers(containers) {
   els.containersGrid.innerHTML = "";
   if (!containers.length) {
@@ -7951,6 +7994,7 @@ function renderContainers(containers) {
         <p class="eyebrow">${escapeHtml(containerTypeLabel(container.storage_type))}${container.strict_unique ? " - Strict" : ""}</p>
         <h3>${containerIconHtml(container.storage_type)}<span>${escapeHtml(container.name)}</span></h3>
         ${container.location ? `<span class="container-location">${escapeHtml(container.location)}</span>` : ""}
+        ${containerSetPills(container)}
       </div>
       <strong>${integer.format(container.stored_quantity || 0)}${Number(container.capacity || 0) > 0 ? ` / ${integer.format(container.capacity || 0)}` : ""}</strong>
       <span>${Number(container.capacity || 0) > 0 ? `${formatPercent(container.fill_percent || 0)} full` : `${integer.format(container.card_count || 0)} unique cards stored`}</span>
@@ -8321,11 +8365,25 @@ function renderImportWizard() {
   }
   renderImportProgress();
   if (wizard.step === "map") {
-    if (wizard.format === "csv" || wizard.format === "moxfield") renderImportMappingStep();
+    if (importWizardIsCsvFormat(wizard.format)) renderImportMappingStep();
     else renderImportJsonPreviewStep();
   }
   if (wizard.step === "review") renderImportWizardReview();
   if (wizard.step === "recap") renderImportWizardRecap();
+}
+
+function importWizardIsMappedCsvFormat(format) {
+  return ["moxfield", "arena"].includes(format || "");
+}
+
+function importWizardIsCsvFormat(format) {
+  return format === "csv" || importWizardIsMappedCsvFormat(format);
+}
+
+function importWizardFormatLabel(format) {
+  if (format === "moxfield") return "Moxfield";
+  if (format === "arena") return "Magic Arena";
+  return "CSV";
 }
 
 async function importWizardSourceNext() {
@@ -8344,16 +8402,16 @@ async function importWizardSourceNext() {
     const name = file.name.toLowerCase();
     format = name.endsWith(".csv") || file.type.includes("csv") ? "csv" : "json";
   }
-  if (requestedFormat === "moxfield") {
+  if (importWizardIsMappedCsvFormat(requestedFormat)) {
     if (format !== "csv") {
-      setStatus("Moxfield imports must be CSV files.", "error", els.importStatus);
+      setStatus(`${importWizardFormatLabel(requestedFormat)} imports must be CSV files.`, "error", els.importStatus);
       return;
     }
-    format = "moxfield";
+    format = requestedFormat;
   }
   state.importWizard.text = text;
   state.importWizard.format = format;
-  if (format === "csv" || format === "moxfield") {
+  if (importWizardIsCsvFormat(format)) {
     const result = await api("/api/import/csv/headers", {
       method: "POST",
       body: JSON.stringify({ text, format }),
@@ -8362,7 +8420,7 @@ async function importWizardSourceNext() {
     state.importWizard.mapping = result.mapping || {};
     state.importWizard.fields = result.fields || [];
     state.importWizard.rowCount = result.row_count || 0;
-    setStatus(`Loaded ${format === "moxfield" ? "Moxfield " : ""}CSV with ${integer.format(state.importWizard.rowCount)} row${Number(state.importWizard.rowCount) === 1 ? "" : "s"}.`, "success", els.importStatus);
+    setStatus(`Loaded ${format === "csv" ? "" : `${importWizardFormatLabel(format)} `}CSV with ${integer.format(state.importWizard.rowCount)} row${Number(state.importWizard.rowCount) === 1 ? "" : "s"}.`, "success", els.importStatus);
   } else {
     const result = await api("/api/import/json/preview", {
       method: "POST",
@@ -8380,7 +8438,7 @@ async function importWizardSourceNext() {
 
 function renderImportMappingStep() {
   const wizard = state.importWizard;
-  if (els.importMapTitle) els.importMapTitle.textContent = wizard.format === "moxfield" ? "Review Moxfield Columns" : "Map CSV Columns";
+  if (els.importMapTitle) els.importMapTitle.textContent = importWizardIsMappedCsvFormat(wizard.format) ? `Review ${importWizardFormatLabel(wizard.format)} Columns` : "Map CSV Columns";
   if (els.importMapSubtitle) els.importMapSubtitle.textContent = `${integer.format(wizard.headers.length)} headers · ${integer.format(wizard.rowCount || 0)} rows`;
   if (els.importJsonPreview) els.importJsonPreview.innerHTML = "";
   const headers = ["", ...wizard.headers];
@@ -8577,7 +8635,7 @@ async function importWizardMatchCsvRows(wizard) {
 
 async function importWizardMapNext() {
   const wizard = state.importWizard;
-  if (wizard.format === "csv" || wizard.format === "moxfield") {
+  if (importWizardIsCsvFormat(wizard.format)) {
     if (!wizard.mapping.name && !wizard.mapping.scryfall_id) {
       setStatus("Map at least Card title or Scryfall ID before continuing.", "error", els.importStatus);
       return;
@@ -9640,6 +9698,7 @@ function renderSaleCards() {
         sale_available_quantity: Number(bucket.sale_available_quantity ?? bucket.quantity ?? 0),
         sale_quantity: Number(bucket.sale_quantity || 0),
         sale_price: defaultSalePrice(bucket.sale_price || card.sale_price, market),
+        whatnot_url: bucket.whatnot_url || card.whatnot_url || "",
         deck_reserved_quantity: Number(bucket.deck_reserved_quantity || 0),
       }))
       .filter((bucket) => bucket.quantity > 0);
@@ -9650,6 +9709,7 @@ function renderSaleCards() {
         sale_available_quantity: Number(card.saleable_quantity ?? card.quantity ?? 0),
         sale_quantity: Number(card.sale_quantity || 0),
         sale_price: defaultSalePrice(card.sale_price, market),
+        whatnot_url: card.whatnot_url || "",
         deck_reserved_quantity: cardDeckQuantity,
       });
     }
@@ -9692,6 +9752,10 @@ function renderSaleCards() {
         <label class="sale-inline-field">
           Asking Price
           <input name="asking_price" type="number" min="0.01" step="0.01" value="${defaultSalePrice(bucket.sale_price, market).toFixed(2)}">
+        </label>
+        <label class="sale-inline-field sale-whatnot-field">
+          Whatnot Listing URL
+          <input name="whatnot_url" type="url" value="${escapeAttribute(bucket.whatnot_url || "")}" placeholder="https://www.whatnot.com/...">
         </label>
       `;
       els.saleCards.appendChild(row);
@@ -9747,6 +9811,7 @@ function selectedSaleCardFromDetail(card) {
     display_price: Number(card.display_price || card.market_price || 0),
     sale_quantity: Number(card.sale_quantity || 0),
     sale_price: Number(card.sale_price || card.display_price || card.market_price || 0),
+    whatnot_url: card.whatnot_url || "",
     card_condition: conditionText(card),
     condition_inventory: buckets,
     image_small: card.image_small || "",
@@ -11359,6 +11424,7 @@ function renderSharedStore(store) {
         <small>${escapeHtml(card.set_name || "")} #${escapeHtml(card.collector_number || "")}</small>
       </div>
       <b>${integer.format(card.sale_quantity || 0)} @ ${dollars.format(card.sale_price || 0)}</b>
+      ${card.whatnot_url ? `<a class="secondary-button compact-button" href="${escapeHtml(card.whatnot_url)}" target="_blank" rel="noreferrer">Whatnot</a>` : ""}
     </article>
   `).join("") : '<div class="empty-state">No active sale listings.</div>';
   els.storeShareShell.innerHTML = `
@@ -11537,6 +11603,7 @@ function renderUserProfile(profile) {
       </div>
       <div class="user-profile-actions">
         ${profile.store_url ? `<a class="primary-button" href="${escapeHtml(profile.store_url)}">View Store</a>` : ""}
+        ${profile.whatnot_url ? `<a class="secondary-button" href="${escapeHtml(profile.whatnot_url)}" target="_blank" rel="noreferrer">Whatnot</a>` : ""}
         ${decks.length ? `<a class="secondary-button" href="#profileDecks">Public Decks</a>` : ""}
         ${addFriendButton}
         ${alreadyFriend}
@@ -13438,9 +13505,11 @@ function wireEvents() {
       if (!checked) continue;
       const quantityInput = row.querySelector('input[name="quantity"]');
       const priceInput = row.querySelector('input[name="asking_price"]');
+      const whatnotInput = row.querySelector('input[name="whatnot_url"]');
       const quantity = Number(quantityInput?.value || 0);
       const max = Number(quantityInput?.max || 0);
       const askingPrice = Number(priceInput?.value || 0);
+      const whatnotUrl = whatnotInput?.value.trim() || "";
       if (quantity < 1 || quantity > max) {
         setStatus(`Sale quantity must be between 1 and ${integer.format(max)}.`, "error", els.saleModalStatus);
         return;
@@ -13449,12 +13518,18 @@ function wireEvents() {
         setStatus("Asking price must be greater than $0.00.", "error", els.saleModalStatus);
         return;
       }
+      if (!isWhatnotUrl(whatnotUrl)) {
+        setStatus("Whatnot listing URL must be on whatnot.com.", "error", els.saleModalStatus);
+        whatnotInput?.focus();
+        return;
+      }
       cards.push({
         card_id: row.dataset.cardId,
         variant: row.dataset.variant || "Normal",
         card_condition: row.dataset.condition || "Near Mint",
         quantity,
         asking_price: askingPrice,
+        whatnot_url: whatnotUrl,
       });
     }
     if (!cards.length) {
