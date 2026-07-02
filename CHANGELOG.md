@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.11 beta
+
+### Changed
+- Added a focused mobile layout pass for phone-sized screens, including a compact horizontal navigation rail, tighter topbar controls, stacked page grids, and cleaner single-column layouts.
+- Improved collection cards, list rows, card detail pages, reports, admin panels, decks, containers, profiles, and shared views on narrow screens.
+- Made modals more usable on phones with wider mobile sizing, sticky headers/actions, and one-column form layouts.
+- Bumped the app version and user agent to `0.4.11 beta`.
+- Bumped the stylesheet asset version for the mobile layout update.
+
 ## 0.4.10 beta
 
 ### Added

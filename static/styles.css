@@ -10559,3 +10559,455 @@ body:not(.is-authenticated) .nav-bottom {
   grid-column: 1 / -1;
 }
 }
+
+@media (max-width: 640px) {
+  :root {
+    --mobile-page-pad: 12px;
+  }
+
+  body {
+    min-width: 0;
+  }
+
+  .topbar {
+    position: relative;
+    gap: 10px;
+    padding: 12px var(--mobile-page-pad);
+  }
+
+  .topbar > div:first-child {
+    min-width: 0;
+  }
+
+  .topbar h1 {
+    max-width: 100%;
+    font-size: 1.18rem;
+    line-height: 1.12;
+    overflow-wrap: anywhere;
+  }
+
+  .topbar .eyebrow {
+    margin-bottom: 2px;
+    font-size: 0.66rem;
+  }
+
+  .actions {
+    gap: 7px;
+    justify-content: flex-start;
+  }
+
+  .actions .primary-button,
+  .actions .secondary-button,
+  .actions .icon-button,
+  .topbar-plus-button {
+    min-height: 34px;
+  }
+
+  .actions .primary-button,
+  .actions .secondary-button {
+    padding: 0 10px;
+    font-size: 0.82rem;
+  }
+
+  .app-shell,
+  .nav-collapsed .app-shell {
+    display: block;
+    min-height: auto;
+  }
+
+  body.has-site-wallpaper::before,
+  .nav-collapsed.has-site-wallpaper::before {
+    inset: 116px 0 0 0;
+    opacity: 0.09;
+  }
+
+  .command-menu,
+  .nav-collapsed .command-menu {
+    position: sticky;
+    top: 0;
+    z-index: 12;
+    height: auto;
+    min-height: 0;
+    display: block;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: thin;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+    padding: 8px var(--mobile-page-pad);
+    background: var(--topbar-bg);
+    backdrop-filter: blur(14px);
+  }
+
+  .nav-collapse-button {
+    display: none;
+  }
+
+  .command-menu nav,
+  .command-menu .nav-bottom {
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 6px;
+    width: max-content;
+    min-width: 100%;
+  }
+
+  .command-menu .nav-bottom {
+    margin-top: 6px;
+    padding-top: 7px;
+    border-top: 1px solid var(--line);
+  }
+
+  .nav-command,
+  .nav-collapsed .nav-command {
+    flex: 0 0 auto;
+    width: auto;
+    min-height: 36px;
+    justify-content: flex-start;
+    gap: 7px;
+    padding: 0 10px;
+    font-size: 0.78rem;
+    white-space: nowrap;
+  }
+
+  .nav-command > span:not(.nav-unread-dot) {
+    font-size: 0.98rem;
+  }
+
+  .page-shell,
+  .dashboard-band,
+  .collection-band,
+  .sets-band,
+  .decks-band,
+  .containers-band,
+  .reports-band,
+  .settings-band,
+  .admin-band,
+  .home-band,
+  .news-band,
+  .store-front-band,
+  .search-band,
+  .user-profile-band {
+    width: 100%;
+    min-width: 0;
+    padding-left: var(--mobile-page-pad);
+    padding-right: var(--mobile-page-pad);
+  }
+
+  .section-head,
+  .panel-head,
+  .reports-result-head,
+  .deck-editor-head,
+  .wishlist-detail-toolbar,
+  .bulk-bar,
+  .wishlist-bulk-bar,
+  .filters {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .bulk-bar,
+  .wishlist-bulk-bar {
+    justify-content: flex-start;
+  }
+
+  .filters > *,
+  .section-head button,
+  .section-head select,
+  .panel-head button,
+  .bulk-bar button,
+  .wishlist-bulk-bar button {
+    width: 100%;
+  }
+
+  .home-dashboard-layout,
+  .home-meta-grid,
+  .home-features-list,
+  .metric-grid,
+  .dashboard-grid,
+  .sets-grid,
+  .cards-grid,
+  .deck-list,
+  .container-list,
+  .reports-builder,
+  .reports-result-card,
+  .settings-layout,
+  .admin-grid,
+  .admin-content-columns,
+  .user-profile-layout,
+  .user-profile-hero,
+  .user-profile-stats,
+  .profile-deck-list,
+  .card-detail-layout,
+  .card-detail-lower-grid,
+  .card-detail-insights,
+  .shared-card,
+  .shared-card-details,
+  .shared-deck-content,
+  .store-front-card-detail,
+  .store-front-market-details,
+  .import-grid,
+  .import-source-grid {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .panel,
+  .card-row,
+  .set-card,
+  .deck-list-card,
+  .container-list-card,
+  .profile-panel,
+  .card-insight-panel,
+  .purchase-history-panel {
+    border-radius: 8px;
+  }
+
+  .cards-grid {
+    gap: 12px;
+  }
+
+  .collection-card-head {
+    gap: 8px;
+    padding: 12px 12px 9px;
+  }
+
+  .collection-card-head h3 {
+    font-size: 1rem;
+  }
+
+  .card-actions {
+    gap: 5px;
+  }
+
+  .favorite-button,
+  .wishlist-button,
+  .modal-close,
+  .icon-only-button,
+  .detail-action-button,
+  .detail-storage-button {
+    min-width: 34px;
+    width: 34px;
+    height: 34px;
+  }
+
+  .card-divider {
+    margin: 0 12px;
+  }
+
+  .collection-card-body {
+    grid-template-columns: 82px minmax(0, 1fr);
+    gap: 10px;
+    padding: 12px;
+  }
+
+  .card-art {
+    width: 82px;
+    height: 115px;
+  }
+
+  .card-tile-art-bg {
+    background-position: right -36px center;
+    background-size: min(92%, 330px) auto;
+    opacity: 0.18;
+  }
+
+  .quantity-watermark {
+    right: 4px;
+    bottom: 2px;
+    font-size: clamp(5.6rem, 26vw, 8rem);
+  }
+
+  .variant-summary-table {
+    padding: 6px;
+    overflow-x: auto;
+  }
+
+  .variant-summary-header,
+  .variant-summary-row {
+    min-width: 330px;
+  }
+
+  .card-list-row,
+  .missing-card-row,
+  .wishlist-card-row,
+  .sale-card-row {
+    grid-template-columns: 56px minmax(0, 1fr) auto;
+    gap: 10px;
+    padding: 9px;
+  }
+
+  .card-list-row > input,
+  .wishlist-card-row > input,
+  .wishlist-row-check {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+
+  .list-card-art,
+  .missing-card-art,
+  .sale-card-art {
+    width: 56px;
+    height: 78px;
+  }
+
+  .list-pills,
+  .list-actions,
+  .sale-available,
+  .sale-value-pill,
+  .sale-card-row .sale-inline-field {
+    grid-column: 2 / -1;
+    justify-content: flex-start;
+  }
+
+  .card-detail-band,
+  .shared-card-band {
+    padding: 12px;
+  }
+
+  .card-detail-shell,
+  .shared-card-shell {
+    width: 100%;
+  }
+
+  .editable-card-detail {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 12px;
+  }
+
+  .editable-card-detail::before {
+    opacity: 0.08;
+  }
+
+  .card-detail-toolbar {
+    display: grid;
+    grid-template-columns: repeat(4, 34px);
+    justify-content: start;
+    gap: 8px;
+  }
+
+  .shared-card-art {
+    width: min(220px, 72vw);
+    justify-self: center;
+  }
+
+  .shared-card-copy h2 {
+    font-size: clamp(1.45rem, 8vw, 2rem);
+  }
+
+  .card-ledger-row,
+  .purchase-history-row,
+  .card-comment-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .card-price-chart {
+    min-height: 165px;
+  }
+
+  .modal-overlay {
+    align-items: stretch;
+    justify-items: stretch;
+    place-items: stretch;
+    padding: 8px;
+  }
+
+  .edit-modal,
+  .add-modal,
+  .sale-modal,
+  .json-modal,
+  .admin-email-template-modal,
+  .admin-announcement-modal,
+  .announcement-detail-modal,
+  .news-detail-modal,
+  .news-editor-modal,
+  .news-studio-modal,
+  .store-front-detail-modal,
+  .container-detail-modal,
+  .deck-detail-modal {
+    width: 100%;
+    max-width: none;
+    max-height: calc(100dvh - 16px);
+    border-radius: 8px;
+  }
+
+  .edit-modal-head,
+  .modal-head {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    align-items: flex-start;
+    padding: 12px;
+    background: var(--modal-bg);
+  }
+
+  .edit-form,
+  .add-card-form,
+  .add-purchase-table,
+  .add-card-purchase-meta,
+  .add-advanced-filters,
+  .admin-template-address-grid,
+  .report-field-grid,
+  .report-filter-grid,
+  .container-form-grid,
+  .profile-form-grid {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .modal-actions,
+  .deck-detail-footer,
+  .report-actions,
+  .news-studio-actions,
+  .admin-report-actions {
+    position: sticky;
+    bottom: 0;
+    z-index: 2;
+    flex-wrap: wrap;
+    justify-content: stretch;
+    padding: 10px 12px;
+    border-top: 1px solid var(--line);
+    background: var(--modal-bg);
+  }
+
+  .modal-actions button,
+  .deck-detail-footer button,
+  .report-actions button,
+  .news-studio-actions button {
+    flex: 1 1 140px;
+  }
+
+  .reports-table-wrap,
+  .container-allocation-table,
+  .bulk-container-allocation-table,
+  .container-allocation-import-table,
+  .variant-summary-table {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .container-allocation-header,
+  .bulk-container-allocation-header,
+  .container-allocation-import-header {
+    display: none;
+  }
+
+  .container-allocation-row,
+  .bulk-container-allocation-row,
+  .container-allocation-import-row,
+  .sale-modal-row,
+  .deck-card-row,
+  .deck-card-search-result,
+  .assign-deck-card,
+  .assign-wishlist-card,
+  .moxfield-deck-card-row,
+  .admin-email-template-row,
+  .admin-announcement-row,
+  .admin-user-row {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .container-allocation-row label,
+  .bulk-container-allocation-row label {
+    width: 100%;
+  }
+}
