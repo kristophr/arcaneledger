@@ -4228,6 +4228,26 @@ body:not(.is-authenticated) .nav-bottom {
   font-weight: 850;
 }
 
+.profile-more-link {
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  margin-top: 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 7px 12px;
+  color: var(--ink);
+  background: var(--button-bg);
+  font-weight: 900;
+  text-decoration: none;
+}
+
+.profile-more-link:hover {
+  border-color: var(--accent);
+  background: var(--button-hover);
+}
+
 .sale-card-row {
   display: grid;
   grid-template-columns: 64px minmax(150px, 1fr) max-content max-content minmax(72px, 88px) minmax(94px, 112px) minmax(150px, 220px) 34px 34px;

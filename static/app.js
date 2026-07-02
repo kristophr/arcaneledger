@@ -2688,8 +2688,11 @@ function storeRouteId() {
 }
 
 function userProfileRoute() {
-  const match = window.location.pathname.match(/^\/user\/([^/]+)\/?$/);
-  return match ? decodeURIComponent(match[1]) : "";
+  const match = window.location.pathname.match(/^\/user\/([^/]+)(?:\/(blog|favorites))?\/?$/);
+  return match ? {
+    slug: decodeURIComponent(match[1]),
+    view: match[2] || "profile",
+  } : null;
 }
 
 function favoritesShareRoute() {
@@ -11512,6 +11515,14 @@ function renderUserProfile(profile) {
   const friends = profile.friends || [];
   const wallMessages = profile.wall_messages || [];
   const posts = profile.posts || [];
+  const profileView = profile.view || "profile";
+  const profileBaseUrl = `/user/${encodeURIComponent(profile.profile_slug || "")}`;
+  const isBlogView = profileView === "blog";
+  const isFavoritesView = profileView === "favorites";
+  const favoriteDisplayCards = isFavoritesView ? favorites : favorites.slice(0, 5);
+  const favoriteHasMore = !isFavoritesView && favorites.length > 5;
+  const displayedPosts = isBlogView ? posts : posts.length >= 3 ? posts.slice(0, 2) : posts;
+  const postHasMore = !isBlogView && posts.length >= 3;
   const contactHtml = contacts.length ? `
     <div class="store-contact-list profile-contact-list" aria-label="Profile contact methods">
       ${contacts.map((contact) => {
@@ -11526,7 +11537,7 @@ function renderUserProfile(profile) {
   const profileImage = profile.profile_image
     ? `<img src="${escapeHtml(profile.profile_image)}" alt="${escapeHtml(profile.name || "User")} profile picture">`
     : `<span>${escapeHtml((profile.name || "U").slice(0, 1).toUpperCase())}</span>`;
-  const favoriteRows = profileFavoriteRowsHtml(favorites);
+  const favoriteRows = profileFavoriteRowsHtml(favoriteDisplayCards);
   const deckRows = decks.length ? `
     <div class="profile-deck-list">
       ${decks.map((deck) => `
@@ -11561,7 +11572,7 @@ function renderUserProfile(profile) {
       <button class="primary-button" type="submit">Post Update</button>
     </form>
   ` : "";
-  const postRows = posts.length ? posts.map((post) => `
+  const postRows = displayedPosts.length ? displayedPosts.map((post) => `
     <article class="profile-post">
       <div class="profile-feed-author">
         ${profileAvatarHtml(profile)}
@@ -11585,8 +11596,11 @@ function renderUserProfile(profile) {
       </div>
     </article>
   `).join("") : '<div class="empty-state compact-empty">No blog posts yet.</div>';
+  const favoriteMoreLink = favoriteHasMore ? `<a class="profile-more-link" href="${escapeHtml(`${profileBaseUrl}/favorites`)}">More...</a>` : "";
+  const postMoreLink = postHasMore ? `<a class="profile-more-link" href="${escapeHtml(`${profileBaseUrl}/blog`)}">More...</a>` : "";
   const addFriendButton = profile.can_add_friend ? '<button id="profileAddFriendButton" class="secondary-button" type="button">Add Friend</button>' : "";
   const alreadyFriend = profile.is_friend ? '<span class="profile-status-pill">Friend Added</span>' : "";
+  const backToProfile = profileView !== "profile" ? `<a class="secondary-button" href="${escapeHtml(profileBaseUrl)}">Back to Profile</a>` : "";
   const gameHandleHtml = [
     profile.mtg_arena_username ? `<span><strong>MtG Arena:</strong> ${escapeHtml(profile.mtg_arena_username)}</span>` : "",
     profile.mtgo_username ? `<span><strong>MTGO:</strong> ${escapeHtml(profile.mtgo_username)}</span>` : "",
@@ -11614,6 +11628,7 @@ function renderUserProfile(profile) {
         ${profile.store_url ? `<a class="primary-button" href="${escapeHtml(profile.store_url)}">View Store</a>` : ""}
         ${profile.whatnot_url ? `<a class="secondary-button" href="${escapeHtml(profile.whatnot_url)}" target="_blank" rel="noreferrer">Whatnot</a>` : ""}
         ${decks.length ? `<a class="secondary-button" href="#profileDecks">Public Decks</a>` : ""}
+        ${backToProfile}
         ${addFriendButton}
         ${alreadyFriend}
       </div>
@@ -11623,9 +11638,10 @@ function renderUserProfile(profile) {
           <section class="profile-panel">
             <div class="panel-head">
               <h3>Favorite Cards</h3>
-              <span>${integer.format(favorites.length)} shown</span>
+              <span>${integer.format(favoriteDisplayCards.length)} shown</span>
             </div>
             <div class="deck-detail-list">${favoriteRows}</div>
+            ${favoriteMoreLink}
           </section>
           <section id="profileDecks" class="profile-panel">
             <div class="panel-head">
@@ -11656,10 +11672,11 @@ function renderUserProfile(profile) {
           <section class="profile-panel profile-post-panel">
             <div class="panel-head">
               <h3>Blog Posts</h3>
-              <span>${integer.format(posts.length)} posts</span>
+              <span>${integer.format(displayedPosts.length)} post${displayedPosts.length === 1 ? "" : "s"}</span>
             </div>
             ${postForm}
             <div class="profile-post-list">${postRows}</div>
+            ${postMoreLink}
           </section>
         </div>
       </div>
@@ -11841,11 +11858,14 @@ async function loadSharedStore(shareId) {
   }
 }
 
-async function loadUserProfile(slug) {
+async function loadUserProfile(slug, view = "profile") {
   showPage("user-profile");
   els.userProfileShell.innerHTML = '<div class="empty-state">Loading profile...</div>';
   try {
-    const profile = await api(`/api/users/profile/${encodeURIComponent(slug)}`);
+    const normalizedView = ["blog", "favorites"].includes(view) ? view : "profile";
+    const query = normalizedView === "profile" ? "" : `?view=${encodeURIComponent(normalizedView)}`;
+    const profile = await api(`/api/users/profile/${encodeURIComponent(slug)}${query}`);
+    profile.view = normalizedView;
     renderUserProfile(profile);
   } catch (error) {
     els.userProfileShell.innerHTML = `<div class="empty-state">${escapeHtml(error.message)}</div>`;
@@ -12023,9 +12043,9 @@ function wireEvents() {
       loadSetPage(setCode);
       return;
     }
-    const profileSlug = userProfileRoute();
-    if (profileSlug) {
-      loadUserProfile(profileSlug);
+    const profileRoute = userProfileRoute();
+    if (profileRoute) {
+      loadUserProfile(profileRoute.slug, profileRoute.view);
       return;
     }
     const newsPostId = newsRouteId();
@@ -13674,7 +13694,7 @@ async function boot() {
   const initialWishlistShareId = wishlistRouteId();
   const initialContainerShareId = containerRouteId();
   const initialStoreShareId = storeRouteId();
-  const initialUserProfileSlug = userProfileRoute();
+  const initialUserProfileRoute = userProfileRoute();
   const initialFavoritesShare = favoritesShareRoute();
   const initialNewsPostId = newsRouteId();
   const initialCardDetail = cardDetailRoute();
@@ -13729,8 +13749,8 @@ async function boot() {
     loadEmailVerification(initialVerificationToken);
   } else if (initialPasswordResetToken) {
     loadPasswordReset(initialPasswordResetToken);
-  } else if (initialUserProfileSlug) {
-    loadUserProfile(initialUserProfileSlug);
+  } else if (initialUserProfileRoute) {
+    loadUserProfile(initialUserProfileRoute.slug, initialUserProfileRoute.view);
   } else if (initialNewsPostId) {
     loadNewsRoute(initialNewsPostId).catch((error) => setStatus(error.message, "error", els.newsStatus));
   } else if (isRootRoute) {

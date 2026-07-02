@@ -9497,6 +9497,7 @@ def list_cards(conn, query, user_id):
         "value": "owned_value DESC, display_price DESC, c.name",
         "gain": "gain_loss DESC, c.name",
         "acquired": "col.acquired_date DESC, c.name",
+        "favorite": "meta.updated_at DESC, c.name",
         "set-owned": "CASE WHEN COALESCE(col.quantity, 0) > 0 THEN 0 ELSE 1 END, CAST(c.collector_number AS INTEGER), c.collector_number, c.name",
     }
     order_sql = sort_map.get(sort, sort_map["value"])
@@ -10852,7 +10853,8 @@ def profile_wall_rows(conn, profile_user_id):
     return messages
 
 
-def profile_post_rows(conn, profile_user_id):
+def profile_post_rows(conn, profile_user_id, limit=20):
+    limit = max(1, min(int(limit or 20), 5000))
     post_rows = conn.execute(
         """
         SELECT p.id, p.body, p.card_id, p.deck_id, p.variant, p.created_at, p.updated_at,
@@ -10882,9 +10884,9 @@ def profile_post_rows(conn, profile_user_id):
         WHERE p.user_id = ?
         GROUP BY p.id
         ORDER BY p.created_at DESC
-        LIMIT 20
+        LIMIT ?
         """,
-        (profile_user_id,),
+        (profile_user_id, limit),
     ).fetchall()
     posts = []
     for row in post_rows:
@@ -11021,7 +11023,10 @@ def profile_posts_for_card(conn, card_id, variant=None):
     }
 
 
-def public_user_profile(conn, slug, viewer_user_id=None):
+def public_user_profile(conn, slug, viewer_user_id=None, view="profile"):
+    view = (view or "profile").lower()
+    if view not in {"profile", "blog", "favorites"}:
+        view = "profile"
     user = profile_user_by_slug(conn, slug)
     role = effective_user_role(user)
     is_self = bool(viewer_user_id and int(viewer_user_id) == int(user["id"]))
@@ -11032,9 +11037,13 @@ def public_user_profile(conn, slug, viewer_user_id=None):
             (viewer_user_id, user["id"]),
         ).fetchone())
     stats = public_profile_stats(conn, user["id"])
-    favorite_cards = list_cards(conn, "owned=owned&favorite=1&sort=value&limit=12", user["id"])
+    full_view = view in {"blog", "favorites"}
+    favorite_limit = 5000 if full_view else 6
+    post_limit = 5000 if full_view else 3
+    favorite_cards = list_cards(conn, f"owned=owned&favorite=1&sort=favorite&limit={favorite_limit}", user["id"])
     store_url = store_share_url(user["store_share_id"]) if stats["sale_quantity"] > 0 else ""
     payload = {
+        "view": view,
         "name": user["name"],
         "profile_slug": user["profile_slug"],
         "profile_url": profile_url_from_slug(user["profile_slug"]),
@@ -11053,7 +11062,7 @@ def public_user_profile(conn, slug, viewer_user_id=None):
         "public_decks": public_profile_decks(conn, user["id"]),
         "store_url": store_url,
         "wall_messages": profile_wall_rows(conn, user["id"]),
-        "posts": profile_post_rows(conn, user["id"]),
+        "posts": profile_post_rows(conn, user["id"], post_limit),
         "is_self": is_self,
         "is_friend": is_friend,
         "can_add_friend": bool(viewer_user_id and not is_self and not is_friend),
@@ -13790,10 +13799,12 @@ class Handler(SimpleHTTPRequestHandler):
                 match = re.match(r"^/api/users/profile/([^/]+)$", parsed.path)
                 if match:
                     user = self.current_user(conn)
+                    query_params = urllib.parse.parse_qs(parsed.query)
                     return self.send_json(public_user_profile(
                         conn,
                         urllib.parse.unquote(match.group(1)),
                         user["id"] if user else None,
+                        query_params.get("view", ["profile"])[0],
                     ))
                 match = re.match(r"^/api/shared-favorites/([^/]+)$", parsed.path)
                 if match:
@@ -13858,7 +13869,7 @@ class Handler(SimpleHTTPRequestHandler):
             or re.match(r"^/sets/shared/[^/]+/[^/]+/?$", parsed.path)
             or re.match(r"^/card/[^/]+/[^/]+/?$", parsed.path)
             or re.match(r"^/stores/[^/]+/?$", parsed.path)
-            or re.match(r"^/user/[^/]+/?$", parsed.path)
+            or re.match(r"^/user/[^/]+(?:/(?:blog|favorites))?/?$", parsed.path)
             or re.match(r"^/favorites/[^/]+/?$", parsed.path)
             or re.match(r"^/news/[0-9]+/?$", parsed.path)
             or re.match(r"^/verify-email/[^/]+/?$", parsed.path)
