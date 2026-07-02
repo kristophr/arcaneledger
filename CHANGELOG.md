@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.13 beta
+
+### Changed
+- Updated public profile blog pages to keep the profile header/actions while showing a single full-width blog-only feed sorted newest first.
+- Updated public profile favorites pages to keep the profile header/actions while showing a single full-width favorites-only feed.
+- Updated profile card previews so clicking cards on profile, profile blog, and profile favorites views opens the existing card preview modal.
+- Bumped the app version and user agent to `0.4.13 beta`.
+- Bumped frontend asset versions for the profile subpage and card preview updates.
+
 ## 0.4.11 beta
 
 ### Changed

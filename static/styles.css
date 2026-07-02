@@ -3984,6 +3984,11 @@ body:not(.is-authenticated) .nav-bottom {
   gap: 16px;
 }
 
+.user-profile-blog-layout,
+.user-profile-full-layout {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .profile-panel {
   border: 1px solid var(--line);
   border-radius: 8px;

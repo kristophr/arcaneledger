@@ -5699,7 +5699,7 @@ function openFavoritesShareModal() {
 function cardBlogPreviewHtml(card) {
   if (!card) return "";
   return `
-    <a class="card-blog-card" href="${escapeHtml(cardDetailUrl(card))}">
+    <a class="card-blog-card deck-card-preview-trigger" href="${escapeHtml(cardDetailUrl(card))}" data-card-id="${escapeHtml(card.scryfall_id || card.card_id || "")}" data-variant="${escapeHtml(card.variant || "Normal")}">
       <img src="${escapeHtml(card.image_small || card.image_normal || "")}" alt="${escapeHtml(cardTitle(card))}">
       <span>
         <strong>${escapeHtml(cardTitle(card))}</strong>
@@ -7307,7 +7307,12 @@ function deckPreviewCardByRow(row, cards) {
 function wireDeckCardPreviewRows(container, cards) {
   if (!container) return;
   for (const row of container.querySelectorAll(".deck-card-preview-trigger")) {
-    const open = () => {
+    const open = (event) => {
+      if (event) {
+        const interactive = event.target.closest("button, input, select, textarea");
+        if (interactive) return;
+        event.preventDefault();
+      }
       const card = deckPreviewCardByRow(row, cards);
       if (card) {
         openDeckCardPreviewModal(card).catch((error) => setStatus(error.message, "error"));
@@ -11605,34 +11610,28 @@ function renderUserProfile(profile) {
     profile.mtg_arena_username ? `<span><strong>MtG Arena:</strong> ${escapeHtml(profile.mtg_arena_username)}</span>` : "",
     profile.mtgo_username ? `<span><strong>MTGO:</strong> ${escapeHtml(profile.mtgo_username)}</span>` : "",
   ].filter(Boolean).join("");
-  els.userProfileShell.innerHTML = `
-    <section class="user-profile-card">
-      <div class="user-profile-hero">
-        <div class="user-profile-avatar">${profileImage}</div>
-        <div>
-          <p class="eyebrow">Arcane Ledger profile</p>
-          <h2>${displayNameHtml(profile.name || "Collector", profile)}</h2>
-          <span>Member since ${escapeHtml(formatDate(profile.member_since || ""))}</span>
-          ${profile.about_me ? `<p>${escapeHtml(profile.about_me)}</p>` : ""}
-          ${gameHandleHtml ? `<div class="profile-game-handles">${gameHandleHtml}</div>` : ""}
-          ${contactHtml}
-        </div>
+  const profileContentHtml = isBlogView ? `
+      <div class="user-profile-layout user-profile-blog-layout">
+        <section class="profile-panel profile-post-panel">
+          <div class="panel-head">
+            <h3>Blog Posts</h3>
+            <span>${integer.format(displayedPosts.length)} post${displayedPosts.length === 1 ? "" : "s"}</span>
+          </div>
+          ${postForm}
+          <div class="profile-post-list">${postRows}</div>
+        </section>
       </div>
-      <div class="user-profile-stats">
-        <article><span>Cards</span><strong>${integer.format(stats.owned_quantity || 0)}</strong></article>
-        <article><span>Unique</span><strong>${integer.format(stats.unique_cards || 0)}</strong></article>
-        <article><span>Collection value</span><strong>${dollars.format(stats.collection_value || 0)}</strong></article>
-        <article><span>Public decks</span><strong>${integer.format(stats.public_deck_count || decks.length || 0)}</strong></article>
+    ` : isFavoritesView ? `
+      <div class="user-profile-layout user-profile-full-layout">
+        <section class="profile-panel">
+          <div class="panel-head">
+            <h3>Favorite Cards</h3>
+            <span>${integer.format(favoriteDisplayCards.length)} shown</span>
+          </div>
+          <div class="deck-detail-list">${favoriteRows}</div>
+        </section>
       </div>
-      <div class="user-profile-actions">
-        ${profile.store_url ? `<a class="primary-button" href="${escapeHtml(profile.store_url)}">View Store</a>` : ""}
-        ${profile.whatnot_url ? `<a class="secondary-button" href="${escapeHtml(profile.whatnot_url)}" target="_blank" rel="noreferrer">Whatnot</a>` : ""}
-        ${decks.length ? `<a class="secondary-button" href="#profileDecks">Public Decks</a>` : ""}
-        ${backToProfile}
-        ${addFriendButton}
-        ${alreadyFriend}
-      </div>
-      <div id="profilePageStatus" class="status" aria-live="polite"></div>
+    ` : `
       <div class="user-profile-layout">
         <div class="user-profile-left">
           <section class="profile-panel">
@@ -11680,6 +11679,36 @@ function renderUserProfile(profile) {
           </section>
         </div>
       </div>
+    `;
+  els.userProfileShell.innerHTML = `
+    <section class="user-profile-card">
+      <div class="user-profile-hero">
+        <div class="user-profile-avatar">${profileImage}</div>
+        <div>
+          <p class="eyebrow">Arcane Ledger profile</p>
+          <h2>${displayNameHtml(profile.name || "Collector", profile)}</h2>
+          <span>Member since ${escapeHtml(formatDate(profile.member_since || ""))}</span>
+          ${profile.about_me ? `<p>${escapeHtml(profile.about_me)}</p>` : ""}
+          ${gameHandleHtml ? `<div class="profile-game-handles">${gameHandleHtml}</div>` : ""}
+          ${contactHtml}
+        </div>
+      </div>
+      <div class="user-profile-stats">
+        <article><span>Cards</span><strong>${integer.format(stats.owned_quantity || 0)}</strong></article>
+        <article><span>Unique</span><strong>${integer.format(stats.unique_cards || 0)}</strong></article>
+        <article><span>Collection value</span><strong>${dollars.format(stats.collection_value || 0)}</strong></article>
+        <article><span>Public decks</span><strong>${integer.format(stats.public_deck_count || decks.length || 0)}</strong></article>
+      </div>
+      <div class="user-profile-actions">
+        ${profile.store_url ? `<a class="primary-button" href="${escapeHtml(profile.store_url)}">View Store</a>` : ""}
+        ${profile.whatnot_url ? `<a class="secondary-button" href="${escapeHtml(profile.whatnot_url)}" target="_blank" rel="noreferrer">Whatnot</a>` : ""}
+        ${decks.length ? `<a class="secondary-button" href="#profileDecks">Public Decks</a>` : ""}
+        ${backToProfile}
+        ${addFriendButton}
+        ${alreadyFriend}
+      </div>
+      <div id="profilePageStatus" class="status" aria-live="polite"></div>
+      ${profileContentHtml}
     </section>
   `;
   wireUserProfileInteractions(profile);
@@ -11701,6 +11730,11 @@ async function refreshRenderedUserProfile(result) {
 
 function wireUserProfileInteractions(profile) {
   const slug = profile.profile_slug || "";
+  const previewCards = [
+    ...(profile.favorites || []),
+    ...(profile.posts || []).map((post) => post.card).filter(Boolean),
+  ];
+  wireDeckCardPreviewRows(els.userProfileShell, previewCards);
   document.querySelector("#profileAddFriendButton")?.addEventListener("click", async () => {
     try {
       const result = await api(`/api/users/profile/${encodeURIComponent(slug)}/friend`, {
