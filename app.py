@@ -1509,6 +1509,8 @@ def init_db(conn):
             contact_discord TEXT NOT NULL DEFAULT '',
             contact_website TEXT NOT NULL DEFAULT '',
             contact_whatnot TEXT NOT NULL DEFAULT '',
+            contact_mtg_arena TEXT NOT NULL DEFAULT '',
+            contact_mtgo TEXT NOT NULL DEFAULT '',
             contact_instagram TEXT NOT NULL DEFAULT '',
             contact_bluesky TEXT NOT NULL DEFAULT '',
             contact_threads TEXT NOT NULL DEFAULT '',
@@ -2940,7 +2942,7 @@ def migrate_user_schema(conn):
             conn.execute(f"ALTER TABLE users ADD COLUMN {column} {definition}")
     for column in (
         "public_email", "contact_whatsapp", "contact_signal", "contact_telegram", "contact_discord",
-        "contact_website", "contact_whatnot", "contact_instagram", "contact_bluesky", "contact_threads", "about_me", "profile_image",
+        "contact_website", "contact_whatnot", "contact_mtg_arena", "contact_mtgo", "contact_instagram", "contact_bluesky", "contact_threads", "about_me", "profile_image",
     ):
         if column not in user_columns:
             conn.execute(f"ALTER TABLE users ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
@@ -3068,6 +3070,8 @@ def user_payload(row):
         "contact_website": row["contact_website"] if "contact_website" in row.keys() else "",
         "contact_whatnot": row["contact_whatnot"] if "contact_whatnot" in row.keys() else "",
         "whatnot_url": whatnot_profile_url(row["contact_whatnot"]) if "contact_whatnot" in row.keys() and row["contact_whatnot"] else "",
+        "contact_mtg_arena": row["contact_mtg_arena"] if "contact_mtg_arena" in row.keys() else "",
+        "contact_mtgo": row["contact_mtgo"] if "contact_mtgo" in row.keys() else "",
         "contact_instagram": row["contact_instagram"] if "contact_instagram" in row.keys() else "",
         "contact_bluesky": row["contact_bluesky"] if "contact_bluesky" in row.keys() else "",
         "contact_threads": row["contact_threads"] if "contact_threads" in row.keys() else "",
@@ -4628,6 +4632,8 @@ def update_user_settings(conn, user_id, payload):
     contact_discord = clean_contact_handle(payload.get("contact_discord"), "Discord username")
     contact_website = clean_contact_url(payload.get("contact_website"))
     contact_whatnot = clean_contact_handle(payload.get("contact_whatnot"), "Whatnot username")
+    contact_mtg_arena = clean_contact_handle(payload.get("contact_mtg_arena"), "MtG Arena username")
+    contact_mtgo = clean_contact_handle(payload.get("contact_mtgo"), "MTGO username")
     contact_instagram = clean_contact_handle(payload.get("contact_instagram"), "Instagram username")
     contact_bluesky = clean_contact_handle(payload.get("contact_bluesky"), "Bluesky username")
     contact_threads = clean_contact_handle(payload.get("contact_threads"), "Threads username")
@@ -4644,7 +4650,8 @@ def update_user_settings(conn, user_id, payload):
         UPDATE users
         SET name = ?, profile_slug = ?, language = ?, theme = ?, public_email = ?, contact_whatsapp = ?,
             contact_signal = ?, contact_telegram = ?, contact_discord = ?, contact_website = ?,
-            contact_whatnot = ?, contact_instagram = ?, contact_bluesky = ?, contact_threads = ?, about_me = ?, profile_image = ?,
+            contact_whatnot = ?, contact_mtg_arena = ?, contact_mtgo = ?, contact_instagram = ?,
+            contact_bluesky = ?, contact_threads = ?, about_me = ?, profile_image = ?,
             default_purchase_price = ?, default_sell_price = ?, updated_at = ?
         WHERE id = ?
         """,
@@ -4660,6 +4667,8 @@ def update_user_settings(conn, user_id, payload):
             contact_discord,
             contact_website,
             contact_whatnot,
+            contact_mtg_arena,
+            contact_mtgo,
             contact_instagram,
             contact_bluesky,
             contact_threads,
@@ -10764,7 +10773,8 @@ def profile_user_by_slug(conn, slug):
     user = conn.execute(
         """
         SELECT id, name, email, created_at, store_share_id, public_email, contact_whatsapp, contact_signal,
-               contact_telegram, contact_discord, contact_website, contact_whatnot, contact_instagram, contact_bluesky,
+               contact_telegram, contact_discord, contact_website, contact_whatnot, contact_mtg_arena, contact_mtgo,
+               contact_instagram, contact_bluesky,
                contact_threads, about_me, profile_image, profile_slug, role, subscription_status
         FROM users
         WHERE profile_slug = ? AND COALESCE(is_banned, 0) = 0
@@ -11036,6 +11046,8 @@ def public_user_profile(conn, slug, viewer_user_id=None):
         "contacts": public_profile_contacts(user),
         "whatnot_username": user["contact_whatnot"],
         "whatnot_url": whatnot_profile_url(user["contact_whatnot"]) if user["contact_whatnot"] else "",
+        "mtg_arena_username": user["contact_mtg_arena"],
+        "mtgo_username": user["contact_mtgo"],
         "stats": stats,
         "favorites": favorite_cards,
         "public_decks": public_profile_decks(conn, user["id"]),

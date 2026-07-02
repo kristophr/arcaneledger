@@ -6857,6 +6857,8 @@ function renderSettingsPage() {
   els.settingsPageForm.contact_discord.value = user.contact_discord || "";
   els.settingsPageForm.contact_website.value = user.contact_website || "";
   els.settingsPageForm.contact_whatnot.value = user.contact_whatnot || "";
+  els.settingsPageForm.contact_mtg_arena.value = user.contact_mtg_arena || "";
+  els.settingsPageForm.contact_mtgo.value = user.contact_mtgo || "";
   els.settingsPageForm.language.value = settings.language || "en";
   els.settingsPageForm.theme.value = settings.theme || "light";
   els.settingsPageForm.default_purchase_price.value = userDefaultPurchasePrice().toFixed(2);
@@ -7054,6 +7056,8 @@ function userSettingsPayload(overrides = {}) {
     contact_discord: user.contact_discord || "",
     contact_website: user.contact_website || "",
     contact_whatnot: user.contact_whatnot || "",
+    contact_mtg_arena: user.contact_mtg_arena || "",
+    contact_mtgo: user.contact_mtgo || "",
     contact_instagram: user.contact_instagram || "",
     contact_bluesky: user.contact_bluesky || "",
     contact_threads: user.contact_threads || "",
@@ -11583,6 +11587,10 @@ function renderUserProfile(profile) {
   `).join("") : '<div class="empty-state compact-empty">No blog posts yet.</div>';
   const addFriendButton = profile.can_add_friend ? '<button id="profileAddFriendButton" class="secondary-button" type="button">Add Friend</button>' : "";
   const alreadyFriend = profile.is_friend ? '<span class="profile-status-pill">Friend Added</span>' : "";
+  const gameHandleHtml = [
+    profile.mtg_arena_username ? `<span><strong>MtG Arena:</strong> ${escapeHtml(profile.mtg_arena_username)}</span>` : "",
+    profile.mtgo_username ? `<span><strong>MTGO:</strong> ${escapeHtml(profile.mtgo_username)}</span>` : "",
+  ].filter(Boolean).join("");
   els.userProfileShell.innerHTML = `
     <section class="user-profile-card">
       <div class="user-profile-hero">
@@ -11592,6 +11600,7 @@ function renderUserProfile(profile) {
           <h2>${displayNameHtml(profile.name || "Collector", profile)}</h2>
           <span>Member since ${escapeHtml(formatDate(profile.member_since || ""))}</span>
           ${profile.about_me ? `<p>${escapeHtml(profile.about_me)}</p>` : ""}
+          ${gameHandleHtml ? `<div class="profile-game-handles">${gameHandleHtml}</div>` : ""}
           ${contactHtml}
         </div>
       </div>

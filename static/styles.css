@@ -3895,6 +3895,33 @@ body:not(.is-authenticated) .nav-bottom {
   white-space: pre-wrap;
 }
 
+.profile-game-handles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.profile-game-handles span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 30px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 5px 10px;
+  color: var(--ink);
+  background: var(--detail-bg);
+  font-size: 0.88rem;
+  font-weight: 850;
+}
+
+.profile-game-handles strong {
+  color: var(--muted);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+}
+
 .user-profile-stats {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
