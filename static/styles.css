@@ -652,17 +652,21 @@ body:not(.is-authenticated) .nav-bottom {
   top: 79px;
   align-self: start;
   height: calc(100vh - 79px);
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
   border-right: 1px solid var(--line);
-  padding: 18px 12px;
+  padding: 12px 10px;
   background: var(--panel);
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 10px;
 }
 
 .nav-collapse-button {
   width: 42px;
-  min-height: 36px;
+  min-height: 32px;
   border: 1px solid var(--line);
   border-radius: 8px;
   color: var(--muted);
@@ -711,33 +715,34 @@ body:not(.is-authenticated) .nav-bottom {
 
 .command-menu nav {
   display: grid;
-  gap: 8px;
+  gap: 4px;
 }
 
 .command-menu .nav-bottom {
   margin-top: auto;
-  padding-top: 14px;
+  padding-top: 8px;
   border-top: 1px solid var(--line);
 }
 
 .nav-command {
   width: 100%;
-  min-height: 40px;
+  min-height: 34px;
   border: 1px solid transparent;
   border-radius: 8px;
-  padding: 0 12px;
+  padding: 0 10px;
   color: var(--muted);
   background: transparent;
   cursor: pointer;
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 8px;
   text-align: left;
+  font-size: 0.86rem;
   font-weight: 800;
 }
 
 .nav-collapsed .command-menu {
-  padding: 18px 10px;
+  padding: 12px 8px;
 }
 
 .nav-collapsed .nav-command {
@@ -6088,7 +6093,7 @@ body:not(.is-authenticated) .nav-bottom {
 
 .purchase-history-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(180px, auto) 34px;
+  grid-template-columns: minmax(0, 1fr) minmax(180px, auto) minmax(150px, max-content);
   gap: 12px;
   align-items: center;
   border: 1px solid #dfe7e3;
@@ -6129,6 +6134,31 @@ body:not(.is-authenticated) .nav-bottom {
   color: var(--accent);
 }
 
+.purchase-history-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.view-entry-ledger-button {
+  min-height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 0 10px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--panel) 82%, var(--accent) 8%);
+  cursor: pointer;
+  font-size: 0.76rem;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.view-entry-ledger-button:hover {
+  border-color: var(--accent);
+  background: var(--button-hover);
+}
+
 .delete-movement-button {
   width: 34px;
   height: 34px;
@@ -6148,6 +6178,78 @@ body:not(.is-authenticated) .nav-bottom {
 
 .purchase-history-row > div:nth-of-type(2) span {
   text-align: right;
+}
+
+.entry-ledger-summary {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.entry-ledger-summary article {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--detail-bg);
+}
+
+.entry-ledger-summary span,
+.entry-ledger-summary strong {
+  display: block;
+}
+
+.entry-ledger-summary span {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.entry-ledger-summary strong {
+  margin-top: 3px;
+  color: var(--ink);
+  font-size: 0.9rem;
+}
+
+.entry-ledger-table {
+  display: grid;
+  gap: 8px;
+}
+
+.entry-ledger-head,
+.entry-ledger-row {
+  display: grid;
+  grid-template-columns: minmax(170px, 1.5fr) minmax(86px, 0.7fr) minmax(78px, 0.7fr) minmax(118px, 0.9fr) minmax(44px, 0.35fr) minmax(80px, 0.65fr) minmax(80px, 0.65fr);
+  gap: 8px;
+  align-items: center;
+}
+
+.entry-ledger-head {
+  padding: 0 10px 2px;
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.entry-ledger-row {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--detail-bg);
+  font-size: 0.84rem;
+}
+
+.entry-ledger-row strong,
+.entry-ledger-row small {
+  display: block;
+}
+
+.entry-ledger-row small {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 0.72rem;
 }
 
 .card-comment-form {
@@ -10250,6 +10352,23 @@ body:not(.is-authenticated) .nav-bottom {
   .purchase-history-row > div:nth-of-type(2) span,
   .purchase-history-row small {
     text-align: left;
+  }
+
+  .purchase-history-actions {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .entry-ledger-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .entry-ledger-head {
+    display: none;
+  }
+
+  .entry-ledger-row {
+    grid-template-columns: 1fr;
   }
 
   .card-comment-row {

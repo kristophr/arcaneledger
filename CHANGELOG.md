@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.4.14 beta
+
+### Added
+- Added purchase entry ledger drilldowns from card detail purchase-history rows so users can review every card from the same purchase date, store, and location.
+- Added entry ledger summaries with total card quantity, total paid, and average paid per card.
+
+### Changed
+- Restored standard app date formatting to full `YYYY-MM-DD` dates.
+- Tightened the desktop left navigation and made the sidebar vertically scrollable so Settings, Logout, and other lower navigation items remain reachable on 1080p screens.
+- Bumped the app version and user agent to `0.4.14 beta`.
+- Bumped frontend asset versions for the navigation, date, and purchase entry ledger updates.
+
 ## 0.4.13 beta
 
 ### Changed

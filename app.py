@@ -108,8 +108,8 @@ SESSION_IDLE_MINUTES = int(os.environ.get("SESSION_IDLE_MINUTES", "30") or 30)
 EMAIL_VERIFICATION_MINUTES = int(os.environ.get("EMAIL_VERIFICATION_MINUTES", "30") or 30)
 PASSWORD_RESET_MINUTES = int(os.environ.get("PASSWORD_RESET_MINUTES", str(EMAIL_VERIFICATION_MINUTES)) or EMAIL_VERIFICATION_MINUTES)
 SUPPORTED_SCRYFALL_LANGUAGES = {"en"}
-APP_VERSION = "0.4.13 beta"
-USER_AGENT = "arcaneledger/0.4.13"
+APP_VERSION = "0.4.14 beta"
+USER_AGENT = "arcaneledger/0.4.14"
 PROCESS_STARTED_AT = datetime.now(timezone.utc).replace(microsecond=0)
 COLOR_ORDER = ("W", "U", "B", "R", "G")
 CARD_CONDITIONS = (
@@ -11491,6 +11491,83 @@ def movement_history(conn, user_id, card_id, variant=None):
     )
 
 
+def purchase_entry_ledger(conn, user_id, card_id, movement_id):
+    try:
+        purchase_id = int(movement_id)
+    except (TypeError, ValueError):
+        raise ValueError("Choose a purchase entry to view.")
+    source = conn.execute(
+        """
+        SELECT id, purchase_date, store_name, store_location
+        FROM card_purchases
+        WHERE user_id = ? AND card_id = ? AND id = ?
+        """,
+        (user_id, card_id, purchase_id),
+    ).fetchone()
+    if not source:
+        raise KeyError("Purchase entry not found.")
+    rows = conn.execute(
+        """
+        SELECT cp.id, cp.card_id, cp.variant, cp.quantity, cp.card_condition,
+               COALESCE(cp.graded, 0) AS graded, cp.purchase_date, cp.total_price,
+               ROUND(cp.total_price / cp.quantity, 2) AS price_each,
+               cp.store_name, cp.store_location, cp.notes, cp.created_at,
+               c.name, c.flavor_name, c.set_code, c.set_name, c.collector_number,
+               c.rarity, c.type_line, c.image_small, c.image_normal, c.scryfall_uri
+        FROM card_purchases cp
+        JOIN cards c ON c.scryfall_id = cp.card_id
+        WHERE cp.user_id = ?
+          AND cp.purchase_date = ?
+          AND COALESCE(cp.store_name, '') = COALESCE(?, '')
+          AND COALESCE(cp.store_location, '') = COALESCE(?, '')
+        ORDER BY c.set_code COLLATE NOCASE, CAST(c.collector_number AS INTEGER), c.collector_number COLLATE NOCASE,
+                 COALESCE(NULLIF(c.flavor_name, ''), c.name) COLLATE NOCASE,
+                 cp.variant COLLATE NOCASE, cp.card_condition COLLATE NOCASE, cp.id
+        """,
+        (user_id, source["purchase_date"], source["store_name"], source["store_location"]),
+    ).fetchall()
+    entries = []
+    for row in rows:
+        entries.append({
+            "id": row["id"],
+            "card_id": row["card_id"],
+            "name": row["name"],
+            "flavor_name": row["flavor_name"],
+            "display_name": row["flavor_name"] or row["name"],
+            "set_code": row["set_code"],
+            "set_name": row["set_name"],
+            "collector_number": row["collector_number"],
+            "rarity": row["rarity"],
+            "type_line": row["type_line"],
+            "image_small": row["image_small"],
+            "image_normal": row["image_normal"],
+            "scryfall_uri": row["scryfall_uri"],
+            "variant": row["variant"] or "Normal",
+            "card_condition": card_condition(row["card_condition"]),
+            "graded": int(row["graded"] or 0),
+            "quantity": int(row["quantity"] or 0),
+            "purchase_date": row["purchase_date"],
+            "total_price": float(row["total_price"] or 0),
+            "price_each": float(row["price_each"] or 0),
+            "store_name": row["store_name"] or "",
+            "store_location": row["store_location"] or "",
+            "notes": row["notes"] or "",
+            "created_at": row["created_at"],
+        })
+    total_quantity = sum(int(entry["quantity"] or 0) for entry in entries)
+    total_paid = round(sum(float(entry["total_price"] or 0) for entry in entries), 2)
+    return {
+        "purchase_date": source["purchase_date"],
+        "store_name": source["store_name"] or "",
+        "store_location": source["store_location"] or "",
+        "entry_count": len(entries),
+        "total_quantity": total_quantity,
+        "total_paid": total_paid,
+        "average_paid": round(total_paid / total_quantity, 2) if total_quantity > 0 else 0,
+        "entries": entries,
+    }
+
+
 def condition_inventory_for_card(conn, user_id, card_id):
     rows = conn.execute(
         """
@@ -13704,6 +13781,16 @@ class Handler(SimpleHTTPRequestHandler):
                         user["id"],
                         urllib.parse.unquote(match.group(1)),
                         params.get("variant", ["Normal"])[0],
+                    ))
+                match = re.match(r"^/api/cards/([^/]+)/purchase-entry$", parsed.path)
+                if match:
+                    user = self.require_user(conn)
+                    params = urllib.parse.parse_qs(parsed.query)
+                    return self.send_json(purchase_entry_ledger(
+                        conn,
+                        user["id"],
+                        urllib.parse.unquote(match.group(1)),
+                        params.get("movement_id", [""])[0],
                     ))
                 match = re.match(r"^/api/cards/([^/]+)/scryfall-json$", parsed.path)
                 if match:

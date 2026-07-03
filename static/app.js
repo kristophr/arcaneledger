@@ -5507,20 +5507,12 @@ function renderCardList(cards, target = els.cardsGrid, options = {}) {
 
 function formatDate(value) {
   if (!value) return "Not set";
-  const [year, month] = value.split("-");
-  const monthIndex = Number(month) - 1;
-  const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-  if (!year || monthIndex < 0 || monthIndex > 11) return value;
-  return `${year.slice(-2)} ${monthNames[monthIndex]}`;
+  const match = String(value).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return match ? `${match[1]}-${match[2]}-${match[3]}` : String(value);
 }
 
 function formatCompactDate(value) {
-  if (!value) return "Not set";
-  const [year, month, day] = String(value).slice(0, 10).split("-");
-  const monthNumber = Number(month);
-  const dayNumber = Number(day);
-  if (!year || !monthNumber || !dayNumber) return value;
-  return `${monthNumber}/${dayNumber}/${year.slice(-2)}`;
+  return formatDate(value);
 }
 
 function formatAnnouncementDate(value) {
@@ -10034,6 +10026,9 @@ function renderMovementHistory(movements) {
         const amountLabel = isSale ? "received" : "total";
         const deleteLabel = isAdjust ? "Delete adjustment entry" : isSale ? "Delete sold entry" : "Delete purchase entry";
         const purchaseSource = [movement.store_name, movement.store_location].filter(Boolean).join(" - ");
+        const viewEntryButton = !isSale && !isAdjust && movement.movement_id ? `
+          <button class="view-entry-ledger-button" type="button" data-movement-id="${escapeHtml(movement.movement_id)}" data-card-id="${escapeHtml(movement.card_id || "")}" aria-label="View entry ledger" title="View entry ledger">View Entry Ledger</button>
+        ` : "";
         return `
         <article class="purchase-history-row ${isAdjust ? "is-adjustment" : isSale ? "is-sale" : "is-purchase"}">
           <div>
@@ -10046,11 +10041,14 @@ function renderMovementHistory(movements) {
             ${!isSale && !isAdjust && purchaseSource ? `<small>${escapeHtml(purchaseSource)}</small>` : ""}
             ${!isSale && !isAdjust && movement.notes ? `<small>${escapeHtml(movement.notes)}</small>` : ""}
           </div>
-          ${movement.movement_id ? `
-            <button class="delete-movement-button" type="button" aria-label="${deleteLabel}" title="${deleteLabel}" data-movement-type="${escapeHtml(movement.movement_type)}" data-movement-id="${escapeHtml(movement.movement_id)}" data-variant="${escapeAttribute(movement.variant || "Normal")}">
-              <span class="trash-icon" aria-hidden="true"></span>
-            </button>
-          ` : ""}
+          <div class="purchase-history-actions">
+            ${viewEntryButton}
+            ${movement.movement_id ? `
+              <button class="delete-movement-button" type="button" aria-label="${deleteLabel}" title="${deleteLabel}" data-movement-type="${escapeHtml(movement.movement_type)}" data-movement-id="${escapeHtml(movement.movement_id)}" data-variant="${escapeAttribute(movement.variant || "Normal")}">
+                <span class="trash-icon" aria-hidden="true"></span>
+              </button>
+            ` : ""}
+          </div>
         </article>
       `;
       }).join("")}
@@ -10121,6 +10119,66 @@ function openCardLedgerModal(card) {
   if (els.cardLedgerList) els.cardLedgerList.innerHTML = renderLedgerEntries(card.movements || card.purchases || []);
   els.cardLedgerOverlay.hidden = false;
   document.body.classList.add("modal-open");
+}
+
+function renderPurchaseEntryLedger(payload) {
+  const entries = payload.entries || [];
+  if (!entries.length) {
+    return '<div class="empty-state">No matching purchase entries found.</div>';
+  }
+  const source = [payload.store_name, payload.store_location].filter(Boolean).join(" - ") || "No store entered";
+  return `
+    <div class="entry-ledger-summary">
+      <article><span>Date</span><strong>${escapeHtml(formatDate(payload.purchase_date || ""))}</strong></article>
+      <article><span>Store</span><strong>${escapeHtml(source)}</strong></article>
+      <article><span>Cards</span><strong>${integer.format(payload.total_quantity || 0)}</strong></article>
+      <article><span>Total Paid</span><strong>${dollars.format(payload.total_paid || 0)}</strong></article>
+      <article><span>Average</span><strong>${dollars.format(payload.average_paid || 0)} each</strong></article>
+    </div>
+    <div class="entry-ledger-table">
+      <div class="entry-ledger-head">
+        <span>Card</span>
+        <span>Set</span>
+        <span>Variant</span>
+        <span>Condition</span>
+        <span>Qty</span>
+        <span>Paid Each</span>
+        <span>Total</span>
+      </div>
+      ${entries.map((entry) => `
+        <div class="entry-ledger-row">
+          <span>
+            <strong>${escapeHtml(cardTitle(entry))}</strong>
+            <small>${escapeHtml(entry.type_line || "")}</small>
+          </span>
+          <span>${escapeHtml(entry.set_code || "")} #${escapeHtml(entry.collector_number || "")}</span>
+          <span>${escapeHtml(entry.variant || "Normal")}</span>
+          <span>${escapeHtml(entry.card_condition || "Near Mint")}${Number(entry.graded || 0) ? " - Graded" : ""}</span>
+          <b>${integer.format(entry.quantity || 0)}</b>
+          <span>${dollars.format(entry.price_each || 0)}</span>
+          <strong>${dollars.format(entry.total_price || 0)}</strong>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
+async function openPurchaseEntryLedgerModal(card, movementId) {
+  if (!els.cardLedgerOverlay || !movementId) return;
+  if (els.cardLedgerEyebrow) els.cardLedgerEyebrow.textContent = "Purchase entry ledger";
+  if (els.cardLedgerTitle) els.cardLedgerTitle.textContent = "Loading entry ledger...";
+  if (els.cardLedgerList) els.cardLedgerList.innerHTML = '<div class="empty-state">Loading purchase entry...</div>';
+  els.cardLedgerOverlay.hidden = false;
+  document.body.classList.add("modal-open");
+  try {
+    const payload = await api(`/api/cards/${encodeURIComponent(card.scryfall_id)}/purchase-entry?movement_id=${encodeURIComponent(movementId)}`);
+    const source = [payload.store_name, payload.store_location].filter(Boolean).join(" - ");
+    if (els.cardLedgerTitle) els.cardLedgerTitle.textContent = `${formatDate(payload.purchase_date || "")}${source ? ` · ${source}` : ""}`;
+    if (els.cardLedgerList) els.cardLedgerList.innerHTML = renderPurchaseEntryLedger(payload);
+  } catch (error) {
+    if (els.cardLedgerTitle) els.cardLedgerTitle.textContent = "Purchase entry ledger";
+    if (els.cardLedgerList) els.cardLedgerList.innerHTML = `<div class="empty-state">${escapeHtml(error.message)}</div>`;
+  }
 }
 
 function closeCardLedgerModal() {
@@ -10804,6 +10862,11 @@ function renderCardDetail(card) {
   });
   els.cardDetailShell.querySelector(".detail-store-button")?.addEventListener("click", () => openSaleManagementForCard(card));
   els.cardDetailShell.querySelector(".detail-ledger-button")?.addEventListener("click", () => openCardLedgerModal(card));
+  els.cardDetailShell.querySelectorAll(".view-entry-ledger-button").forEach((button) => {
+    button.addEventListener("click", () => {
+      openPurchaseEntryLedgerModal(card, button.dataset.movementId).catch((error) => setStatus(error.message, "error"));
+    });
+  });
   els.cardDetailShell.querySelectorAll(".delete-movement-button").forEach((button) => {
     button.addEventListener("click", () => {
       deleteCardMovement(button).catch((error) => setStatus(error.message, "error"));
