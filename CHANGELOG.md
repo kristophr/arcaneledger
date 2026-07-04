@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.5.0 beta
+
+### Added
+- Added daily Scryfall market price snapshots for cards owned by at least one user.
+- Added configurable snapshot scheduling with `APP_TIMEZONE`, `PRICE_SNAPSHOT_SCHEDULE_ENABLED`, `PRICE_SNAPSHOT_SCHEDULE_TIME`, `PRICE_SNAPSHOT_DAILY_LIMIT`, and `PRICE_SNAPSHOT_REQUEST_DELAY`.
+- Added snapshot capture when cards are added, purchases are recorded, inventory is increased, or owned card metadata is refreshed.
+- Added README documentation for daily snapshot behavior and manual snapshot refresh commands.
+
+### Changed
+- Updated price history collection to store one daily market row per owned Scryfall card and finish, without backfilling historical data.
+- Updated manual dashboard price refresh to force-refresh today’s logged-in user snapshots while scheduled runs refresh all owned cards globally.
+- Bumped the app version and user agent to `0.5.0 beta`.
+
 ## 0.4.14 beta
 
 ### Added

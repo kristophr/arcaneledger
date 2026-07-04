@@ -1,12 +1,13 @@
 # Arcane Ledger
 
-**Version:** 0.4.14 beta
+**Version:** 0.5.0 beta
 
 A Magic: The Gathering collection tracker. It uses Scryfall as the catalog and price source, stores data in SQLite, tracks collection value and purchase/sale history, manages decks, containers, wishlists, reports, store listings, profiles, public sharing, contributor news, and exports your data back to CSV, Moxfield CSV, or spreadsheet-friendly formats.
 
 ## Highlights
 
 - Track owned cards by exact printing, variant, condition, quantity, purchase price, current market value, and ledger history.
+- Capture daily Scryfall market price snapshots for owned cards so card value charts build real market history over time.
 - Review purchase entry ledgers from a card page to see every card bought in the same store/date entry, including per-card and batch totals.
 - Build decks from owned or wanted cards, share public deck pages, and browse public decks from other users.
 - Organize physical storage with containers, capacity tracking, and per-card allocations by variant and condition.
@@ -300,6 +301,22 @@ SCRYFALL_QUERY=game:paper
 
 You can narrow or broaden that in `compose.yaml` using any valid Scryfall search query.
 
+Arcane Ledger also stores daily Scryfall market price snapshots for any card owned by at least one user. These snapshots power richer card and portfolio value charts from the day the feature is enabled forward. Configure the daily job with:
+
+```text
+APP_TIMEZONE=America/New_York
+PRICE_SNAPSHOT_SCHEDULE_ENABLED=true
+PRICE_SNAPSHOT_SCHEDULE_TIME=01:00
+PRICE_SNAPSHOT_DAILY_LIMIT=0
+PRICE_SNAPSHOT_REQUEST_DELAY=0.12
+```
+
+`PRICE_SNAPSHOT_DAILY_LIMIT=0` means every unique owned card is eligible. The scheduler skips cards that already have a snapshot for the current app-local date. You can also run a manual global snapshot from the command line:
+
+```bash
+docker compose exec arcaneledger python app.py refresh-price-snapshots 0
+```
+
 Main tables:
 
 - `sets`: Scryfall set metadata.
@@ -308,7 +325,7 @@ Main tables:
 - `card_meta`: user metadata such as favorites.
 - `decks`: deck names and share identifiers.
 - `deck_cards`: card-to-deck metadata; assigning a card to a deck does not duplicate or delete collection data.
-- `price_snapshots`: daily Scryfall price snapshots for value history.
+- `price_snapshots`: daily Scryfall market price snapshots by card and finish for value history.
 
 If a CSV row has a missing or zero paid price, the importer stores `$0.01`.
 

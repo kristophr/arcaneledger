@@ -16,6 +16,7 @@ import smtplib
 import socket
 import sqlite3
 import sys
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -27,6 +28,10 @@ from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:  # pragma: no cover - Python 3.8 fallback guard
+    ZoneInfo = None
 
 
 ROOT = Path(__file__).resolve().parent
@@ -74,6 +79,11 @@ SCRYFALL_LANGUAGE = os.environ.get("SCRYFALL_LANGUAGE", "en")
 SCRYFALL_TIMEOUT_SECONDS = max(5, int(os.environ.get("SCRYFALL_TIMEOUT_SECONDS", "15") or 15))
 SCRYFALL_IMPORT_LOOKUP_LIMIT = max(0, int(os.environ.get("SCRYFALL_IMPORT_LOOKUP_LIMIT", "80") or 80))
 SCRYFALL_IMPORT_LOOKUP_DELAY = max(0.0, float(os.environ.get("SCRYFALL_IMPORT_LOOKUP_DELAY", "0.12") or 0.12))
+APP_TIMEZONE = os.environ.get("APP_TIMEZONE", "America/New_York").strip() or "America/New_York"
+PRICE_SNAPSHOT_SCHEDULE_ENABLED = os.environ.get("PRICE_SNAPSHOT_SCHEDULE_ENABLED", "true").strip().lower() not in {"0", "false", "no", "off"}
+PRICE_SNAPSHOT_SCHEDULE_TIME = os.environ.get("PRICE_SNAPSHOT_SCHEDULE_TIME", "01:00").strip() or "01:00"
+PRICE_SNAPSHOT_DAILY_LIMIT = max(0, int(os.environ.get("PRICE_SNAPSHOT_DAILY_LIMIT", "0") or 0))
+PRICE_SNAPSHOT_REQUEST_DELAY = max(0.0, float(os.environ.get("PRICE_SNAPSHOT_REQUEST_DELAY", "0.12") or 0.12))
 MAILGUN_API_BASE = os.environ.get("MAILGUN_API_BASE", "https://api.mailgun.net/v3").rstrip("/")
 MAILGUN_API_KEY = os.environ.get("MAILGUN_API_KEY", "")
 MAILGUN_DOMAIN = os.environ.get("MAILGUN_DOMAIN", "")
@@ -108,8 +118,8 @@ SESSION_IDLE_MINUTES = int(os.environ.get("SESSION_IDLE_MINUTES", "30") or 30)
 EMAIL_VERIFICATION_MINUTES = int(os.environ.get("EMAIL_VERIFICATION_MINUTES", "30") or 30)
 PASSWORD_RESET_MINUTES = int(os.environ.get("PASSWORD_RESET_MINUTES", str(EMAIL_VERIFICATION_MINUTES)) or EMAIL_VERIFICATION_MINUTES)
 SUPPORTED_SCRYFALL_LANGUAGES = {"en"}
-APP_VERSION = "0.4.14 beta"
-USER_AGENT = "arcaneledger/0.4.14"
+APP_VERSION = "0.5.0 beta"
+USER_AGENT = "arcaneledger/0.5.0"
 PROCESS_STARTED_AT = datetime.now(timezone.utc).replace(microsecond=0)
 COLOR_ORDER = ("W", "U", "B", "R", "G")
 CARD_CONDITIONS = (
@@ -196,6 +206,19 @@ def now_iso():
 
 def today_iso():
     return date.today().isoformat()
+
+
+def app_timezone():
+    if ZoneInfo:
+        try:
+            return ZoneInfo(APP_TIMEZONE)
+        except Exception:
+            LOGGER.warning("Invalid APP_TIMEZONE %r; falling back to UTC.", APP_TIMEZONE)
+    return timezone.utc
+
+
+def app_today_iso():
+    return datetime.now(app_timezone()).date().isoformat()
 
 
 def parse_iso_date(value):
@@ -1425,6 +1448,10 @@ def upsert_card(conn, card, synced_at):
             synced_at,
         ),
     )
+
+
+def upsert_price_snapshot_from_card(conn, card, snapshot_date=None):
+    prices = card.get("prices") or {}
     conn.execute(
         """
         INSERT INTO price_snapshots (card_id, snapshot_date, usd, usd_foil, usd_etched)
@@ -1436,10 +1463,32 @@ def upsert_card(conn, card, synced_at):
         """,
         (
             card.get("id"),
-            today_iso(),
+            snapshot_date or app_today_iso(),
             money(prices.get("usd")),
             money(prices.get("usd_foil")),
             money(prices.get("usd_etched")),
+        ),
+    )
+
+
+def upsert_price_snapshot_from_card_row(conn, row, snapshot_date=None):
+    if not row:
+        return
+    conn.execute(
+        """
+        INSERT INTO price_snapshots (card_id, snapshot_date, usd, usd_foil, usd_etched)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(card_id, snapshot_date) DO UPDATE SET
+            usd = excluded.usd,
+            usd_foil = excluded.usd_foil,
+            usd_etched = excluded.usd_etched
+        """,
+        (
+            row["scryfall_id"],
+            snapshot_date or app_today_iso(),
+            money(row["current_usd"]),
+            money(row["current_usd_foil"]),
+            money(row["current_usd_etched"]),
         ),
     )
 
@@ -5781,6 +5830,7 @@ def add_card_to_collection(conn, user_id, payload):
         collection_row = rollup_collection_from_purchases(conn, user_id, card_id, variant)
         if collection_row:
             collection_rows.append(dict(collection_row))
+    upsert_price_snapshot_from_card(conn, scryfall_card)
     conn.execute("DELETE FROM wishlist_cards WHERE user_id = ? AND card_id = ?", (user_id, card_id))
     conn.commit()
     return {
@@ -11694,7 +11744,7 @@ def snapshot_price_for_variant(row, variant):
 
 
 def card_price_history(conn, card_id, variant="Normal", days=92):
-    cutoff = (date.today() - timedelta(days=days)).isoformat()
+    cutoff = (datetime.now(app_timezone()).date() - timedelta(days=days)).isoformat()
     rows = conn.execute(
         """
         SELECT snapshot_date, COALESCE(usd, 0) AS usd, COALESCE(usd_foil, 0) AS usd_foil,
@@ -12018,7 +12068,7 @@ def public_card_detail(conn, card_id, variant="Normal"):
 
 
 def add_card_purchase(conn, user_id, card_id, payload):
-    card = conn.execute("SELECT 1 FROM cards WHERE scryfall_id = ?", (card_id,)).fetchone()
+    card = conn.execute("SELECT * FROM cards WHERE scryfall_id = ?", (card_id,)).fetchone()
     if not card:
         raise KeyError("Card not found")
     variant = payload.get("variant") or "Normal"
@@ -12042,6 +12092,7 @@ def add_card_purchase(conn, user_id, card_id, payload):
         payload.get("notes"),
     )
     rollup_collection_from_purchases(conn, user_id, card_id, variant)
+    upsert_price_snapshot_from_card_row(conn, card)
     conn.commit()
     return {"ok": True, "card": card_detail(conn, user_id, card_id, variant)}
 
@@ -12064,7 +12115,7 @@ def available_condition_quantity(conn, user_id, card_id, variant, condition):
 
 
 def adjust_card_inventory(conn, user_id, card_id, payload):
-    card = conn.execute("SELECT 1 FROM cards WHERE scryfall_id = ?", (card_id,)).fetchone()
+    card = conn.execute("SELECT * FROM cards WHERE scryfall_id = ?", (card_id,)).fetchone()
     if not card:
         raise KeyError("Card not found")
     variant = payload.get("variant") or "Normal"
@@ -12078,6 +12129,7 @@ def adjust_card_inventory(conn, user_id, card_id, payload):
     adjustment_date = payload.get("adjustment_date") or today_iso()
     if action == "increase":
         record_card_purchase(conn, user_id, card_id, variant, quantity, condition, adjustment_date, max(quantity * 0.01, 0.01))
+        upsert_price_snapshot_from_card_row(conn, card)
     else:
         available = available_condition_quantity(conn, user_id, card_id, variant, condition)
         if quantity > available:
@@ -13051,6 +13103,12 @@ def refresh_card_metadata(conn, card_id):
     scryfall_card = request_json(url)
     synced_at = now_iso()
     upsert_card(conn, scryfall_card, synced_at)
+    owned = conn.execute(
+        "SELECT 1 FROM collection WHERE card_id = ? AND quantity > 0 LIMIT 1",
+        (card_id,),
+    ).fetchone()
+    if owned:
+        upsert_price_snapshot_from_card(conn, scryfall_card)
     conn.commit()
     refreshed = conn.execute("SELECT * FROM cards WHERE scryfall_id = ?", (card_id,)).fetchone()
     return {"ok": True, "card": dict(refreshed), "refreshed_at": synced_at}
@@ -13064,41 +13122,56 @@ def scryfall_card_json(card_id):
     return request_json(url)
 
 
-def refresh_owned_price_snapshots(conn, user_id=None, limit=250):
-    limit = max(1, min(int(limit or 250), 1000))
+def refresh_owned_price_snapshots(conn, user_id=None, limit=250, force=False, request_delay=None):
+    limit = max(0, int(limit or 0))
+    snapshot_date = app_today_iso()
+    delay = PRICE_SNAPSHOT_REQUEST_DELAY if request_delay is None else max(0.0, float(request_delay or 0))
+    skip_existing = "" if force else "AND NOT EXISTS (SELECT 1 FROM price_snapshots ps WHERE ps.card_id = c.scryfall_id AND ps.snapshot_date = ?)"
+    limit_clause = "LIMIT ?" if limit > 0 else ""
     if user_id is None:
+        params = [snapshot_date] if not force else []
+        if limit > 0:
+            params.append(limit)
         rows = conn.execute(
-            """
+            f"""
             SELECT DISTINCT c.scryfall_id, c.name, c.last_synced_at
             FROM cards c
             JOIN collection col ON col.card_id = c.scryfall_id
             WHERE col.quantity > 0
+              {skip_existing}
             ORDER BY c.last_synced_at ASC, c.name COLLATE NOCASE
-            LIMIT ?
+            {limit_clause}
             """,
-            (limit,),
+            params,
         ).fetchall()
     else:
+        params = [user_id]
+        if not force:
+            params.append(snapshot_date)
+        if limit > 0:
+            params.append(limit)
         rows = conn.execute(
-            """
+            f"""
             SELECT DISTINCT c.scryfall_id, c.name, c.last_synced_at
             FROM cards c
             JOIN collection col ON col.card_id = c.scryfall_id
             WHERE col.user_id = ? AND col.quantity > 0
+              {skip_existing}
             ORDER BY c.last_synced_at ASC, c.name COLLATE NOCASE
-            LIMIT ?
+            {limit_clause}
             """,
-            (user_id, limit),
+            params,
         ).fetchall()
     refreshed = []
     failed = []
     synced_at = now_iso()
     for index, row in enumerate(rows):
-        if index:
-            time.sleep(0.075)
+        if index and delay:
+            time.sleep(delay)
         try:
             scryfall_card = request_json(SCRYFALL_ID_URL.format(card_id=urllib.parse.quote(row["scryfall_id"])))
             upsert_card(conn, scryfall_card, synced_at)
+            upsert_price_snapshot_from_card(conn, scryfall_card, snapshot_date)
             refreshed.append({
                 "scryfall_id": row["scryfall_id"],
                 "name": row["name"],
@@ -13113,10 +13186,12 @@ def refresh_owned_price_snapshots(conn, user_id=None, limit=250):
     conn.commit()
     return {
         "ok": True,
-        "snapshot_date": today_iso(),
+        "snapshot_date": snapshot_date,
         "refreshed": len(refreshed),
         "failed": len(failed),
         "limit": limit,
+        "force": bool(force),
+        "scope": "global" if user_id is None else "user",
         "cards": refreshed,
         "errors": failed,
     }
@@ -13171,6 +13246,81 @@ def refresh_missing_color_metadata(conn, user_id=None, limit=100):
         "failed": failed,
         "remaining": remaining,
     }
+
+
+def parse_schedule_time(value):
+    match = re.match(r"^([0-2]?\d):([0-5]\d)$", (value or "").strip())
+    if not match:
+        LOGGER.warning("Invalid PRICE_SNAPSHOT_SCHEDULE_TIME %r; using 01:00.", value)
+        return 1, 0
+    hour = int(match.group(1))
+    minute = int(match.group(2))
+    if hour > 23:
+        LOGGER.warning("Invalid PRICE_SNAPSHOT_SCHEDULE_TIME hour %r; using 01:00.", value)
+        return 1, 0
+    return hour, minute
+
+
+def seconds_until_next_snapshot_run(now=None):
+    tz = app_timezone()
+    now = now or datetime.now(tz)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=tz)
+    hour, minute = parse_schedule_time(PRICE_SNAPSHOT_SCHEDULE_TIME)
+    target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if target <= now:
+        target += timedelta(days=1)
+    return max(1.0, (target - now).total_seconds())
+
+
+def run_scheduled_price_snapshot_once():
+    with connect() as conn:
+        init_db(conn)
+        result = refresh_owned_price_snapshots(
+            conn,
+            user_id=None,
+            limit=PRICE_SNAPSHOT_DAILY_LIMIT,
+            force=False,
+            request_delay=PRICE_SNAPSHOT_REQUEST_DELAY,
+        )
+    LOGGER.info(
+        "Daily price snapshot complete for %s: refreshed=%s failed=%s limit=%s",
+        result.get("snapshot_date"),
+        result.get("refreshed"),
+        result.get("failed"),
+        result.get("limit"),
+    )
+    return result
+
+
+def price_snapshot_scheduler_loop(stop_event):
+    LOGGER.info(
+        "Daily price snapshot scheduler enabled at %s %s; limit=%s delay=%ss",
+        PRICE_SNAPSHOT_SCHEDULE_TIME,
+        APP_TIMEZONE,
+        "all" if PRICE_SNAPSHOT_DAILY_LIMIT <= 0 else PRICE_SNAPSHOT_DAILY_LIMIT,
+        PRICE_SNAPSHOT_REQUEST_DELAY,
+    )
+    while not stop_event.wait(seconds_until_next_snapshot_run()):
+        try:
+            run_scheduled_price_snapshot_once()
+        except Exception as exc:
+            LOGGER.exception("Daily price snapshot failed: %s", exc)
+
+
+def start_price_snapshot_scheduler():
+    if not PRICE_SNAPSHOT_SCHEDULE_ENABLED:
+        LOGGER.info("Daily price snapshot scheduler disabled.")
+        return None
+    stop_event = threading.Event()
+    thread = threading.Thread(
+        target=price_snapshot_scheduler_loop,
+        args=(stop_event,),
+        name="price-snapshot-scheduler",
+        daemon=True,
+    )
+    thread.start()
+    return stop_event
 
 
 def export_rows(conn, user_id):
@@ -14086,7 +14236,12 @@ class Handler(SimpleHTTPRequestHandler):
                 if parsed.path == "/api/prices/snapshots/refresh":
                     user = self.require_user(conn)
                     payload = self.read_json()
-                    return self.send_json(refresh_owned_price_snapshots(conn, user["id"], payload.get("limit", 250)))
+                    return self.send_json(refresh_owned_price_snapshots(
+                        conn,
+                        user["id"],
+                        payload.get("limit", 250),
+                        force=True,
+                    ))
                 if parsed.path == "/api/cards/missing-list":
                     user = self.require_user(conn)
                     return self.send_json(update_cards_missing_list(conn, user["id"], self.read_json()))
@@ -14367,11 +14522,16 @@ class Handler(SimpleHTTPRequestHandler):
 def serve(host="127.0.0.1", port=8000):
     with connect() as conn:
         init_db(conn)
+    snapshot_scheduler_stop = start_price_snapshot_scheduler()
     server = ThreadingHTTPServer((host, port), Handler)
     display_host = "127.0.0.1" if host in ("0.0.0.0", "::") else host
     LOGGER.info("Arcane Ledger starting at http://%s:%s with database %s", display_host, port, DB_PATH)
     print(f"Arcane Ledger running at http://{display_host}:{port}")
-    server.serve_forever()
+    try:
+        server.serve_forever()
+    finally:
+        if snapshot_scheduler_stop:
+            snapshot_scheduler_stop.set()
 
 
 def main(argv):
