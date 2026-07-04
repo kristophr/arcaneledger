@@ -16,6 +16,7 @@ A Magic: The Gathering collection tracker. It uses Scryfall as the catalog and p
 - Build wishlists, favorites, store listings, profile posts, and public comments around cards and decks.
 - Profile blog and favorites subpages provide focused full-width feeds, with profile card clicks opening inline card preview modals.
 - Share cards, decks, sets, containers, wishlists, and favorites from one clean modal with copy-link and email options.
+- Logged-out visitors can browse read-only shared/card pages while keeping public navigation and login/create-account actions available.
 - Publish and share contributor-written News articles with drafts, Markdown editing, image uploads, scheduled publishing, public reading/search, copy-link sharing, and email sharing.
 - Filter collection views by set and container status to quickly find stored or unstored cards.
 - Run collection reports with selectable fields, including `card_id` for storage imports, filters, CSV/XLS export, and email delivery with CSV attachments.

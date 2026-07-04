@@ -1978,6 +1978,7 @@ function renderSetCompletion(sets) {
 }
 
 function showPage(pageName) {
+  document.body.classList.remove("share-only");
   for (const page of els.pages) {
     page.hidden = page.dataset.page !== pageName;
   }
@@ -12158,7 +12159,6 @@ function wireEvents() {
         activatePage("home", { replace: true, promptLogin: false });
         openAuthModal("login", "Log in to edit this deck.");
       } else {
-        document.body.classList.toggle("share-only", !isPrivateDeckRoute(deckId));
         loadSharedDeck(deckId);
       }
     }
@@ -13800,21 +13800,15 @@ async function boot() {
   const initialAppPage = appPageRoute();
   const initialPath = window.location.pathname.replace(/\/+$/, "") || "/";
   const isRootRoute = initialPath === "/";
-  const isAlwaysShareOnlyRoute = Boolean(initialSharedSet || initialDeckShareId || initialWishlistShareId || initialContainerShareId || initialStoreShareId || initialFavoritesShare);
   await loadSession().catch(() => {
     state.user = null;
     updateAuthUi();
   });
   applyNavCollapsedState();
-  const isShareOnlyRoute = isAlwaysShareOnlyRoute || Boolean((initialSharedId || initialCardDetail) && !state.user);
-  if (!isShareOnlyRoute) {
-    wireEvents();
-  }
+  wireEvents();
   if (initialSharedId) {
-    document.body.classList.toggle("share-only", !state.user);
     loadSharedCard(initialSharedId);
   } else if (initialDeckShareId) {
-    document.body.classList.add("share-only");
     loadSharedDeck(initialDeckShareId);
   } else if (initialDeckEditorId) {
     if (state.user) {
@@ -13828,19 +13822,14 @@ async function boot() {
       openAuthModal("login", "Log in to edit this deck.");
     }
   } else if (initialWishlistShareId) {
-    document.body.classList.add("share-only");
     loadSharedWishlist(initialWishlistShareId);
   } else if (initialContainerShareId) {
-    document.body.classList.add("share-only");
     loadSharedContainer(initialContainerShareId);
   } else if (initialStoreShareId) {
-    document.body.classList.add("share-only");
     loadSharedStore(initialStoreShareId);
   } else if (initialFavoritesShare) {
-    document.body.classList.add("share-only");
     loadSharedFavorites(initialFavoritesShare);
   } else if (initialSharedSet) {
-    document.body.classList.add("share-only");
     loadSharedSet(initialSharedSet);
   } else if (initialVerificationToken) {
     loadEmailVerification(initialVerificationToken);
@@ -13860,7 +13849,6 @@ async function boot() {
         renderCollection();
       });
     } else {
-      document.body.classList.add("share-only");
       loadPublicCardDetail(initialCardDetail.cardId, initialCardDetail.variant);
     }
   } else if (initialSetCode) {

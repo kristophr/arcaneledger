@@ -11,6 +11,8 @@
 ### Changed
 - Updated price history collection to store one daily market row per owned Scryfall card and finish, without backfilling historical data.
 - Updated manual dashboard price refresh to force-refresh today’s logged-in user snapshots while scheduled runs refresh all owned cards globally.
+- Updated logged-out read-only card, deck, set, wishlist, container, store, and favorites pages to keep the public navigation shell and account actions visible.
+- Bumped the frontend app script asset version for the guest navigation fix.
 - Bumped the app version and user agent to `0.5.0 beta`.
 
 ## 0.4.14 beta
