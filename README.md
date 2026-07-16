@@ -52,6 +52,12 @@ docker compose up -d --build
 
 The app still listens on `8000` inside the container; `HOST_PORT` only changes the port you use from your browser.
 
+## Sites Architecture
+
+This repo is linked to an OpenAI Sites project in `.openai/hosting.json`. The current app is still a Python webserver with SQLite-backed API routes and static assets in `static/`, so the next Sites migration step is to split the browser client into a Sites-supported frontend while keeping this app as the API/data service.
+
+Do not create a second Sites project for this repo; reuse the existing `project_id` from `.openai/hosting.json`.
+
 Set the public URL used for email verification links:
 
 ```env

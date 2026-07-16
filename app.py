@@ -1737,6 +1737,19 @@ def init_db(conn):
             FOREIGN KEY (card_id) REFERENCES cards(scryfall_id) ON DELETE CASCADE
         );
 
+        CREATE TABLE IF NOT EXISTS user_locations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            city TEXT NOT NULL DEFAULT '',
+            state TEXT NOT NULL DEFAULT '',
+            original_location TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(user_id, name, city, state),
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+
         CREATE TABLE IF NOT EXISTS card_meta (
             user_id INTEGER,
             card_id TEXT NOT NULL,
@@ -2038,6 +2051,7 @@ def init_db(conn):
         CREATE INDEX IF NOT EXISTS idx_cards_name ON cards(name);
         CREATE INDEX IF NOT EXISTS idx_collection_quantity ON collection(user_id, quantity);
         CREATE INDEX IF NOT EXISTS idx_card_purchases_card ON card_purchases(user_id, card_id, variant, purchase_date);
+        CREATE INDEX IF NOT EXISTS idx_user_locations_user_name ON user_locations(user_id, name, city, state);
         CREATE INDEX IF NOT EXISTS idx_wishlist_items_user_card ON wishlist_items(user_id, card_id, variant);
         CREATE INDEX IF NOT EXISTS idx_deck_cards_card ON deck_cards(card_id, variant);
         CREATE INDEX IF NOT EXISTS idx_container_cards_card ON container_cards(card_id, variant, card_condition);
@@ -2067,6 +2081,7 @@ def init_db(conn):
     migrate_collection_schema(conn)
     migrate_card_meta_schema(conn)
     migrate_purchases_schema(conn)
+    migrate_user_locations_schema(conn)
     migrate_decks_schema(conn)
     migrate_containers_schema(conn)
     migrate_card_sales_schema(conn)
@@ -2198,6 +2213,8 @@ def migrate_purchases_schema(conn):
         conn.execute("ALTER TABLE card_purchases ADD COLUMN store_location TEXT NOT NULL DEFAULT ''")
     if "notes" not in columns:
         conn.execute("ALTER TABLE card_purchases ADD COLUMN notes TEXT NOT NULL DEFAULT ''")
+    if "location_id" not in columns:
+        conn.execute("ALTER TABLE card_purchases ADD COLUMN location_id INTEGER")
     conn.execute(
         f"""
         UPDATE card_purchases
@@ -2232,6 +2249,180 @@ def migrate_purchases_schema(conn):
         """,
         (DEFAULT_CARD_CONDITION, today_iso(), now_iso()),
     )
+
+
+def parse_store_location(value):
+    text = (value or "").strip()
+    if not text:
+        return "", "", ""
+    parts = [part.strip() for part in text.split(",") if part.strip()]
+    if len(parts) >= 2:
+        city = ", ".join(parts[:-1])
+        state = parts[-1].split()[0] if parts[-1].split() else ""
+        return city[:80], state[:40], text[:160]
+    return text[:80], "", text[:160]
+
+
+def clean_location_name(value):
+    name = (value or "").strip()
+    if len(name) > 120:
+        raise ValueError("Store name must be 120 characters or fewer.")
+    return name
+
+
+def clean_location_city(value):
+    city = (value or "").strip()
+    if len(city) > 80:
+        raise ValueError("City must be 80 characters or fewer.")
+    return city
+
+
+def clean_location_state(value):
+    state = (value or "").strip()
+    if len(state) > 40:
+        raise ValueError("State must be 40 characters or fewer.")
+    return state
+
+
+def location_payload(row):
+    if not row:
+        return None
+    city = row["city"] or ""
+    state = row["state"] or ""
+    location = ", ".join(part for part in (city, state) if part)
+    return {
+        "id": row["id"],
+        "name": row["name"] or "",
+        "city": city,
+        "state": state,
+        "location": location or row["original_location"] or "",
+        "original_location": row["original_location"] or "",
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
+
+
+def find_user_location(conn, user_id, name, city="", state=""):
+    return conn.execute(
+        """
+        SELECT *
+        FROM user_locations
+        WHERE user_id = ?
+          AND lower(name) = lower(?)
+          AND lower(city) = lower(?)
+          AND lower(state) = lower(?)
+        """,
+        (user_id, name or "", city or "", state or ""),
+    ).fetchone()
+
+
+def resolve_user_location_text(conn, user_id, text):
+    value = (text or "").strip()
+    if not value:
+        return None
+    normalized_value = normalize(value)
+    rows = conn.execute(
+        """
+        SELECT *
+        FROM user_locations
+        WHERE user_id = ?
+        ORDER BY name COLLATE NOCASE, city COLLATE NOCASE, state COLLATE NOCASE
+        """,
+        (user_id,),
+    ).fetchall()
+    for row in rows:
+        location = ", ".join(part for part in (row["city"], row["state"]) if part) or row["original_location"] or ""
+        candidates = [
+            row["name"] or "",
+            location,
+            f"{row['name']} - {location}" if location else row["name"],
+            f"{row['name']} {location}" if location else row["name"],
+        ]
+        if any(normalize(candidate) == normalized_value for candidate in candidates):
+            return row
+    return None
+
+
+def ensure_user_location(conn, user_id, name, location="", city=None, state=None):
+    name = clean_location_name(name)
+    if not name:
+        return None
+    if city is None and state is None:
+        parsed_city, parsed_state, original_location = parse_store_location(location)
+    else:
+        parsed_city = clean_location_city(city)
+        parsed_state = clean_location_state(state)
+        original_location = (location or ", ".join(part for part in (parsed_city, parsed_state) if part)).strip()[:160]
+    existing = find_user_location(conn, user_id, name, parsed_city, parsed_state)
+    timestamp = now_iso()
+    if existing:
+        if original_location and not (existing["original_location"] or ""):
+            conn.execute(
+                "UPDATE user_locations SET original_location = ?, updated_at = ? WHERE id = ? AND user_id = ?",
+                (original_location, timestamp, existing["id"], user_id),
+            )
+            existing = conn.execute("SELECT * FROM user_locations WHERE id = ? AND user_id = ?", (existing["id"], user_id)).fetchone()
+        return existing
+    cursor = conn.execute(
+        """
+        INSERT INTO user_locations (user_id, name, city, state, original_location, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (user_id, name, parsed_city, parsed_state, original_location, timestamp, timestamp),
+    )
+    return conn.execute("SELECT * FROM user_locations WHERE id = ?", (cursor.lastrowid,)).fetchone()
+
+
+def migrate_user_locations_schema(conn):
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_locations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            city TEXT NOT NULL DEFAULT '',
+            state TEXT NOT NULL DEFAULT '',
+            original_location TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(user_id, name, city, state),
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        )
+        """
+    )
+    columns = {col["name"] for col in conn.execute("PRAGMA table_info(user_locations)").fetchall()}
+    if "original_location" not in columns:
+        conn.execute("ALTER TABLE user_locations ADD COLUMN original_location TEXT NOT NULL DEFAULT ''")
+    purchase_columns = {col["name"] for col in conn.execute("PRAGMA table_info(card_purchases)").fetchall()}
+    if "location_id" not in purchase_columns:
+        conn.execute("ALTER TABLE card_purchases ADD COLUMN location_id INTEGER")
+    rows = conn.execute(
+        """
+        SELECT user_id, store_name, store_location
+        FROM card_purchases
+        WHERE user_id IS NOT NULL
+          AND (trim(COALESCE(store_name, '')) != '' OR trim(COALESCE(store_location, '')) != '')
+        GROUP BY user_id, store_name, store_location
+        """
+    ).fetchall()
+    for row in rows:
+        name = (row["store_name"] or "").strip()
+        location_text = (row["store_location"] or "").strip()
+        if not name:
+            name = location_text or "Unknown Store"
+        location = ensure_user_location(conn, row["user_id"], name, location_text)
+        if location:
+            conn.execute(
+                """
+                UPDATE card_purchases
+                SET location_id = ?
+                WHERE user_id = ?
+                  AND COALESCE(location_id, 0) = 0
+                  AND COALESCE(store_name, '') = ?
+                  AND COALESCE(store_location, '') = ?
+                """,
+                (location["id"], row["user_id"], row["store_name"] or "", row["store_location"] or ""),
+            )
 
 
 def migrate_decks_schema(conn):
@@ -4733,6 +4924,75 @@ def update_user_settings(conn, user_id, payload):
     return {"ok": True, "user": user_payload(conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone())}
 
 
+def list_user_locations(conn, user_id, query=""):
+    search = (query or "").strip()
+    params = [user_id]
+    where = "WHERE user_id = ?"
+    if search:
+        like = f"{search}%"
+        where += " AND (lower(name) LIKE lower(?) OR lower(city) LIKE lower(?) OR lower(state) LIKE lower(?))"
+        params.extend([like, like, like])
+    rows = conn.execute(
+        f"""
+        SELECT *
+        FROM user_locations
+        {where}
+        ORDER BY name COLLATE NOCASE, city COLLATE NOCASE, state COLLATE NOCASE
+        """,
+        params,
+    ).fetchall()
+    return {"locations": [location_payload(row) for row in rows]}
+
+
+def create_user_location(conn, user_id, payload):
+    payload = payload or {}
+    name = clean_location_name(payload.get("name"))
+    city = clean_location_city(payload.get("city"))
+    state = clean_location_state(payload.get("state"))
+    if not name:
+        raise ValueError("Store name is required.")
+    location = ensure_user_location(conn, user_id, name, city=city, state=state)
+    conn.commit()
+    return {"ok": True, "location": location_payload(location), "locations": list_user_locations(conn, user_id)["locations"]}
+
+
+def update_user_location(conn, user_id, location_id, payload):
+    payload = payload or {}
+    existing = conn.execute("SELECT * FROM user_locations WHERE id = ? AND user_id = ?", (location_id, user_id)).fetchone()
+    if not existing:
+        raise KeyError("Location not found")
+    name = clean_location_name(payload.get("name"))
+    city = clean_location_city(payload.get("city"))
+    state = clean_location_state(payload.get("state"))
+    if not name:
+        raise ValueError("Store name is required.")
+    timestamp = now_iso()
+    try:
+        conn.execute(
+            """
+            UPDATE user_locations
+            SET name = ?, city = ?, state = ?, original_location = ?, updated_at = ?
+            WHERE id = ? AND user_id = ?
+            """,
+            (name, city, state, ", ".join(part for part in (city, state) if part), timestamp, location_id, user_id),
+        )
+    except sqlite3.IntegrityError:
+        raise ValueError("That location already exists.")
+    location = conn.execute("SELECT * FROM user_locations WHERE id = ? AND user_id = ?", (location_id, user_id)).fetchone()
+    conn.commit()
+    return {"ok": True, "location": location_payload(location), "locations": list_user_locations(conn, user_id)["locations"]}
+
+
+def delete_user_location(conn, user_id, location_id):
+    existing = conn.execute("SELECT * FROM user_locations WHERE id = ? AND user_id = ?", (location_id, user_id)).fetchone()
+    if not existing:
+        raise KeyError("Location not found")
+    conn.execute("UPDATE card_purchases SET location_id = NULL WHERE user_id = ? AND location_id = ?", (user_id, location_id))
+    conn.execute("DELETE FROM user_locations WHERE id = ? AND user_id = ?", (location_id, user_id))
+    conn.commit()
+    return {"ok": True, "deleted": location_id, "locations": list_user_locations(conn, user_id)["locations"]}
+
+
 def clear_user_data(conn, user_id):
     for table in ("container_cards", "deck_cards", "wishlist_items"):
         id_column = "container_id" if table == "container_cards" else "deck_id" if table == "deck_cards" else "wishlist_id"
@@ -4747,7 +5007,7 @@ def clear_user_data(conn, user_id):
         (user_id, user_id),
     )
     conn.execute("DELETE FROM card_comments WHERE user_id = ?", (user_id,))
-    for table in ("notifications", "favorite_decks", "card_notes", "card_sale_journal", "card_sales", "inventory_adjustments", "wishlist_cards", "card_meta", "card_purchases", "collection", "wishlists", "containers", "decks"):
+    for table in ("notifications", "favorite_decks", "card_notes", "card_sale_journal", "card_sales", "inventory_adjustments", "wishlist_cards", "card_meta", "card_purchases", "collection", "user_locations", "wishlists", "containers", "decks"):
         conn.execute(f"DELETE FROM {table} WHERE user_id = ?", (user_id,))
     conn.commit()
     return {"ok": True}
@@ -5417,7 +5677,8 @@ def variant_summaries_for_cards(conn, card_ids, user_id=None):
     collection_rows = conn.execute(
         f"""
         SELECT card_id, COALESCE(NULLIF(variant, ''), 'Normal') AS variant,
-               COALESCE(SUM(quantity), 0) AS quantity
+               COALESCE(SUM(quantity), 0) AS quantity,
+               COALESCE(SUM(quantity * paid_price), 0) AS collection_paid
         FROM collection
         WHERE user_id = ? AND card_id IN ({placeholders}) AND COALESCE(quantity, 0) > 0
         GROUP BY card_id, COALESCE(NULLIF(variant, ''), 'Normal')
@@ -5430,8 +5691,29 @@ def variant_summaries_for_cards(conn, card_ids, user_id=None):
         summaries.setdefault(card_id, {})[variant] = {
             "variant": variant,
             "quantity": int(row["quantity"] or 0),
+            "total_paid": float(row["collection_paid"] or 0),
             "conditions": [],
         }
+    purchase_paid_rows = conn.execute(
+        f"""
+        SELECT card_id, COALESCE(NULLIF(variant, ''), 'Normal') AS variant,
+               COALESCE(SUM(total_price), 0) AS total_paid
+        FROM card_purchases
+        WHERE user_id = ? AND card_id IN ({placeholders}) AND COALESCE(quantity, 0) > 0
+        GROUP BY card_id, COALESCE(NULLIF(variant, ''), 'Normal')
+        """,
+        [user_id] + unique_ids,
+    ).fetchall()
+    for row in purchase_paid_rows:
+        card_id = row["card_id"]
+        variant = row["variant"] or "Normal"
+        summary = summaries.setdefault(card_id, {}).setdefault(variant, {
+            "variant": variant,
+            "quantity": 0,
+            "total_paid": 0.0,
+            "conditions": [],
+        })
+        summary["total_paid"] = float(row["total_paid"] or 0)
     purchase_rows = conn.execute(
         f"""
         SELECT card_id, COALESCE(NULLIF(variant, ''), 'Normal') AS variant,
@@ -5450,13 +5732,21 @@ def variant_summaries_for_cards(conn, card_ids, user_id=None):
         summary = summaries.setdefault(card_id, {}).setdefault(variant, {
             "variant": variant,
             "quantity": 0,
+            "total_paid": 0.0,
             "conditions": [],
         })
         summary["conditions"].append({
             "card_condition": card_condition(row["card_condition"]),
             "quantity": int(row["quantity"] or 0),
         })
-    for variants in summaries.values():
+    card_rows = {
+        row["scryfall_id"]: row
+        for row in conn.execute(
+            f"SELECT scryfall_id, current_usd, current_usd_foil, current_usd_etched FROM cards WHERE scryfall_id IN ({placeholders})",
+            unique_ids,
+        ).fetchall()
+    }
+    for card_id, variants in summaries.items():
         for summary in variants.values():
             if not summary["conditions"] and summary["quantity"] > 0:
                 summary["conditions"].append({
@@ -5464,6 +5754,13 @@ def variant_summaries_for_cards(conn, card_ids, user_id=None):
                     "quantity": summary["quantity"],
                 })
             summary["conditions"].sort(key=lambda item: (CONDITION_ORDER.get(item["card_condition"], 99), item["card_condition"]))
+            card_row = card_rows.get(card_id)
+            current_price = float(variant_price_from_row(card_row, summary["variant"]) or 0) if card_row else 0.0
+            portfolio_value = int(summary["quantity"] or 0) * current_price
+            total_paid = float(summary.get("total_paid") or 0)
+            summary["current_price"] = current_price
+            summary["portfolio_value"] = portfolio_value
+            summary["delta"] = portfolio_value - total_paid
     def sort_key(item):
         variant = item["variant"] or "Normal"
         return (0 if variant.lower() == "normal" else 1, variant.lower())
@@ -5640,20 +5937,34 @@ def validate_selected_card(card, payload):
             raise ValueError("Selected Scryfall card changed before save. Please search and choose the card again.")
 
 
-def record_card_purchase(conn, user_id, card_id, variant, quantity, condition, purchase_date, total_price, store_name="", store_location="", graded=0, notes=""):
+def record_card_purchase(conn, user_id, card_id, variant, quantity, condition, purchase_date, total_price, store_name="", store_location="", graded=0, notes="", location_id=None):
     quantity = max(1, int(quantity or 1))
     total_price = money(total_price, fallback=0.01)
     if total_price <= 0:
         total_price = 0.01
     store_name = clean_purchase_detail(store_name, "Store name")
     store_location = clean_purchase_detail(store_location, "Store location")
+    linked_location = None
+    if location_id:
+        linked_location = conn.execute("SELECT * FROM user_locations WHERE id = ? AND user_id = ?", (int(location_id), user_id)).fetchone()
+        if not linked_location:
+            raise ValueError("Choose a valid store location.")
+        store_name = linked_location["name"] or store_name
+        store_location = ", ".join(part for part in (linked_location["city"], linked_location["state"]) if part) or linked_location["original_location"] or store_location
+    elif store_name:
+        linked_location = resolve_user_location_text(conn, user_id, store_name)
+        if linked_location:
+            store_name = linked_location["name"] or store_name
+            store_location = ", ".join(part for part in (linked_location["city"], linked_location["state"]) if part) or linked_location["original_location"] or store_location
+        else:
+            linked_location = ensure_user_location(conn, user_id, store_name, store_location)
     notes = (notes or "").strip()
     if len(notes) > 1000:
         raise ValueError("Purchase notes must be 1,000 characters or fewer.")
     conn.execute(
         """
-        INSERT INTO card_purchases (user_id, card_id, variant, quantity, card_condition, purchase_date, total_price, graded, store_name, store_location, notes, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO card_purchases (user_id, card_id, variant, quantity, card_condition, purchase_date, total_price, graded, store_name, store_location, notes, location_id, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             user_id,
@@ -5667,6 +5978,7 @@ def record_card_purchase(conn, user_id, card_id, variant, quantity, condition, p
             store_name,
             store_location,
             notes,
+            linked_location["id"] if linked_location else None,
             now_iso(),
         ),
     )
@@ -5776,6 +6088,7 @@ def add_card_to_collection(conn, user_id, payload):
 
     global_store_name = payload.get("store_name") or ""
     global_store_location = payload.get("store_location") or ""
+    global_location_id = payload.get("location_id") or None
     global_notes = (payload.get("notes") or "").strip()
     if len(global_notes) > 1000:
         raise ValueError("Purchase notes must be 1,000 characters or fewer.")
@@ -5799,6 +6112,7 @@ def add_card_to_collection(conn, user_id, payload):
             "graded": bool_int(row.get("graded")),
             "store_name": row.get("store_name") or global_store_name,
             "store_location": row.get("store_location") or global_store_location,
+            "location_id": row.get("location_id") or global_location_id,
             "notes": (row.get("notes") or global_notes).strip(),
         })
     if not normalized_rows:
@@ -5821,6 +6135,7 @@ def add_card_to_collection(conn, user_id, payload):
             row["store_location"],
             row["graded"],
             row["notes"],
+            row["location_id"],
         )
         if row["variant"] not in variants:
             variants.append(row["variant"])
@@ -6029,6 +6344,9 @@ def import_row_from_source(source, line_number, source_format):
         "card_condition": card_condition(source_value(source, "card_condition", "Condition", "Card Condition")),
         "graded": bool_int(source_value(source, "graded", "Graded")),
         "notes": source_value(source, "notes", "Notes"),
+        "store_name": source_value(source, "store_name", "Store", "Store Name", "Location"),
+        "store_location": source_value(source, "store_location", "Store Location", "Location Address", "City Purchased From"),
+        "location_id": source_value(source, "location_id", "Location ID"),
     }
     if not entry["name"]:
         entry["error"] = "Missing card name."
@@ -6103,6 +6421,8 @@ def scryfall_import_match(entry):
     set_code = (entry.get("set_code") or "").strip().lower()
     set_filter = f" e:{set_code}" if set_code else ""
     queries = []
+    if number and set_code:
+        queries.append(f'cn:{number}{set_filter} game:paper')
     if name and number:
         queries.append(f'!"{name}" cn:{number}{set_filter} game:paper')
         queries.append(f'{name} cn:{number}{set_filter} game:paper')
@@ -6139,7 +6459,7 @@ def preview_import_entries(conn, entries):
         entry = dict(source_entry or {})
         if not entry.get("line"):
             entry["line"] = index
-        row_id = f"row-{entry['line']}"
+        row_id = f"row-{entry.get('row_key') or entry['line']}"
         if entry.get("error"):
             issues.append({"line": entry["line"], "name": entry.get("name"), "error": entry["error"]})
             preview.append({"id": row_id, "checked": False, "entry": entry, "match": None, "status": "bad"})
@@ -6205,6 +6525,150 @@ def parse_csv_import_text(text):
     if not rows:
         raise ValueError("CSV has no rows to import.")
     return rows
+
+
+CUSTOM_PURCHASE_VARIANTS = [
+    ("Normal", ("normal", "nonfoil", "non-foil", "regular")),
+    ("Foil", ("foil",)),
+    ("Etched Foil", ("etched foil", "etched")),
+    ("Surge Foil", ("surge foil", "surge")),
+    ("Chocobo Track Foil", ("chocobo track foil", "chocobo foil", "chocobo")),
+]
+
+
+def parse_import_purchase_date(value):
+    text = (value or "").strip()
+    if not text:
+        return today_iso()
+    for date_format in ("%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y", "%B %d, %Y", "%b %d, %Y", "%B %d %Y", "%b %d %Y"):
+        try:
+            return datetime.strptime(text, date_format).date().isoformat()
+        except ValueError:
+            pass
+    return text[:40]
+
+
+def custom_purchase_header_lookup(headers):
+    return {normalize(header): header for header in headers if header}
+
+
+def custom_purchase_value(row, *aliases):
+    lookup = {normalize(key): value for key, value in (row or {}).items()}
+    for alias in aliases:
+        value = lookup.get(normalize(alias))
+        if value is not None and str(value).strip() != "":
+            return str(value).strip()
+    return ""
+
+
+def custom_purchase_variant_columns(headers):
+    normalized = custom_purchase_header_lookup(headers)
+    columns = []
+    used = set()
+    for variant, aliases in CUSTOM_PURCHASE_VARIANTS:
+        for alias in aliases:
+            header = normalized.get(normalize(alias))
+            if header and header not in used:
+                columns.append((variant, header))
+                used.add(header)
+                break
+    return columns
+
+
+def parse_custom_purchase_import_entries(text):
+    rows = parse_csv_import_text(text)
+    reader = csv.DictReader(io.StringIO(text))
+    headers = [header for header in (reader.fieldnames or []) if header]
+    variant_columns = custom_purchase_variant_columns(headers)
+    if not variant_columns:
+        raise ValueError("Bulk purchase CSV needs at least one variant quantity column, such as Normal or Foil.")
+    entries = []
+    issues = []
+    total_quantity = 0
+    for line_number, row in enumerate(rows, start=2):
+        set_value = custom_purchase_value(row, "set", "set code", "set_code", "edition")
+        collector_number = custom_purchase_value(row, "card number", "collector number", "collector_number", "number", "cn")
+        paid_price = money(custom_purchase_value(row, "price paid per card", "price paid", "paid price", "purchase price", "price"), fallback=0.01)
+        if paid_price <= 0:
+            paid_price = 0.01
+        location = custom_purchase_value(row, "location", "store", "store name", "store bought from")
+        acquired_date = parse_import_purchase_date(custom_purchase_value(row, "date purchased", "purchase date", "date acquired", "acquired date"))
+        if not set_value or not collector_number:
+            issues.append({"line": line_number, "error": "Set and card number are required."})
+            continue
+        row_quantity = 0
+        for variant, header in variant_columns:
+            quantity = int(money(row.get(header), fallback=0))
+            if quantity <= 0:
+                continue
+            row_quantity += quantity
+            total_quantity += quantity
+            entry = {
+                "line": line_number,
+                "row_key": f"{line_number}-{normalize(variant)}",
+                "format": "bulk_purchase",
+                "name": "",
+                "set_name": "" if re.fullmatch(r"[A-Za-z0-9]{2,8}", set_value.strip()) else set_value,
+                "set_code": set_value.strip().lower() if re.fullmatch(r"[A-Za-z0-9]{2,8}", set_value.strip()) else "",
+                "collector_number": collector_number,
+                "quantity": quantity,
+                "paid_price": paid_price,
+                "acquired_date": acquired_date,
+                "variant": variant,
+                "card_condition": DEFAULT_CARD_CONDITION,
+                "graded": 0,
+                "notes": "",
+                "store_name": location,
+                "store_location": "",
+                "location_id": "",
+            }
+            entries.append(entry)
+        if row_quantity <= 0:
+            issues.append({"line": line_number, "error": "No variant quantity found on this row."})
+    return {
+        "entries": entries,
+        "issues": issues,
+        "row_count": len(rows),
+        "entry_count": len(entries),
+        "total_quantity": total_quantity,
+        "variant_columns": [{"variant": variant, "header": header} for variant, header in variant_columns],
+    }
+
+
+def annotate_custom_purchase_locations(conn, user_id, parsed):
+    missing_locations = {}
+    matched_locations = {}
+    for entry in parsed.get("entries") or []:
+        location = (entry.get("store_name") or "").strip()
+        if not location:
+            entry["location_status"] = "empty"
+            continue
+        if location in matched_locations:
+            location_row = matched_locations[location]
+        else:
+            location_row = resolve_user_location_text(conn, user_id, location)
+            matched_locations[location] = location_row
+        if location_row:
+            entry["location_status"] = "matched"
+            entry["location_id"] = location_row["id"]
+            entry["store_name"] = location_row["name"] or location
+            entry["store_location"] = ", ".join(part for part in (location_row["city"], location_row["state"]) if part) or location_row["original_location"] or ""
+        else:
+            entry["location_status"] = "missing"
+            entry["location_warning"] = f"Location \"{location}\" is not in your address book."
+            missing_locations.setdefault(location, set()).add(entry.get("line") or "?")
+    if missing_locations:
+        for location, lines in sorted(missing_locations.items(), key=lambda item: normalize(item[0])):
+            parsed.setdefault("issues", []).append({
+                "line": ", ".join(str(line) for line in sorted(lines, key=lambda value: str(value))),
+                "error": f"Location \"{location}\" is not in your Site Management address book.",
+                "severity": "warning",
+            })
+    parsed["missing_locations"] = [
+        {"name": location, "lines": sorted(lines, key=lambda value: str(value))}
+        for location, lines in sorted(missing_locations.items(), key=lambda item: normalize(item[0]))
+    ]
+    return parsed
 
 
 def parse_json_import_text(text):
@@ -6366,6 +6830,24 @@ def import_csv_mapped_entries(payload):
     return {"entries": entries, "issues": invalid, "row_count": len(entries)}
 
 
+def import_custom_purchase_entries(conn, user_id, payload):
+    parsed = parse_custom_purchase_import_entries(payload.get("text") or "")
+    parsed = annotate_custom_purchase_locations(conn, user_id, parsed)
+    unique_lookup_keys = {
+        import_match_cache_key(entry)
+        for entry in parsed["entries"]
+        if not entry.get("scryfall_id")
+    }
+    parsed["scryfall_lookup_limit"] = SCRYFALL_IMPORT_LOOKUP_LIMIT
+    parsed["estimated_unique_lookups"] = len(unique_lookup_keys)
+    if SCRYFALL_IMPORT_LOOKUP_LIMIT and len(unique_lookup_keys) > SCRYFALL_IMPORT_LOOKUP_LIMIT:
+        parsed.setdefault("issues", []).append({
+            "line": "",
+            "error": f"{len(unique_lookup_keys)} unique card lookup(s) detected. Automatic Scryfall matching will stop after {SCRYFALL_IMPORT_LOOKUP_LIMIT}; cached local matches and manual selection can still be imported.",
+        })
+    return parsed
+
+
 def import_entries_match_preview(conn, payload):
     entries = payload.get("entries") or []
     if not isinstance(entries, list):
@@ -6511,6 +6993,7 @@ def commit_import_rows(conn, user_id, payload):
     imported = 0
     skipped = []
     touched_sets = set()
+    selected = []
     for item in rows:
         if not item.get("checked"):
             continue
@@ -6519,21 +7002,47 @@ def commit_import_rows(conn, user_id, payload):
         if not card_id:
             skipped.append({"line": entry.get("line"), "name": entry.get("name"), "error": "No Scryfall card selected."})
             continue
-        result = add_card_to_collection(conn, user_id, {
-            "scryfall_id": card_id,
-            "quantity": entry.get("quantity") or 1,
-            "paid_price": entry.get("paid_price") or 0.01,
-            "acquired_date": entry.get("acquired_date") or today_iso(),
-            "variant": entry.get("variant") or "Normal",
-            "card_condition": entry.get("card_condition") or DEFAULT_CARD_CONDITION,
-            "graded": entry.get("graded") or 0,
-            "skip_set_cache": True,
-        })
-        if result.get("card", {}).get("set_code"):
-            touched_sets.add(result["card"]["set_code"])
+        selected.append((item, entry, card_id))
+    cards_by_id = {}
+    for _, _, card_id in selected:
+        if card_id in cards_by_id:
+            continue
+        url = SCRYFALL_ID_URL.format(card_id=urllib.parse.quote(card_id))
+        scryfall_card = request_json(url)
+        upsert_card(conn, scryfall_card, now_iso())
+        cards_by_id[card_id] = scryfall_card
+        if scryfall_card.get("set"):
+            touched_sets.add(scryfall_card.get("set"))
+    for item, entry, card_id in selected:
+        scryfall_card = cards_by_id.get(card_id)
+        if not scryfall_card:
+            skipped.append({"line": entry.get("line"), "name": entry.get("name"), "error": "No Scryfall card selected."})
+            continue
+        quantity = max(1, int(money(entry.get("quantity"), fallback=1)))
+        paid_price = money(entry.get("paid_price"), fallback=0.01)
+        if paid_price <= 0:
+            paid_price = 0.01
+        variant = entry.get("variant") or "Normal"
+        record_card_purchase(
+            conn,
+            user_id,
+            card_id,
+            variant,
+            quantity,
+            entry.get("card_condition") or DEFAULT_CARD_CONDITION,
+            entry.get("acquired_date") or today_iso(),
+            quantity * paid_price,
+            entry.get("store_name") or "",
+            entry.get("store_location") or "",
+            entry.get("graded") or 0,
+            entry.get("notes") or "",
+            entry.get("location_id") or None,
+        )
+        rollup_collection_from_purchases(conn, user_id, card_id, variant)
         imported += 1
     for set_code in sorted(touched_sets):
         cache_set_catalog(conn, set_code)
+    conn.commit()
     return {"ok": True, "imported_rows": imported, "skipped_rows": skipped}
 
 
@@ -12090,6 +12599,7 @@ def add_card_purchase(conn, user_id, card_id, payload):
         payload.get("store_location"),
         payload.get("graded", 0),
         payload.get("notes"),
+        payload.get("location_id"),
     )
     rollup_collection_from_purchases(conn, user_id, card_id, variant)
     upsert_price_snapshot_from_card_row(conn, card)
@@ -13425,6 +13935,7 @@ REPORT_FIELD_LABELS = {
     "colors": "Colors",
     "rarity": "Rarity",
     "first_obtained": "First Obtained",
+    "purchase_location": "Location",
     "favorite": "Favorite",
     "for_sale_quantity": "For Sale Qty",
     "asking_price": "Asking Price",
@@ -13434,7 +13945,7 @@ REPORT_FIELD_LABELS = {
 }
 
 DEFAULT_REPORT_FIELDS = [
-    "card_name", "set_code", "variant", "condition", "quantity", "market_price", "total_value", "delta",
+    "card_name", "set_code", "variant", "condition", "purchase_location", "quantity", "market_price", "total_value", "delta",
 ]
 MONEY_REPORT_FIELDS = {"market_price", "total_value", "average_paid", "total_paid", "delta", "asking_price"}
 
@@ -13484,10 +13995,26 @@ def build_collection_report(conn, user_id, payload):
                 OR lower(c.set_code) LIKE ?
                 OR lower(COALESCE(c.type_line, '')) LIKE ?
                 OR lower(COALESCE(col.notes, '')) LIKE ?
+                OR lower(COALESCE(inv.store_name, '')) LIKE ?
+                OR lower(COALESCE(inv.purchase_location, '')) LIKE ?
             )
             """
         )
-        params.extend([like] * 6)
+        params.extend([like] * 8)
+    location_filter = str(filters.get("location") or "").strip()
+    if location_filter:
+        like = f"%{location_filter.lower()}%"
+        where.append(
+            """
+            lower(
+                COALESCE(inv.store_name, '') || ' ' ||
+                COALESCE(inv.store_city, '') || ' ' ||
+                COALESCE(inv.store_state, '') || ' ' ||
+                COALESCE(inv.purchase_location, '')
+            ) LIKE ?
+            """
+        )
+        params.append(like)
     set_filter = str(filters.get("set") or "").strip()
     if set_filter:
         normalized_set = set_filter.lower()
@@ -13526,17 +14053,49 @@ def build_collection_report(conn, user_id, payload):
         where.append("COALESCE(sale.for_sale_quantity, 0) > 0")
     rows = conn.execute(
         f"""
-        WITH inventory AS (
+        WITH purchase_sources AS (
+            SELECT cp.*,
+                   COALESCE(NULLIF(ul.name, ''), NULLIF(cp.store_name, ''), '') AS source_store_name,
+                   COALESCE(NULLIF(ul.city, ''), '') AS source_store_city,
+                   COALESCE(NULLIF(ul.state, ''), '') AS source_store_state,
+                   COALESCE(
+                       NULLIF(TRIM(
+                           COALESCE(ul.city, '') ||
+                           CASE
+                               WHEN COALESCE(ul.city, '') != '' AND COALESCE(ul.state, '') != '' THEN ', '
+                               ELSE ''
+                           END ||
+                           COALESCE(ul.state, '')
+                       ), ''),
+                       NULLIF(ul.original_location, ''),
+                       NULLIF(cp.store_location, ''),
+                       ''
+                   ) AS source_store_location
+            FROM card_purchases cp
+            LEFT JOIN user_locations ul ON ul.id = cp.location_id AND ul.user_id = cp.user_id
+            WHERE cp.user_id = ?
+              AND COALESCE(cp.quantity, 0) > 0
+        ),
+        inventory AS (
             SELECT user_id,
                    card_id,
                    COALESCE(NULLIF(variant, ''), 'Normal') AS variant,
                    COALESCE(NULLIF(card_condition, ''), ?) AS condition,
                    SUM(COALESCE(total_price, 0)) AS total_paid,
                    SUM(COALESCE(quantity, 0)) AS quantity,
-                   MIN(purchase_date) AS first_obtained
-            FROM card_purchases
-            WHERE user_id = ?
-              AND COALESCE(quantity, 0) > 0
+                   MIN(purchase_date) AS first_obtained,
+                   GROUP_CONCAT(DISTINCT NULLIF(source_store_name, '')) AS store_name,
+                   GROUP_CONCAT(DISTINCT NULLIF(source_store_city, '')) AS store_city,
+                   GROUP_CONCAT(DISTINCT NULLIF(source_store_state, '')) AS store_state,
+                   GROUP_CONCAT(DISTINCT NULLIF(
+                       CASE
+                           WHEN source_store_name != '' AND source_store_location != '' THEN source_store_name || ' - ' || source_store_location
+                           WHEN source_store_name != '' THEN source_store_name
+                           ELSE source_store_location
+                       END,
+                       ''
+                   )) AS purchase_location
+            FROM purchase_sources
             GROUP BY user_id, card_id, COALESCE(NULLIF(variant, ''), 'Normal'), COALESCE(NULLIF(card_condition, ''), ?)
         ),
         sale AS (
@@ -13590,6 +14149,10 @@ def build_collection_report(conn, user_id, payload):
                COALESCE(c.colors, '') AS colors,
                COALESCE(c.rarity, '') AS rarity,
                COALESCE(inv.first_obtained, col.acquired_date, '') AS first_obtained,
+               COALESCE(inv.store_name, '') AS store_name,
+               COALESCE(inv.store_city, '') AS store_city,
+               COALESCE(inv.store_state, '') AS store_state,
+               COALESCE(inv.purchase_location, '') AS purchase_location,
                COALESCE(meta.favorite, 0) AS favorite,
                COALESCE(sale.for_sale_quantity, 0) AS for_sale_quantity,
                COALESCE(sale.asking_price, 0) AS asking_price,
@@ -13608,7 +14171,7 @@ def build_collection_report(conn, user_id, payload):
         LIMIT 1000
         """,
         (
-            DEFAULT_CARD_CONDITION, user_id, DEFAULT_CARD_CONDITION,
+            user_id, DEFAULT_CARD_CONDITION, DEFAULT_CARD_CONDITION,
             DEFAULT_CARD_CONDITION, user_id, DEFAULT_CARD_CONDITION,
             DEFAULT_CARD_CONDITION, user_id, DEFAULT_CARD_CONDITION,
             user_id,
@@ -13829,6 +14392,10 @@ class Handler(SimpleHTTPRequestHandler):
                 if parsed.path == "/api/auth/password-reset":
                     params = urllib.parse.parse_qs(parsed.query)
                     return self.send_json(verify_password_reset_token(conn, params.get("token", [""])[0]))
+                if parsed.path == "/api/user/locations":
+                    user = self.require_user(conn)
+                    params = urllib.parse.parse_qs(parsed.query)
+                    return self.send_json(list_user_locations(conn, user["id"], params.get("q", [""])[0]))
                 if parsed.path == "/api/home":
                     return self.send_json(home_stats(conn))
                 if parsed.path == "/api/news":
@@ -14162,6 +14729,9 @@ class Handler(SimpleHTTPRequestHandler):
                 if parsed.path == "/api/reports":
                     user = self.require_user(conn)
                     return self.send_json(create_content_report(conn, user["id"], self.read_json()), HTTPStatus.CREATED)
+                if parsed.path == "/api/user/locations":
+                    user = self.require_user(conn)
+                    return self.send_json(create_user_location(conn, user["id"], self.read_json()), HTTPStatus.CREATED)
                 if parsed.path == "/api/news":
                     user = self.require_user(conn)
                     return self.send_json(save_news_post(conn, user, self.read_json()), HTTPStatus.CREATED)
@@ -14205,6 +14775,9 @@ class Handler(SimpleHTTPRequestHandler):
                 if parsed.path == "/api/import/csv/entries":
                     self.require_user(conn)
                     return self.send_json(import_csv_mapped_entries(self.read_json()))
+                if parsed.path == "/api/import/custom-purchase/entries":
+                    user = self.require_user(conn)
+                    return self.send_json(import_custom_purchase_entries(conn, user["id"], self.read_json()))
                 if parsed.path == "/api/import/csv/match":
                     self.require_user(conn)
                     return self.send_json(import_csv_mapped_preview(conn, self.read_json()))
@@ -14423,6 +14996,10 @@ class Handler(SimpleHTTPRequestHandler):
                 if parsed.path == "/api/user/settings":
                     user = self.require_user(conn)
                     return self.send_json(update_user_settings(conn, user["id"], self.read_json()))
+                match = re.match(r"^/api/user/locations/([0-9]+)$", parsed.path)
+                if match:
+                    user = self.require_user(conn)
+                    return self.send_json(update_user_location(conn, user["id"], int(match.group(1)), self.read_json()))
                 match = re.match(r"^/api/containers/([0-9]+)$", parsed.path)
                 if match:
                     user = self.require_user(conn)
@@ -14473,6 +15050,10 @@ class Handler(SimpleHTTPRequestHandler):
                     user = self.require_user(conn)
                     result = delete_user_profile(conn, user["id"])
                     return self.send_json(result, cookie=cookie_header("", clear=True))
+                match = re.match(r"^/api/user/locations/([0-9]+)$", parsed.path)
+                if match:
+                    user = self.require_user(conn)
+                    return self.send_json(delete_user_location(conn, user["id"], int(match.group(1))))
                 match = re.match(r"^/api/decks/([0-9]+)$", parsed.path)
                 if match:
                     user = self.require_user(conn)

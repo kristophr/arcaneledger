@@ -5201,7 +5201,7 @@ body:not(.is-authenticated) .nav-bottom {
 }
 
 .card-detail-shell {
-  max-width: 1380px;
+  max-width: min(1680px, calc(100vw - 32px));
 }
 
 .set-hero {
@@ -5388,11 +5388,90 @@ body:not(.is-authenticated) .nav-bottom {
   overflow-wrap: anywhere;
 }
 
+.card-variant-portfolio-table {
+  margin-top: 20px;
+  border: 1px solid #e1e7e4;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--detail-bg);
+}
+
+.card-variant-portfolio-table table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.card-variant-portfolio-table th,
+.card-variant-portfolio-table td {
+  padding: 11px 10px;
+  border-bottom: 1px solid #e1e7e4;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.card-variant-portfolio-table thead th {
+  color: var(--muted);
+  font-size: 0.66rem;
+  font-weight: 900;
+  line-height: 1.18;
+  text-transform: uppercase;
+}
+
+.card-variant-portfolio-table th:first-child,
+.card-variant-portfolio-table td:first-child {
+  text-align: left;
+}
+
+.card-variant-portfolio-table tbody th {
+  color: var(--ink);
+  font-size: 0.92rem;
+  font-weight: 900;
+}
+
+.card-variant-portfolio-table tbody td {
+  color: var(--ink);
+  font-size: 0.9rem;
+  font-weight: 800;
+}
+
+.card-variant-portfolio-table th:nth-child(1) {
+  width: 18%;
+}
+
+.card-variant-portfolio-table th:nth-child(2) {
+  width: 12%;
+}
+
+.card-variant-portfolio-table th:nth-child(3),
+.card-variant-portfolio-table th:nth-child(4),
+.card-variant-portfolio-table th:nth-child(6) {
+  width: 15%;
+}
+
+.card-variant-portfolio-table th:nth-child(5) {
+  width: 25%;
+}
+
+.card-variant-portfolio-table .positive {
+  color: #157a45;
+}
+
+.card-variant-portfolio-table .negative {
+  color: #b13b32;
+}
+
+.card-variant-portfolio-table tr:last-child th,
+.card-variant-portfolio-table tr:last-child td {
+  border-bottom: 0;
+}
+
 .editable-card-detail {
   position: relative;
   isolation: isolate;
   overflow: hidden;
-  grid-template-columns: minmax(220px, 330px) minmax(0, 1fr);
+  grid-template-columns: minmax(190px, 280px) minmax(0, 1fr);
+  gap: clamp(16px, 2.2vw, 24px);
 }
 
 .editable-card-detail::before {
@@ -5479,7 +5558,7 @@ body:not(.is-authenticated) .nav-bottom {
 
 .card-detail-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(280px, 370px);
+  grid-template-columns: minmax(820px, 1fr) minmax(280px, 370px);
   gap: 18px;
   align-items: start;
 }
@@ -6996,6 +7075,55 @@ body:not(.is-authenticated) .nav-bottom {
   font-size: 1rem;
 }
 
+.location-form .settings-group {
+  grid-template-columns: minmax(180px, 1.2fr) minmax(120px, 0.8fr) minmax(80px, 0.45fr) auto;
+  align-items: end;
+}
+
+.location-list {
+  display: grid;
+  gap: 10px;
+  padding: 0 18px 18px;
+}
+
+.location-row {
+  display: grid;
+  grid-template-columns: minmax(160px, 1.1fr) minmax(120px, 0.8fr) minmax(72px, 0.35fr) auto;
+  gap: 10px;
+  align-items: end;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--detail-bg);
+}
+
+.location-row label,
+.location-picker-grid label {
+  margin: 0;
+}
+
+.location-row-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.location-picker {
+  display: grid;
+  gap: 8px;
+}
+
+.location-picker > input[type="text"] {
+  width: 100%;
+}
+
+.location-picker-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(86px, 0.35fr);
+  gap: 10px;
+}
+
 .changelog-modal {
   width: min(720px, 100%);
 }
@@ -7826,6 +7954,82 @@ body:not(.is-authenticated) .nav-bottom {
 .import-wizard-row > b {
   color: var(--ink);
   text-align: center;
+}
+
+.import-row-match {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+}
+
+.import-card-thumb,
+.bulk-import-card-art img {
+  width: 42px;
+  aspect-ratio: 488 / 680;
+  object-fit: cover;
+  border-radius: 4px;
+  border: 1px solid var(--line);
+  background: var(--field-bg);
+}
+
+.bulk-purchase-import-row {
+  grid-template-columns: 28px 46px minmax(180px, 1.25fr) 72px 58px 82px minmax(120px, 0.8fr) 102px minmax(210px, 1fr);
+}
+
+.bulk-purchase-import-row.location-missing {
+  border-color: rgba(177, 128, 35, 0.58);
+  background: color-mix(in srgb, #b18023 9%, var(--detail-bg));
+}
+
+.bulk-import-card-art span {
+  display: block;
+  width: 42px;
+  aspect-ratio: 488 / 680;
+  border: 1px dashed var(--line);
+  border-radius: 4px;
+  background: var(--field-bg);
+}
+
+.bulk-import-card-name {
+  min-width: 0;
+}
+
+.bulk-import-card-name strong,
+.bulk-import-card-name span,
+.bulk-purchase-import-row > span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bulk-import-card-name strong {
+  color: var(--ink);
+}
+
+.bulk-import-card-name span,
+.bulk-purchase-import-row > span {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.bulk-import-set {
+  text-transform: uppercase;
+}
+
+.bulk-import-location small {
+  display: block;
+  margin-top: 2px;
+  color: #9c6420;
+  font-size: 0.72rem;
+  font-weight: 900;
+  white-space: normal;
+}
+
+.bulk-import-location.is-missing {
+  color: #9c6420;
 }
 
 .import-recap-rows h4 {
@@ -9838,6 +10042,10 @@ body:not(.is-authenticated) .nav-bottom {
     gap: 14px;
   }
 
+  .card-detail-lower-grid {
+    grid-template-columns: 1fr;
+  }
+
   .editable-card-detail {
     grid-template-columns: minmax(180px, 270px) minmax(0, 1fr);
   }
@@ -10261,6 +10469,20 @@ body:not(.is-authenticated) .nav-bottom {
     grid-template-columns: 1fr;
   }
 
+  .location-form .settings-group,
+  .location-row,
+  .location-picker-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .location-row-actions {
+    justify-content: stretch;
+  }
+
+  .location-row-actions button {
+    flex: 1;
+  }
+
   .user-profile-hero {
     grid-template-columns: 1fr;
   }
@@ -10570,6 +10792,101 @@ body:not(.is-authenticated) .nav-bottom {
   .card-detail-band,
   .shared-card-band {
     overflow-x: hidden;
+  }
+
+  .card-variant-portfolio-table {
+    overflow: visible;
+  }
+
+  .card-variant-portfolio-table table,
+  .card-variant-portfolio-table thead,
+  .card-variant-portfolio-table tbody,
+  .card-variant-portfolio-table tr,
+  .card-variant-portfolio-table th,
+  .card-variant-portfolio-table td {
+    display: block;
+  }
+
+  .card-variant-portfolio-table table {
+    table-layout: auto;
+  }
+
+  .card-variant-portfolio-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+
+  .card-variant-portfolio-table tbody {
+    display: grid;
+    gap: 10px;
+    padding: 10px;
+  }
+
+  .card-variant-portfolio-table tbody tr {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 10px;
+    background: color-mix(in srgb, var(--panel) 72%, var(--detail-bg));
+  }
+
+  .card-variant-portfolio-table tbody th,
+  .card-variant-portfolio-table tbody td {
+    border-bottom: 0;
+    padding: 0;
+    text-align: left;
+    white-space: normal;
+  }
+
+  .card-variant-portfolio-table tbody th {
+    grid-column: 1 / -1;
+    width: auto;
+    font-size: 1rem;
+  }
+
+  .card-variant-portfolio-table tbody th:nth-child(1) {
+    width: auto;
+  }
+
+  .card-variant-portfolio-table tbody td {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+    font-size: 0.92rem;
+  }
+
+  .card-variant-portfolio-table tbody td::before {
+    color: var(--muted);
+    font-size: 0.62rem;
+    font-weight: 900;
+    line-height: 1.1;
+    text-transform: uppercase;
+  }
+
+  .card-variant-portfolio-table tbody td:nth-child(2)::before {
+    content: "# Owned";
+  }
+
+  .card-variant-portfolio-table tbody td:nth-child(3)::before {
+    content: "Paid";
+  }
+
+  .card-variant-portfolio-table tbody td:nth-child(4)::before {
+    content: "Current Price";
+  }
+
+  .card-variant-portfolio-table tbody td:nth-child(5)::before {
+    content: "Portfolio Value";
+  }
+
+  .card-variant-portfolio-table tbody td:nth-child(6)::before {
+    content: "Delta";
   }
 
   .variant-summary-table {

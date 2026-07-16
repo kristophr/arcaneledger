@@ -87,6 +87,8 @@ const state = {
     headers: [],
     mapping: {},
     fields: [],
+    entries: [],
+    customPurchase: null,
     jsonPreview: null,
     rows: [],
     issues: [],
@@ -104,6 +106,7 @@ const state = {
   selectedCards: new Map(),
   selectedSetMissingCards: new Map(),
   user: null,
+  userLocations: [],
   collectionView: localStorage.getItem("arcaneledger.collectionView") || "tiles",
   favoritesView: localStorage.getItem("arcaneledger.favoritesView") || "tiles",
   favoritesFilter: localStorage.getItem("arcaneledger.favoritesFilter") || "all",
@@ -162,6 +165,7 @@ const reportFields = [
   { key: "colors", label: "Colors" },
   { key: "rarity", label: "Rarity" },
   { key: "first_obtained", label: "First Obtained" },
+  { key: "purchase_location", label: "Location" },
   { key: "favorite", label: "Favorite" },
   { key: "for_sale_quantity", label: "For Sale Qty" },
   { key: "asking_price", label: "Asking Price" },
@@ -170,7 +174,7 @@ const reportFields = [
   { key: "notes", label: "Notes" },
 ];
 const defaultReportFields = [
-  "card_name", "set_code", "variant", "condition", "quantity", "market_price", "total_value", "delta",
+  "card_name", "set_code", "variant", "condition", "purchase_location", "quantity", "market_price", "total_value", "delta",
 ];
 const disallowedNameWords = new Set([
   "fuck", "shit", "bitch", "cunt", "asshole", "whore", "slut",
@@ -291,6 +295,7 @@ const els = {
   reportsStatus: document.querySelector("#reportsStatus"),
   reportFieldGrid: document.querySelector("#reportFieldGrid"),
   reportSearchInput: document.querySelector("#reportSearchInput"),
+  reportLocationInput: document.querySelector("#reportLocationInput"),
   reportSetInput: document.querySelector("#reportSetInput"),
   reportVariantSelect: document.querySelector("#reportVariantSelect"),
   reportConditionSelect: document.querySelector("#reportConditionSelect"),
@@ -491,6 +496,10 @@ const els = {
   closeSettingsButton: document.querySelector("#closeSettingsButton"),
   cancelSettingsButton: document.querySelector("#cancelSettingsButton"),
   settingsPageForm: document.querySelector("#settingsPageForm"),
+  locationForm: document.querySelector("#locationForm"),
+  userLocationsList: document.querySelector("#userLocationsList"),
+  locationsStatus: document.querySelector("#locationsStatus"),
+  storeLocationOptions: document.querySelector("#storeLocationOptions"),
   settingsAccountEmail: document.querySelector("#settingsAccountEmail"),
   settingsAppVersion: document.querySelector("#settingsAppVersion"),
   openChangelogButton: document.querySelector("#openChangelogButton"),
@@ -932,6 +941,7 @@ async function loadSession() {
   state.user = payload.user || null;
   if (state.user) {
     syncSettingsFromUser(state.user);
+    await loadUserLocations().catch(() => {});
     await loadNotificationSummary().catch(() => {});
   }
   updateAuthUi();
@@ -1267,11 +1277,22 @@ function variantSummaries(card) {
   const summaries = Array.isArray(card.variant_summaries) ? card.variant_summaries : [];
   if (summaries.length) {
     return summaries
-      .map((summary) => ({
-        variant: summary.variant || "Normal",
-        quantity: Number(summary.quantity || 0),
-        conditions: Array.isArray(summary.conditions) ? summary.conditions : [],
-      }))
+      .map((summary) => {
+        const variant = summary.variant || "Normal";
+        const quantity = Number(summary.quantity || 0);
+        const totalPaid = Number(summary.total_paid || 0);
+        const currentPrice = Number(summary.current_price ?? summary.market_price ?? priceForVariant(card, variant) ?? 0);
+        const portfolioValue = Number(summary.portfolio_value ?? summary.total_value ?? (quantity * currentPrice));
+        return {
+          variant,
+          quantity,
+          total_paid: totalPaid,
+          current_price: currentPrice,
+          portfolio_value: portfolioValue,
+          delta: Number(summary.delta ?? (portfolioValue - totalPaid)),
+          conditions: Array.isArray(summary.conditions) ? summary.conditions : [],
+        };
+      })
       .filter((summary) => summary.quantity > 0 || summary.conditions.length);
   }
   const buckets = Array.isArray(card.condition_inventory) ? card.condition_inventory : [];
@@ -1288,13 +1309,31 @@ function variantSummaries(card) {
       });
       variants.set(variant, entry);
     }
-    return Array.from(variants.values());
+    return Array.from(variants.values()).map((summary) => {
+      const currentPrice = Number(priceForVariant(card, summary.variant || "Normal") || 0);
+      const totalPaid = Number(summary.total_paid || 0);
+      const portfolioValue = Number(summary.quantity || 0) * currentPrice;
+      return {
+        ...summary,
+        total_paid: totalPaid,
+        current_price: currentPrice,
+        portfolio_value: portfolioValue,
+        delta: portfolioValue - totalPaid,
+      };
+    });
   }
   const quantity = Number(card.quantity ?? card.owned_quantity ?? 0);
   if (quantity <= 0) return [];
+  const currentPrice = Number(priceForVariant(card, card.variant || "Normal") || 0);
+  const totalPaid = Number(card.total_paid ?? (Number(card.paid_price || 0) * quantity) ?? 0);
+  const portfolioValue = quantity * currentPrice;
   return [{
     variant: card.variant || "Normal",
     quantity,
+    total_paid: totalPaid,
+    current_price: currentPrice,
+    portfolio_value: portfolioValue,
+    delta: portfolioValue - totalPaid,
     conditions: [{
       card_condition: conditionText(card),
       quantity,
@@ -1347,6 +1386,76 @@ function variantSummaryHtml(card, options = {}) {
           <b>${integer.format(summary.quantity || 0)}</b>
         </div>
       `).join("")}
+    </div>
+  `;
+}
+
+function variantFinishGroup(variant) {
+  const text = String(variant || "Normal").toLowerCase();
+  if (text.includes("etched")) return "Etched Foil";
+  if (text.includes("foil")) return "Foil";
+  return "Normal";
+}
+
+function cardVariantPortfolioTableHtml(card) {
+  const ownedSummaries = variantSummaries(card);
+  const summariesByVariant = new Map(ownedSummaries.map((summary) => [summary.variant || "Normal", summary]));
+  const summaries = [];
+  for (const variant of variantsForCard(card)) {
+    const exactSummary = summariesByVariant.get(variant);
+    const specificSummaries = exactSummary ? [] : ownedSummaries.filter((summary) => (
+      Number(summary.quantity || 0) > 0 &&
+      (summary.variant || "Normal") !== variant &&
+      variantFinishGroup(summary.variant) === variant
+    ));
+    const rowSources = exactSummary ? [exactSummary] : (specificSummaries.length ? specificSummaries : [{ variant }]);
+    for (const rowSource of rowSources) {
+      summaries.push(rowSource);
+    }
+  }
+  const rows = summaries.map((source) => {
+    const variant = source.variant || "Normal";
+    const quantity = Number(source.quantity || 0);
+    const currentPrice = Number(source.current_price ?? priceForVariant(card, variant) ?? 0);
+    const paid = Number(source.total_paid || 0);
+    const portfolioValue = Number(source.portfolio_value ?? (quantity * currentPrice));
+    return {
+      variant,
+      quantity,
+      total_paid: paid,
+      current_price: currentPrice,
+      portfolio_value: portfolioValue,
+      delta: Number(source.delta ?? (portfolioValue - paid)),
+    };
+  });
+  return `
+    <div class="card-variant-portfolio-table" aria-label="Portfolio value by variant">
+      <table>
+        <thead>
+          <tr>
+            <th scope="col">Variant</th>
+            <th scope="col"># Owned</th>
+            <th scope="col">Paid</th>
+            <th scope="col">Current Price</th>
+            <th scope="col">Current Portfolio Value</th>
+            <th scope="col">Delta</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map((summary) => {
+            return `
+              <tr>
+                <th scope="row">${escapeHtml(summary.variant || "Normal")}</th>
+                <td>${integer.format(summary.quantity || 0)}</td>
+                <td>${dollars.format(summary.total_paid || 0)}</td>
+                <td>${dollars.format(summary.current_price || 0)}</td>
+                <td>${dollars.format(summary.portfolio_value || 0)}</td>
+                <td class="${valueClass(summary.delta || 0)}">${dollars.format(summary.delta || 0)}</td>
+              </tr>
+            `;
+          }).join("")}
+        </tbody>
+      </table>
     </div>
   `;
 }
@@ -2479,6 +2588,7 @@ function collectionReportPayload() {
     fields: selectedReportFields(),
     filters: {
       search: els.reportSearchInput?.value?.trim() || "",
+      location: els.reportLocationInput?.value?.trim() || "",
       set: els.reportSetInput?.value?.trim() || "",
       variant: els.reportVariantSelect?.value || "",
       condition: els.reportConditionSelect?.value || "",
@@ -6515,7 +6625,7 @@ function priceForVariant(card, variant) {
 }
 
 function variantsForCard(card) {
-  const finishes = card.finishes || [];
+  const finishes = (parseListField(card.finishes) || []).map((finish) => String(finish || "").toLowerCase());
   const variants = [];
   if (finishes.includes("nonfoil")) variants.push("Normal");
   if (finishes.includes("foil")) variants.push("Foil");
@@ -6680,6 +6790,7 @@ function openAddCardModal(preselectedCard = null) {
   els.addSearchForm.reset();
   collapseAddAdvancedFilters();
   els.addCardForm.reset();
+  resetLocationPicker(els.addCardForm.querySelector("[data-location-picker]"));
   prepareAddCardBatchFields();
   els.addCardForm.scryfall_id.value = "";
   resetAddPurchaseMatrix();
@@ -6722,6 +6833,7 @@ function resetAddCardModalForNew() {
   els.addSearchForm.reset();
   collapseAddAdvancedFilters();
   els.addCardForm.reset();
+  resetLocationPicker(els.addCardForm.querySelector("[data-location-picker]"));
   prepareAddCardBatchFields();
   els.addCardForm.scryfall_id.value = "";
   resetAddPurchaseMatrix();
@@ -6744,6 +6856,7 @@ function closeAddCardModal() {
   els.addCardForm.hidden = true;
   resetAddPurchaseMatrix();
   els.addCardForm.reset();
+  resetLocationPicker(els.addCardForm.querySelector("[data-location-picker]"));
   els.confirmAddCardButton.disabled = true;
   els.confirmAddNewCardButton.disabled = true;
 }
@@ -6866,6 +6979,105 @@ function renderSettingsPage() {
     els.settingsAppVersion.textContent = state.appConfig?.app_version || "Unknown";
   }
   renderBillingSettings();
+  loadUserLocations().catch((error) => setStatus(error.message, "error", els.locationsStatus || els.settingsPageStatus));
+}
+
+function locationLabel(location) {
+  const name = location?.name || "";
+  const place = location?.location || [location?.city, location?.state].filter(Boolean).join(", ");
+  return place ? `${name} - ${place}` : name;
+}
+
+function locationStoreValue(location) {
+  return locationLabel(location);
+}
+
+function renderLocationOptions() {
+  if (!els.storeLocationOptions) return;
+  els.storeLocationOptions.innerHTML = (state.userLocations || []).map((location) => `
+    <option value="${escapeAttribute(locationStoreValue(location))}"></option>
+  `).join("");
+}
+
+function renderUserLocations() {
+  renderLocationOptions();
+  if (!els.userLocationsList) return;
+  const locations = state.userLocations || [];
+  if (!locations.length) {
+    els.userLocationsList.innerHTML = '<div class="empty-state compact-empty-state">No store locations yet.</div>';
+    return;
+  }
+  els.userLocationsList.innerHTML = locations.map((location) => `
+    <form class="location-row" data-location-id="${escapeAttribute(location.id)}">
+      <label>
+        Store
+        <input name="name" value="${escapeHtml(location.name || "")}" maxlength="120">
+      </label>
+      <label>
+        City
+        <input name="city" value="${escapeHtml(location.city || "")}" maxlength="80">
+      </label>
+      <label>
+        State
+        <input name="state" value="${escapeHtml(location.state || "")}" maxlength="40">
+      </label>
+      <div class="location-row-actions">
+        <button class="secondary-button compact-button" type="submit">Save</button>
+        <button class="danger-action-button compact-button" type="button" data-delete-location>Delete</button>
+      </div>
+    </form>
+  `).join("");
+}
+
+async function loadUserLocations() {
+  if (!state.user) {
+    state.userLocations = [];
+    renderUserLocations();
+    return;
+  }
+  const result = await api("/api/user/locations", { promptLogin: true });
+  state.userLocations = result.locations || [];
+  renderUserLocations();
+}
+
+function selectedLocationForValue(value) {
+  const text = String(value || "").trim().toLowerCase();
+  if (!text) return null;
+  return (state.userLocations || []).find((location) => locationStoreValue(location).toLowerCase() === text) || null;
+}
+
+function syncLocationPicker(picker) {
+  if (!picker) return;
+  const nameInput = picker.querySelector("[data-location-name-input]");
+  const idInput = picker.querySelector("[data-location-id-input]");
+  const storeInput = picker.querySelector("[data-store-name-input]");
+  const cityInput = picker.querySelector("[data-location-city-input]");
+  const stateInput = picker.querySelector("[data-location-state-input]");
+  const storeLocationInput = picker.querySelector("[data-store-location-input]");
+  const selected = selectedLocationForValue(nameInput?.value);
+  if (selected) {
+    if (idInput) idInput.value = selected.id || "";
+    if (storeInput) storeInput.value = selected.name || "";
+    if (cityInput) cityInput.value = selected.city || "";
+    if (stateInput) stateInput.value = selected.state || "";
+  } else {
+    if (idInput) idInput.value = "";
+    if (storeInput) storeInput.value = nameInput?.value.trim() || "";
+  }
+  if (storeLocationInput) {
+    storeLocationInput.value = [cityInput?.value.trim(), stateInput?.value.trim()].filter(Boolean).join(", ");
+  }
+}
+
+function resetLocationPicker(picker) {
+  if (!picker) return;
+  picker.querySelectorAll("input").forEach((input) => {
+    input.value = "";
+  });
+}
+
+function syncAllLocationPickers() {
+  document.querySelectorAll("[data-location-picker]").forEach(syncLocationPicker);
 }
 
 function renderBillingSettings() {
@@ -8297,6 +8509,8 @@ function resetImportWizard() {
     headers: [],
     mapping: {},
     fields: [],
+    entries: [],
+    customPurchase: null,
     jsonPreview: null,
     rows: [],
     issues: [],
@@ -8367,6 +8581,9 @@ function renderImportWizard() {
   if (els.importWizardSaveButton) {
     els.importWizardSaveButton.hidden = wizard.step !== "recap";
     els.importWizardSaveButton.disabled = Boolean(wizard.busy);
+    els.importWizardSaveButton.textContent = importWizardIsCustomPurchaseFormat(wizard.format)
+      ? "Import Selected Cards and Quantities"
+      : "Save";
   }
   renderImportProgress();
   if (wizard.step === "map") {
@@ -8381,11 +8598,16 @@ function importWizardIsMappedCsvFormat(format) {
   return ["moxfield", "arena"].includes(format || "");
 }
 
+function importWizardIsCustomPurchaseFormat(format) {
+  return format === "bulk_purchase";
+}
+
 function importWizardIsCsvFormat(format) {
-  return format === "csv" || importWizardIsMappedCsvFormat(format);
+  return format === "csv" || importWizardIsMappedCsvFormat(format) || importWizardIsCustomPurchaseFormat(format);
 }
 
 function importWizardFormatLabel(format) {
+  if (format === "bulk_purchase") return "Bulk Purchase";
   if (format === "moxfield") return "Moxfield";
   if (format === "arena") return "Magic Arena";
   return "CSV";
@@ -8407,7 +8629,7 @@ async function importWizardSourceNext() {
     const name = file.name.toLowerCase();
     format = name.endsWith(".csv") || file.type.includes("csv") ? "csv" : "json";
   }
-  if (importWizardIsMappedCsvFormat(requestedFormat)) {
+  if (importWizardIsMappedCsvFormat(requestedFormat) || importWizardIsCustomPurchaseFormat(requestedFormat)) {
     if (format !== "csv") {
       setStatus(`${importWizardFormatLabel(requestedFormat)} imports must be CSV files.`, "error", els.importStatus);
       return;
@@ -8417,15 +8639,27 @@ async function importWizardSourceNext() {
   state.importWizard.text = text;
   state.importWizard.format = format;
   if (importWizardIsCsvFormat(format)) {
-    const result = await api("/api/import/csv/headers", {
-      method: "POST",
-      body: JSON.stringify({ text, format }),
-    });
-    state.importWizard.headers = result.headers || [];
-    state.importWizard.mapping = result.mapping || {};
-    state.importWizard.fields = result.fields || [];
-    state.importWizard.rowCount = result.row_count || 0;
-    setStatus(`Loaded ${format === "csv" ? "" : `${importWizardFormatLabel(format)} `}CSV with ${integer.format(state.importWizard.rowCount)} row${Number(state.importWizard.rowCount) === 1 ? "" : "s"}.`, "success", els.importStatus);
+    if (importWizardIsCustomPurchaseFormat(format)) {
+      const result = await api("/api/import/custom-purchase/entries", {
+        method: "POST",
+        body: JSON.stringify({ text }),
+      });
+      state.importWizard.customPurchase = result;
+      state.importWizard.entries = result.entries || [];
+      state.importWizard.issues = result.issues || [];
+      state.importWizard.rowCount = result.row_count || 0;
+      setStatus(`Loaded Bulk Purchase CSV with ${integer.format(result.row_count || 0)} row${Number(result.row_count || 0) === 1 ? "" : "s"} and ${integer.format(result.total_quantity || 0)} total card${Number(result.total_quantity || 0) === 1 ? "" : "s"}.`, "success", els.importStatus);
+    } else {
+      const result = await api("/api/import/csv/headers", {
+        method: "POST",
+        body: JSON.stringify({ text, format }),
+      });
+      state.importWizard.headers = result.headers || [];
+      state.importWizard.mapping = result.mapping || {};
+      state.importWizard.fields = result.fields || [];
+      state.importWizard.rowCount = result.row_count || 0;
+      setStatus(`Loaded ${format === "csv" ? "" : `${importWizardFormatLabel(format)} `}CSV with ${integer.format(state.importWizard.rowCount)} row${Number(state.importWizard.rowCount) === 1 ? "" : "s"}.`, "success", els.importStatus);
+    }
   } else {
     const result = await api("/api/import/json/preview", {
       method: "POST",
@@ -8443,6 +8677,10 @@ async function importWizardSourceNext() {
 
 function renderImportMappingStep() {
   const wizard = state.importWizard;
+  if (importWizardIsCustomPurchaseFormat(wizard.format)) {
+    renderCustomPurchaseImportMapStep();
+    return;
+  }
   if (els.importMapTitle) els.importMapTitle.textContent = importWizardIsMappedCsvFormat(wizard.format) ? `Review ${importWizardFormatLabel(wizard.format)} Columns` : "Map CSV Columns";
   if (els.importMapSubtitle) els.importMapSubtitle.textContent = `${integer.format(wizard.headers.length)} headers · ${integer.format(wizard.rowCount || 0)} rows`;
   if (els.importJsonPreview) els.importJsonPreview.innerHTML = "";
@@ -8468,6 +8706,36 @@ function renderImportMappingStep() {
       state.importWizard.mapping[select.dataset.importField] = select.value;
     });
   });
+}
+
+function renderCustomPurchaseImportMapStep() {
+  const wizard = state.importWizard;
+  const summary = wizard.customPurchase || {};
+  const variantColumns = summary.variant_columns || [];
+  if (els.importMapTitle) els.importMapTitle.textContent = "Review Bulk Purchase CSV";
+  if (els.importMapSubtitle) {
+    const limit = Number(summary.scryfall_lookup_limit || 0);
+    const lookupText = limit ? `${integer.format(summary.estimated_unique_lookups || 0)} estimated unique lookup${Number(summary.estimated_unique_lookups || 0) === 1 ? "" : "s"} · limit ${integer.format(limit)}` : `${integer.format(summary.estimated_unique_lookups || 0)} estimated unique lookup${Number(summary.estimated_unique_lookups || 0) === 1 ? "" : "s"}`;
+    els.importMapSubtitle.textContent = `${integer.format(summary.row_count || 0)} source row${Number(summary.row_count || 0) === 1 ? "" : "s"} · ${integer.format(summary.entry_count || 0)} variant line${Number(summary.entry_count || 0) === 1 ? "" : "s"} · ${integer.format(summary.total_quantity || 0)} cards · ${lookupText}`;
+  }
+  if (els.importMappingTable) {
+    els.importMappingTable.innerHTML = `
+      <div class="import-json-card">
+        <strong>Expected headers</strong>
+        <span>set, card number, Normal/Foil/Etched Foil/Surge Foil quantity columns, price paid per card, location, date purchased</span>
+      </div>
+      <div class="import-json-card">
+        <strong>Detected variant columns</strong>
+        <span>${variantColumns.length ? variantColumns.map((column) => `${column.variant}: ${column.header}`).join(" · ") : "None detected"}</span>
+      </div>
+    `;
+  }
+  if (els.importJsonPreview) {
+    const issues = summary.issues || [];
+    els.importJsonPreview.innerHTML = issues.length
+      ? `<div class="import-issues">${issues.map((issue) => `<div>${issue.line ? `Line ${escapeHtml(issue.line)}: ` : ""}${escapeHtml(issue.error || issue)}</div>`).join("")}</div>`
+      : '<div class="empty-state compact-empty">Ready to match each set/card-number row against your local catalog and Scryfall.</div>';
+  }
 }
 
 function renderImportJsonPreviewStep() {
@@ -8586,7 +8854,7 @@ function importWizardEntryCacheKey(entry) {
 }
 
 function importWizardCachedRow(entry, match) {
-  const rowId = `row-${entry.line || Math.random().toString(36).slice(2)}`;
+  const rowId = `row-${entry.row_key || entry.line || Math.random().toString(36).slice(2)}`;
   return {
     id: rowId,
     checked: Boolean(match),
@@ -8596,18 +8864,14 @@ function importWizardCachedRow(entry, match) {
   };
 }
 
-async function importWizardMatchCsvRows(wizard) {
-  setStatus("Preparing CSV rows...", "", els.importStatus);
-  const prepared = await api("/api/import/csv/entries", {
-    method: "POST",
-    body: JSON.stringify({ text: wizard.text, mapping: wizard.mapping }),
-  });
+async function importWizardMatchPreparedEntries(wizard, prepared, options = {}) {
   const entries = prepared.entries || [];
   const total = entries.length;
   const matchedRows = [];
   const issues = [...(prepared.issues || [])];
   const matchCache = new Map();
-  setImportProgress("Matching cards with Scryfall", 0, total);
+  const label = options.label || "Matching cards with Scryfall";
+  setImportProgress(label, 0, total);
   for (let offset = 0; offset < total; offset += IMPORT_MATCH_BATCH_SIZE) {
     const batch = entries.slice(offset, offset + IMPORT_MATCH_BATCH_SIZE);
     const uncached = [];
@@ -8619,7 +8883,7 @@ async function importWizardMatchCsvRows(wizard) {
         uncached.push(entry);
       }
     }
-    setImportProgress("Matching cards with Scryfall", offset, total);
+    setImportProgress(label, offset, total);
     if (uncached.length) {
       const result = await api("/api/import/entries/match", {
         method: "POST",
@@ -8631,16 +8895,40 @@ async function importWizardMatchCsvRows(wizard) {
       }
       issues.push(...(result.issues || []));
     }
-    setImportProgress("Matching cards with Scryfall", Math.min(offset + batch.length, total), total);
+    setImportProgress(label, Math.min(offset + batch.length, total), total);
   }
-  wizard.rows = importWizardAggregateRows(matchedRows);
+  wizard.rows = options.aggregate === false
+    ? matchedRows.map((row, index) => ({ ...row, id: row.id || `bulk-${index + 1}` }))
+    : importWizardAggregateRows(matchedRows);
   wizard.issues = issues;
-  setStatus(`Matched ${integer.format(wizard.rows.filter((row) => row.match?.card).length)} card group${wizard.rows.length === 1 ? "" : "s"}.`, "success", els.importStatus);
+  setStatus(`Matched ${integer.format(wizard.rows.filter((row) => row.match?.card).length)} card line${wizard.rows.length === 1 ? "" : "s"}.`, "success", els.importStatus);
+}
+
+async function importWizardMatchCsvRows(wizard) {
+  setStatus("Preparing CSV rows...", "", els.importStatus);
+  const prepared = await api("/api/import/csv/entries", {
+    method: "POST",
+    body: JSON.stringify({ text: wizard.text, mapping: wizard.mapping }),
+  });
+  await importWizardMatchPreparedEntries(wizard, prepared, { aggregate: true, label: "Matching cards with Scryfall" });
+}
+
+async function importWizardMatchCustomPurchaseRows(wizard) {
+  const prepared = {
+    entries: wizard.entries || [],
+    issues: wizard.issues || [],
+  };
+  if (!prepared.entries.length) {
+    throw new Error("No variant quantities were found in the Bulk Purchase CSV.");
+  }
+  await importWizardMatchPreparedEntries(wizard, prepared, { aggregate: false, label: "Matching bulk purchase rows" });
 }
 
 async function importWizardMapNext() {
   const wizard = state.importWizard;
-  if (importWizardIsCsvFormat(wizard.format)) {
+  if (importWizardIsCustomPurchaseFormat(wizard.format)) {
+    await importWizardMatchCustomPurchaseRows(wizard);
+  } else if (importWizardIsCsvFormat(wizard.format)) {
     if (!wizard.mapping.name && !wizard.mapping.scryfall_id) {
       setStatus("Map at least Card title or Scryfall ID before continuing.", "error", els.importStatus);
       return;
@@ -8723,6 +9011,41 @@ function renderImportWizardReview() {
 function importWizardRowHtml(row) {
   const entry = row.entry || {};
   const matchCard = row.match?.card;
+  if (entry.format === "bulk_purchase") {
+    const setText = (matchCard?.set_code || entry.set_code || entry.set_name || "").toString().toUpperCase();
+    const searchValue = entry.name || [entry.set_code || entry.set_name, entry.collector_number].filter(Boolean).join(" ");
+    const location = entry.store_name || entry.store_location || "";
+    const locationMissing = entry.location_status === "missing";
+    return `
+      <article class="import-wizard-row bulk-purchase-import-row ${!matchCard ? "needs-review" : ""} ${locationMissing ? "location-missing" : ""}" data-row-id="${escapeHtml(row.id)}">
+        <label class="import-row-check">
+          <input type="checkbox" data-import-row-check="${escapeHtml(row.id)}" ${row.checked ? "checked" : ""} ${matchCard ? "" : "disabled"}>
+        </label>
+        <div class="bulk-import-card-art">
+          ${matchCard?.image_small ? `<img src="${escapeHtml(matchCard.image_small)}" alt="">` : `<span></span>`}
+        </div>
+        <div class="bulk-import-card-name">
+          <strong>${escapeHtml(matchCard ? cardTitle(matchCard) : "No match")}</strong>
+          <span>${escapeHtml(setText || "Unknown set")} #${escapeHtml(matchCard?.collector_number || entry.collector_number || "?")} · ${escapeHtml(entry.variant || "Normal")}</span>
+        </div>
+        <span class="bulk-import-set">${escapeHtml(setText || "-")}</span>
+        <b>${integer.format(entry.quantity || 0)}</b>
+        <span>${dollars.format(Number(entry.paid_price || 0))}</span>
+        <span class="bulk-import-location ${locationMissing ? "is-missing" : ""}">
+          ${escapeHtml(location || "-")}
+          ${locationMissing ? `<small>${escapeHtml(entry.location_warning || "Not in address book")}</small>` : ""}
+        </span>
+        <span>${escapeHtml(entry.acquired_date || "-")}</span>
+        <div class="import-row-tools">
+          <div class="search-control">
+            <input class="import-match-search" type="search" value="${escapeAttribute(searchValue)}" placeholder="Search Scryfall">
+            <button class="search-button import-match-button" type="button" data-row-id="${escapeHtml(row.id)}" aria-label="Search Scryfall" title="Search Scryfall">&#8981;</button>
+          </div>
+          <select class="import-match-results" data-row-id="${escapeHtml(row.id)}" hidden></select>
+        </div>
+      </article>
+    `;
+  }
   return `
     <article class="import-wizard-row ${!matchCard ? "needs-review" : ""}" data-row-id="${escapeHtml(row.id)}">
       <label class="import-row-check">
@@ -8747,7 +9070,16 @@ function importWizardRowHtml(row) {
 }
 
 async function searchImportWizardRow(row, input, select, item) {
-  const query = input.value.trim();
+  let query = input.value.trim();
+  const entry = row?.entry || {};
+  if (entry.format === "bulk_purchase" && entry.collector_number && (entry.set_code || entry.set_name)) {
+    const setPart = entry.set_code ? ` e:${entry.set_code}` : ` ${entry.set_name}`;
+    if (!entry.name) query = `cn:${entry.collector_number}${setPart}`;
+    query = query || `cn:${entry.collector_number}${setPart}`;
+    if (!query.includes("cn:") && !query.includes(entry.collector_number)) {
+      query = `${query} cn:${entry.collector_number}${setPart}`;
+    }
+  }
   if (query.length < 2) return;
   item.classList.add("is-searching");
   try {
@@ -8947,8 +9279,11 @@ function closeImportReviewModal() {
 function renderImportCard(card) {
   if (!card) return '<strong>No match</strong><span>Search and choose a Scryfall card before importing this row.</span>';
   return `
-    <strong>${escapeHtml(card.display_name || card.name || "Card")}</strong>
-    <span>${escapeHtml(card.set_name || "")} #${escapeHtml(card.collector_number || "")} - ${escapeHtml(cardTypeLabel(card))} - ${escapeHtml(cardColorLabel(card))}</span>
+    ${card.image_small ? `<img class="import-card-thumb" src="${escapeHtml(card.image_small)}" alt="">` : ""}
+    <div>
+      <strong>${escapeHtml(card.display_name || card.name || "Card")}</strong>
+      <span>${escapeHtml(card.set_name || "")} #${escapeHtml(card.collector_number || "")} - ${escapeHtml(cardTypeLabel(card))} - ${escapeHtml(cardColorLabel(card))}</span>
+    </div>
   `;
 }
 
@@ -10664,53 +10999,6 @@ function renderCardDetail(card) {
   const hasContainers = containerMemberships(card).length > 0;
   const storageStatus = cardContainerStorageStatus(card);
   const listedForSale = Number(card.sale_quantity || 0) > 0;
-  const totalValue = Number(card.total_value ?? card.owned_value ?? totalVariantMarketValue(card) ?? 0);
-  const totalPaid = Number(card.total_paid ?? (Number(card.paid_price || 0) * ownedQuantity) ?? 0);
-  const averagePaid = Number(card.average_paid ?? card.paid_price ?? 0);
-  const totalDelta = totalValue - totalPaid;
-  const detailsHtml = owned ? `
-          <div>
-            <dt>Owned</dt>
-            <dd>${integer.format(ownedQuantity)}</dd>
-          </div>
-          <div>
-            <dt>First Obtained</dt>
-            <dd>${escapeHtml(formatDate(card.first_obtained || card.acquired_date || ""))}</dd>
-          </div>
-          <div>
-            <dt>Market Price</dt>
-            <dd>${dollars.format(card.market_price ?? card.display_price ?? 0)}</dd>
-          </div>
-          <div>
-            <dt>Average Paid</dt>
-            <dd>${dollars.format(averagePaid)}</dd>
-          </div>
-          <div>
-            <dt>Total Paid</dt>
-            <dd>${dollars.format(totalPaid)}</dd>
-          </div>
-          <div>
-            <dt>Total Value</dt>
-            <dd>${dollars.format(totalValue)}</dd>
-          </div>
-          <div class="detail-wide">
-            <dt>Delta</dt>
-            <dd class="${valueClass(totalDelta)}">${dollars.format(totalDelta)}</dd>
-          </div>
-  ` : `
-          <div>
-            <dt>Status</dt>
-            <dd>Not in your collection</dd>
-          </div>
-          <div>
-            <dt>Market Price</dt>
-            <dd>${dollars.format(card.market_price ?? card.display_price ?? 0)}</dd>
-          </div>
-          <div>
-            <dt>Set</dt>
-            <dd>${escapeHtml(card.set_name || "")}</dd>
-          </div>
-  `;
   els.cardDetailShell.innerHTML = `
     <div class="card-detail-layout">
       <article class="shared-card editable-card-detail${specialClass}" style="--card-detail-bg-image: url('${escapeAttribute(card.image_normal || card.image_small || "")}')">
@@ -10743,11 +11031,7 @@ function renderCardDetail(card) {
             <span>${escapeHtml(cardTypeLabel(card))}</span>
             <span>${escapeHtml(cardColorLabel(card))}</span>
           </div>
-          ${cardDetailVariantSwitcherHtml(card)}
-          ${owned ? variantSummaryHtml(card, { selectedVariant: card.variant || "Normal", title: "Inventory by Variant" }) : ""}
-          <dl class="shared-card-details">
-            ${detailsHtml}
-          </dl>
+          ${cardVariantPortfolioTableHtml(card)}
           <div class="detail-actions">
             ${canManageCollection ? '<button id="addPurchaseButton" class="primary-button" type="button">Add Purchase</button>' : ""}
             ${canManageCollection && owned ? '<button id="adjustInventoryButton" class="secondary-button" type="button">Adjust Inventory</button><button id="addDirectSaleButton" class="secondary-button" type="button">Add Sale</button>' : ""}
@@ -10987,6 +11271,7 @@ function openAddPurchaseModal(card) {
   els.addPurchaseForm.card_condition.value = conditionText(card);
   els.addPurchaseForm.purchase_date.value = todayValue();
   els.addPurchaseForm.total_price.value = userDefaultPurchasePrice().toFixed(2);
+  resetLocationPicker(els.addPurchaseForm.querySelector("[data-location-picker]"));
   els.addPurchaseOverlay.hidden = false;
   document.body.classList.add("modal-open");
   els.addPurchaseForm.quantity.focus();
@@ -10996,6 +11281,7 @@ function closeAddPurchaseModal() {
   els.addPurchaseOverlay.hidden = true;
   document.body.classList.remove("modal-open");
   els.addPurchaseForm.reset();
+  resetLocationPicker(els.addPurchaseForm.querySelector("[data-location-picker]"));
 }
 
 function updateInventoryAdjustLimits() {
@@ -13144,6 +13430,7 @@ function wireEvents() {
   });
   els.addCardForm.addEventListener("submit", async (event) => {
     event.preventDefault();
+    syncLocationPicker(els.addCardForm.querySelector("[data-location-picker]"));
     if (!state.selectedAddCard) {
       els.addSearchStatus.textContent = "Choose a card first.";
       return;
@@ -13202,6 +13489,7 @@ function wireEvents() {
           await saveUserSettings(userSettingsPayload({ default_purchase_price: defaultPurchasePrice }));
         }
       }
+      await loadUserLocations().catch(() => {});
       setStatus(`Added ${integer.format(quantity)} ${addedCardTitle} card${quantity === 1 ? "" : "s"} (${variantLabel}).`);
       if (addAndNew) {
         resetAddCardModalForNew();
@@ -13282,6 +13570,61 @@ function wireEvents() {
     } catch (error) {
       setStatus(error.message, "error", els.settingsPageStatus);
     }
+  });
+  els.locationForm?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const payload = Object.fromEntries(new FormData(els.locationForm).entries());
+    try {
+      const result = await api("/api/user/locations", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      state.userLocations = result.locations || [];
+      els.locationForm.reset();
+      renderUserLocations();
+      setStatus("Location saved.", "success", els.locationsStatus);
+    } catch (error) {
+      setStatus(error.message, "error", els.locationsStatus);
+    }
+  });
+  els.userLocationsList?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.target.closest(".location-row");
+    if (!form) return;
+    const locationId = form.dataset.locationId;
+    const payload = Object.fromEntries(new FormData(form).entries());
+    try {
+      const result = await api(`/api/user/locations/${encodeURIComponent(locationId)}`, {
+        method: "PUT",
+        body: JSON.stringify(payload),
+      });
+      state.userLocations = result.locations || [];
+      renderUserLocations();
+      setStatus("Location updated.", "success", els.locationsStatus);
+    } catch (error) {
+      setStatus(error.message, "error", els.locationsStatus);
+    }
+  });
+  els.userLocationsList?.addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-delete-location]");
+    if (!button) return;
+    const form = button.closest(".location-row");
+    const locationId = form?.dataset.locationId;
+    if (!locationId) return;
+    const name = form.querySelector('input[name="name"]')?.value || "this location";
+    if (!window.confirm(`Delete ${name}? Existing purchase history keeps its store text.`)) return;
+    try {
+      const result = await api(`/api/user/locations/${encodeURIComponent(locationId)}`, { method: "DELETE" });
+      state.userLocations = result.locations || [];
+      renderUserLocations();
+      setStatus("Location deleted.", "success", els.locationsStatus);
+    } catch (error) {
+      setStatus(error.message, "error", els.locationsStatus);
+    }
+  });
+  document.addEventListener("input", (event) => {
+    const picker = event.target.closest?.("[data-location-picker]");
+    if (picker) syncLocationPicker(picker);
   });
   els.clearDatabaseButton.addEventListener("click", async () => {
     const confirmed = window.confirm("Clear your Arcane Ledger database? This removes your collection, decks, containers, lists, sale listings, and card history, but keeps your account.");
@@ -13706,6 +14049,7 @@ function wireEvents() {
   });
   els.addPurchaseForm.addEventListener("submit", async (event) => {
     event.preventDefault();
+    syncLocationPicker(els.addPurchaseForm.querySelector("[data-location-picker]"));
     const payload = Object.fromEntries(new FormData(els.addPurchaseForm).entries());
     const cardId = payload.card_id;
     try {
@@ -13714,6 +14058,7 @@ function wireEvents() {
         body: JSON.stringify(payload),
       });
       closeAddPurchaseModal();
+      await loadUserLocations().catch(() => {});
       renderCardDetail(result.card);
       await refresh();
       setStatus(`Added purchase for ${cardTitle(result.card)}.`);

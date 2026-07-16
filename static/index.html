@@ -4,9 +4,10 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Arcane Ledger</title>
-    <link rel="stylesheet" href="/styles.css?v=197">
+    <link rel="stylesheet" href="/styles.css?v=200">
   </head>
   <body>
+    <datalist id="storeLocationOptions"></datalist>
     <header class="topbar">
       <div>
         <p class="eyebrow">Magic collection tracker</p>
@@ -414,7 +415,11 @@
             <div class="report-filter-grid">
               <label>
                 Search
-                <input id="reportSearchInput" type="search" placeholder="Name, type, set, notes">
+                <input id="reportSearchInput" type="search" placeholder="Name, type, set, notes, location">
+              </label>
+              <label>
+                Store / Location
+                <input id="reportLocationInput" type="search" list="storeLocationOptions" placeholder="Store, city, or state">
               </label>
               <label>
                 Set
@@ -772,6 +777,7 @@
                 <select id="importWizardFormat">
                   <option value="auto">Auto detect</option>
                   <option value="arcaneledger">Arcane Ledger CSV / JSON</option>
+                  <option value="bulk_purchase">Bulk Purchase CSV</option>
                   <option value="moxfield">Moxfield CSV</option>
                   <option value="arena">Magic: The Gathering Arena CSV</option>
                 </select>
@@ -781,7 +787,7 @@
                 <textarea id="importWizardJsonText" rows="9" spellcheck="false" placeholder="Paste Arcane Ledger JSON here"></textarea>
               </label>
             </div>
-            <p class="settings-help">CSV files can come from anywhere as long as the first row contains headers. Moxfield and Magic: The Gathering Arena CSV imports use Count, Name, Edition, Condition, Language, Foil, Collector Number, Alter, Playtest Card, and Purchase Price. JSON can be an Arcane Ledger collection export, deck export, or supported Arcane Ledger data bundle.</p>
+            <p class="settings-help">CSV files can come from anywhere as long as the first row contains headers. Bulk Purchase CSV uses set, card number, one or more variant quantity columns such as Normal/Foil/Etched Foil, price paid per card, location, and date purchased. <a href="/bulk-purchase-sample.csv" download>Download a Bulk Purchase CSV sample</a>. JSON can be an Arcane Ledger collection export, deck export, or supported Arcane Ledger data bundle.</p>
           </section>
           <section class="import-step-panel" data-import-step="map" hidden>
             <div class="panel-head">
@@ -929,6 +935,33 @@
               <button id="openChangelogButton" class="secondary-button compact-button" type="button">Change Log</button>
             </div>
             <div id="settingsPageStatus" class="status" aria-live="polite"></div>
+          </section>
+          <section class="panel locations-panel">
+            <div class="panel-head">
+              <h2>Site Management</h2>
+              <span>Store locations</span>
+            </div>
+            <p class="settings-help">Maintain the store/location address book used when adding purchases. Existing purchase history is preserved and used to seed this list.</p>
+            <form id="locationForm" class="settings-form location-form">
+              <fieldset class="settings-group">
+                <legend>Add Location</legend>
+                <label>
+                  Store Name
+                  <input name="name" type="text" maxlength="120" placeholder="Best Card Shop">
+                </label>
+                <label>
+                  City
+                  <input name="city" type="text" maxlength="80" placeholder="Raleigh">
+                </label>
+                <label>
+                  State
+                  <input name="state" type="text" maxlength="40" placeholder="NC">
+                </label>
+                <button class="primary-button" type="submit">Add Location</button>
+              </fieldset>
+            </form>
+            <div id="userLocationsList" class="location-list" aria-live="polite"></div>
+            <p id="locationsStatus" class="settings-help" aria-live="polite"></p>
           </section>
           <section class="panel billing-panel">
             <div class="panel-head">
@@ -1331,14 +1364,23 @@
               </table>
             </div>
           </div>
-          <label class="add-purchase-detail">
+          <div class="add-purchase-detail location-picker" data-location-picker>
             Store Purchased From
-            <input name="store_name" type="text" maxlength="120" placeholder="Triangle Trading Cards">
-          </label>
-          <label class="add-purchase-detail">
-            City Purchased From
-            <input name="store_location" type="text" maxlength="120" placeholder="Raleigh, NC">
-          </label>
+            <input type="text" maxlength="120" list="storeLocationOptions" placeholder="Start typing a store name" data-location-name-input>
+            <input name="location_id" type="hidden" data-location-id-input>
+            <input name="store_name" type="hidden" data-store-name-input>
+            <div class="location-picker-grid">
+              <label>
+                City
+                <input type="text" maxlength="80" placeholder="Raleigh" data-location-city-input>
+              </label>
+              <label>
+                State
+                <input type="text" maxlength="40" placeholder="NC" data-location-state-input>
+              </label>
+            </div>
+            <input name="store_location" type="hidden" data-store-location-input>
+          </div>
           <label class="add-purchase-detail">
             Date Acquired
             <input name="acquired_date" type="date">
@@ -1617,14 +1659,23 @@
             Total purchase price
             <input name="total_price" type="number" min="0.01" step="0.01" value="0.01">
           </label>
-          <label>
+          <div class="edit-form-wide location-picker" data-location-picker>
             Store name
-            <input name="store_name" type="text" maxlength="120" placeholder="Triangle Trading Cards">
-          </label>
-          <label>
-            Store location
-            <input name="store_location" type="text" maxlength="120" placeholder="Raleigh, NC">
-          </label>
+            <input type="text" maxlength="120" list="storeLocationOptions" placeholder="Start typing a store name" data-location-name-input>
+            <input name="location_id" type="hidden" data-location-id-input>
+            <input name="store_name" type="hidden" data-store-name-input>
+            <div class="location-picker-grid">
+              <label>
+                City
+                <input type="text" maxlength="80" placeholder="Raleigh" data-location-city-input>
+              </label>
+              <label>
+                State
+                <input type="text" maxlength="40" placeholder="NC" data-location-state-input>
+              </label>
+            </div>
+            <input name="store_location" type="hidden" data-store-location-input>
+          </div>
           <label class="edit-form-wide">
             Notes
             <textarea name="notes" maxlength="1000" rows="3" placeholder="Optional purchase notes"></textarea>
@@ -2551,6 +2602,6 @@
       </section>
     </div>
 
-    <script src="/app.js?v=222"></script>
+    <script src="/app.js?v=227"></script>
   </body>
 </html>
