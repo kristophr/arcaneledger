@@ -115,6 +115,7 @@ SMTP_STARTTLS = (
 SESSION_COOKIE = "arcaneledger_session"
 SESSION_DAYS = int(os.environ.get("SESSION_DAYS", "30"))
 SESSION_IDLE_MINUTES = int(os.environ.get("SESSION_IDLE_MINUTES", "30") or 30)
+ALLOWED_WEBSITE_LOGOUT_MINUTES = {15, 30, 60}
 EMAIL_VERIFICATION_MINUTES = int(os.environ.get("EMAIL_VERIFICATION_MINUTES", "30") or 30)
 PASSWORD_RESET_MINUTES = int(os.environ.get("PASSWORD_RESET_MINUTES", str(EMAIL_VERIFICATION_MINUTES)) or EMAIL_VERIFICATION_MINUTES)
 SUPPORTED_SCRYFALL_LANGUAGES = {"en"}
@@ -1567,6 +1568,7 @@ def init_db(conn):
             profile_image TEXT NOT NULL DEFAULT '',
             default_purchase_price REAL NOT NULL DEFAULT 0.01,
             default_sell_price REAL NOT NULL DEFAULT 0,
+            website_logout_minutes INTEGER NOT NULL DEFAULT 30,
             profile_slug TEXT UNIQUE,
             role TEXT NOT NULL DEFAULT 'normal',
             is_banned INTEGER NOT NULL DEFAULT 0,
@@ -3189,9 +3191,11 @@ def migrate_user_schema(conn):
     for column, definition in {
         "default_purchase_price": "REAL NOT NULL DEFAULT 0.01",
         "default_sell_price": "REAL NOT NULL DEFAULT 0",
+        "website_logout_minutes": "INTEGER NOT NULL DEFAULT 30",
     }.items():
         if column not in user_columns:
             conn.execute(f"ALTER TABLE users ADD COLUMN {column} {definition}")
+    conn.execute("UPDATE users SET website_logout_minutes = 30 WHERE website_logout_minutes NOT IN (15, 30, 60) OR website_logout_minutes IS NULL")
     if "profile_slug" not in user_columns:
         conn.execute("ALTER TABLE users ADD COLUMN profile_slug TEXT")
     conn.execute("UPDATE users SET name = email WHERE trim(COALESCE(name, '')) = ''")
@@ -3320,6 +3324,7 @@ def user_payload(row):
         "gravatar_url": gravatar_url(row["email"]),
         "default_purchase_price": money(row["default_purchase_price"] if "default_purchase_price" in row.keys() else 0.01, fallback=0.01),
         "default_sell_price": money(row["default_sell_price"] if "default_sell_price" in row.keys() else 0, fallback=0),
+        "website_logout_minutes": clean_website_logout_minutes(row["website_logout_minutes"] if "website_logout_minutes" in row.keys() else 30),
         "profile_slug": row["profile_slug"] if "profile_slug" in row.keys() else profile_slug(row["name"] if "name" in row.keys() else row["email"]),
         "profile_url": f"/user/{urllib.parse.quote(row['profile_slug'])}" if "profile_slug" in row.keys() and row["profile_slug"] else "",
         "store_share_id": row["store_share_id"] if "store_share_id" in row.keys() else "",
@@ -3332,10 +3337,28 @@ def session_hash(token):
     return hashlib.sha256((token or "").encode("utf-8")).hexdigest()
 
 
+def clean_website_logout_minutes(value):
+    try:
+        minutes = int(value)
+    except (TypeError, ValueError):
+        minutes = 30
+    if minutes not in ALLOWED_WEBSITE_LOGOUT_MINUTES:
+        raise ValueError("Website logout time must be 15, 30, or 60 minutes.")
+    return minutes
+
+
+def user_session_minutes(row):
+    try:
+        return clean_website_logout_minutes(row["website_logout_minutes"] if row and "website_logout_minutes" in row.keys() else 30)
+    except ValueError:
+        return 30
+
+
 def create_session(conn, user_id):
     token = secrets.token_urlsafe(32)
     created = now_iso()
-    expires = session_expires_at()
+    user = conn.execute("SELECT website_logout_minutes FROM users WHERE id = ?", (user_id,)).fetchone()
+    expires = session_expires_at(user_session_minutes(user))
     conn.execute(
         "INSERT INTO sessions (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
         (session_hash(token), user_id, created, expires),
@@ -3344,14 +3367,20 @@ def create_session(conn, user_id):
     return token, expires
 
 
-def session_expires_at():
-    return (datetime.now(timezone.utc) + timedelta(minutes=SESSION_IDLE_MINUTES)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+def session_expires_at(minutes=None):
+    return (datetime.now(timezone.utc) + timedelta(minutes=minutes or SESSION_IDLE_MINUTES)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
-def cookie_header(token, expires_at=None, clear=False):
+def cookie_header(token, expires_at=None, clear=False, minutes=None):
     if clear:
         return f"{SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0"
-    max_age = SESSION_IDLE_MINUTES * 60
+    max_age = int((minutes or SESSION_IDLE_MINUTES) * 60)
+    if expires_at:
+        try:
+            expires_dt = datetime.fromisoformat(str(expires_at).replace("Z", "+00:00"))
+            max_age = max(0, int((expires_dt - datetime.now(timezone.utc)).total_seconds()))
+        except ValueError:
+            pass
     return f"{SESSION_COOKIE}={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={max_age}"
 
 
@@ -3384,7 +3413,7 @@ def current_user_from_token(conn, token):
             conn.commit()
             return None
         timestamp = now_iso()
-        conn.execute("UPDATE sessions SET expires_at = ? WHERE token_hash = ?", (session_expires_at(), token_hash))
+        conn.execute("UPDATE sessions SET expires_at = ? WHERE token_hash = ?", (session_expires_at(user_session_minutes(row)), token_hash))
         conn.execute("UPDATE users SET last_login_at = ?, updated_at = ? WHERE id = ?", (timestamp, timestamp, row["id"]))
         conn.commit()
     else:
@@ -4860,6 +4889,7 @@ def logout_user(conn, token):
 
 
 def update_user_settings(conn, user_id, payload):
+    existing_user = conn.execute("SELECT website_logout_minutes FROM users WHERE id = ?", (user_id,)).fetchone()
     language = scryfall_language(payload.get("language"))
     theme = clean_theme(payload.get("theme"))
     display_name = validate_display_name(payload.get("name"))
@@ -4885,6 +4915,8 @@ def update_user_settings(conn, user_id, payload):
     default_sell_price = money(payload.get("default_sell_price"), fallback=0)
     if default_sell_price < 0:
         default_sell_price = 0
+    website_logout_minutes = clean_website_logout_minutes(payload.get("website_logout_minutes", existing_user["website_logout_minutes"] if existing_user else 30))
+    new_session_expires_at = session_expires_at(website_logout_minutes)
     conn.execute(
         """
         UPDATE users
@@ -4892,7 +4924,7 @@ def update_user_settings(conn, user_id, payload):
             contact_signal = ?, contact_telegram = ?, contact_discord = ?, contact_website = ?,
             contact_whatnot = ?, contact_mtg_arena = ?, contact_mtgo = ?, contact_instagram = ?,
             contact_bluesky = ?, contact_threads = ?, about_me = ?, profile_image = ?,
-            default_purchase_price = ?, default_sell_price = ?, updated_at = ?
+            default_purchase_price = ?, default_sell_price = ?, website_logout_minutes = ?, updated_at = ?
         WHERE id = ?
         """,
         (
@@ -4916,12 +4948,14 @@ def update_user_settings(conn, user_id, payload):
             profile_image,
             default_purchase_price,
             default_sell_price,
+            website_logout_minutes,
             now_iso(),
             user_id,
         ),
     )
+    conn.execute("UPDATE sessions SET expires_at = ? WHERE user_id = ?", (new_session_expires_at, user_id))
     conn.commit()
-    return {"ok": True, "user": user_payload(conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone())}
+    return {"ok": True, "expires_at": new_session_expires_at, "user": user_payload(conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone())}
 
 
 def list_user_locations(conn, user_id, query=""):
@@ -14277,7 +14311,11 @@ class Handler(SimpleHTTPRequestHandler):
         if cookie:
             self.send_header("Set-Cookie", cookie)
         elif getattr(self, "_refresh_session_cookie", None):
-            self.send_header("Set-Cookie", cookie_header(self._refresh_session_cookie))
+            refresh_cookie = self._refresh_session_cookie
+            if isinstance(refresh_cookie, tuple):
+                self.send_header("Set-Cookie", cookie_header(refresh_cookie[0], minutes=refresh_cookie[1]))
+            else:
+                self.send_header("Set-Cookie", cookie_header(refresh_cookie))
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
@@ -14351,7 +14389,7 @@ class Handler(SimpleHTTPRequestHandler):
         token = self.session_token()
         user = current_user_from_token(conn, token)
         if user and token:
-            self._refresh_session_cookie = token
+            self._refresh_session_cookie = (token, user_session_minutes(user))
         return user
 
     def require_user(self, conn):
@@ -14995,7 +15033,8 @@ class Handler(SimpleHTTPRequestHandler):
                     return self.send_json(update_admin_pro_features(conn, self.read_json()))
                 if parsed.path == "/api/user/settings":
                     user = self.require_user(conn)
-                    return self.send_json(update_user_settings(conn, user["id"], self.read_json()))
+                    result = update_user_settings(conn, user["id"], self.read_json())
+                    return self.send_json(result, cookie=cookie_header(self.session_token(), result.get("expires_at")))
                 match = re.match(r"^/api/user/locations/([0-9]+)$", parsed.path)
                 if match:
                     user = self.require_user(conn)

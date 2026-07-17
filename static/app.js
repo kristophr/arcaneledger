@@ -53,6 +53,9 @@ const state = {
   storeFrontSearchTimer: null,
   wishlistSearchTimer: null,
   catalogSearchTimer: null,
+  sessionIdleTimer: null,
+  sessionLastActivityAt: Date.now(),
+  sessionActivityListenersBound: false,
   editingCard: null,
   addResults: [],
   selectedAddCard: null,
@@ -770,6 +773,55 @@ function saveSettings(settings) {
   applySettings();
 }
 
+function websiteLogoutMinutes(user = state.user) {
+  const minutes = Number(user?.website_logout_minutes || 30);
+  return [15, 30, 60].includes(minutes) ? minutes : 30;
+}
+
+function clearSessionIdleTimer() {
+  if (state.sessionIdleTimer) {
+    window.clearTimeout(state.sessionIdleTimer);
+    state.sessionIdleTimer = null;
+  }
+}
+
+function resetSessionIdleTimer() {
+  state.sessionLastActivityAt = Date.now();
+  clearSessionIdleTimer();
+  if (!state.user) return;
+  state.sessionIdleTimer = window.setTimeout(handleSessionIdleTimeout, websiteLogoutMinutes() * 60 * 1000);
+}
+
+function handleSessionActivity() {
+  if (!state.user) return;
+  const now = Date.now();
+  if (now - Number(state.sessionLastActivityAt || 0) < 1000) {
+    state.sessionLastActivityAt = now;
+    return;
+  }
+  resetSessionIdleTimer();
+}
+
+function bindSessionActivityListeners() {
+  if (state.sessionActivityListenersBound) return;
+  state.sessionActivityListenersBound = true;
+  ["click", "keydown", "pointermove", "scroll", "touchstart"].forEach((eventName) => {
+    window.addEventListener(eventName, handleSessionActivity, { passive: true });
+  });
+}
+
+async function handleSessionIdleTimeout() {
+  if (!state.user) return;
+  const timeoutMs = websiteLogoutMinutes() * 60 * 1000;
+  const elapsed = Date.now() - Number(state.sessionLastActivityAt || 0);
+  if (elapsed < timeoutMs - 1000) {
+    state.sessionIdleTimer = window.setTimeout(handleSessionIdleTimeout, Math.max(1000, timeoutMs - elapsed));
+    return;
+  }
+  await logout({ forceLocal: true }).catch(() => {});
+  setStatus("You were logged out after being inactive.", "", els.status);
+}
+
 function applySettings() {
   const settings = state.settings || defaultSettings();
   document.documentElement.lang = settings.language || "en";
@@ -816,6 +868,7 @@ async function api(path, options = {}) {
     }
     if (response.status === 401) {
       state.user = null;
+      clearSessionIdleTimer();
       updateAuthUi();
       if (promptLogin) {
         openAuthModal("login", message);
@@ -934,6 +987,8 @@ function syncSettingsFromUser(user) {
   state.settings = { ...defaultSettings(), language: user.language || "en", theme: user.theme || "light" };
   localStorage.setItem(settingsKey, JSON.stringify(state.settings));
   applySettings();
+  bindSessionActivityListeners();
+  resetSessionIdleTimer();
 }
 
 async function loadSession() {
@@ -1153,9 +1208,14 @@ async function loadPasswordReset(token) {
   }
 }
 
-async function logout() {
-  await api("/api/auth/logout", { method: "POST", body: JSON.stringify({}) });
+async function logout(options = {}) {
+  try {
+    await api("/api/auth/logout", { method: "POST", body: JSON.stringify({}) });
+  } catch (error) {
+    if (!options.forceLocal) throw error;
+  }
   state.user = null;
+  clearSessionIdleTimer();
   state.cards = [];
   state.favoriteCards = [];
   state.favoriteDecks = [];
@@ -6996,6 +7056,7 @@ function renderSettingsPage() {
   els.settingsPageForm.theme.value = settings.theme || "light";
   els.settingsPageForm.default_purchase_price.value = userDefaultPurchasePrice().toFixed(2);
   els.settingsPageForm.default_sell_price.value = userDefaultSellPrice() > 0 ? userDefaultSellPrice().toFixed(2) : "";
+  els.settingsPageForm.website_logout_minutes.value = String(websiteLogoutMinutes(user));
   if (els.settingsAccountEmail) {
     els.settingsAccountEmail.textContent = state.user ? state.user.email : "Not logged in";
   }
@@ -7297,6 +7358,7 @@ function userSettingsPayload(overrides = {}) {
     profile_image: user.profile_image || "",
     default_purchase_price: user.default_purchase_price ?? 0.01,
     default_sell_price: user.default_sell_price ?? 0,
+    website_logout_minutes: user.website_logout_minutes ?? 30,
     language: settings.language || "en",
     theme: settings.theme || "light",
     ...overrides,
