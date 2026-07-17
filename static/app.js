@@ -3269,9 +3269,20 @@ function scryfallQuoted(value) {
   return `"${String(value || "").replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 
+function catalogSearchTextParts(rawText) {
+  let text = String(rawText || "").trim();
+  const filters = [];
+  if (/\b(?:pre[\s-]?release|prelease)\b/i.test(text)) {
+    text = text.replace(/\b(?:pre[\s-]?release|prelease)\b/ig, " ").replace(/\s+/g, " ").trim();
+    filters.push("is:prerelease");
+  }
+  return { text, filters };
+}
+
 function buildCatalogSearchQuery() {
   const parts = [];
-  const text = els.catalogSearchInput.value.trim();
+  const textParts = catalogSearchTextParts(els.catalogSearchInput.value);
+  const text = textParts.text;
   const oracle = els.catalogOracleInput.value.trim();
   const setCode = els.catalogSetInput.value.trim().toLowerCase();
   const collectorNumber = els.catalogCollectorNumberInput.value.trim();
@@ -3280,10 +3291,23 @@ function buildCatalogSearchQuery() {
   const rarity = els.catalogRaritySelect.value;
   const printType = els.catalogPrintTypeSelect.value;
   const format = els.catalogFormatSelect.value;
+  const searchSetCode = printType === "prerelease" && setCode && !setCode.startsWith("p") ? `p${setCode}` : setCode;
   if (text) parts.push(text);
+  parts.push(...textParts.filters);
   if (oracle) parts.push(`o:${scryfallQuoted(oracle)}`);
-  if (setCode) parts.push(`e:${setCode}`);
-  if (collectorNumber) parts.push(`cn:${scryfallQuoted(collectorNumber)}`);
+  if (searchSetCode) parts.push(`e:${searchSetCode}`);
+  if (collectorNumber) {
+    const normalizedCollectorNumber = collectorNumber.trim();
+    if (
+      printType === "prerelease" &&
+      searchSetCode.startsWith("p") &&
+      /^[0-9]+$/i.test(normalizedCollectorNumber)
+    ) {
+      parts.push(`(cn:${scryfallQuoted(normalizedCollectorNumber)} or cn:${scryfallQuoted(`${normalizedCollectorNumber}s`)})`);
+    } else {
+      parts.push(`cn:${scryfallQuoted(normalizedCollectorNumber)}`);
+    }
+  }
   if (color === "multi") parts.push("c>=2");
   else if (color === "colorless") parts.push("c:c");
   else if (color) parts.push(`c:${color}`);
