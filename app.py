@@ -77,6 +77,7 @@ SCRYFALL_ID_URL = "https://api.scryfall.com/cards/{card_id}"
 SCRYFALL_QUERY = os.environ.get("SCRYFALL_QUERY", "game:paper")
 SCRYFALL_LANGUAGE = os.environ.get("SCRYFALL_LANGUAGE", "en")
 SCRYFALL_TIMEOUT_SECONDS = max(5, int(os.environ.get("SCRYFALL_TIMEOUT_SECONDS", "15") or 15))
+SCRYFALL_SEARCH_RESULT_LIMIT = max(24, int(os.environ.get("SCRYFALL_SEARCH_RESULT_LIMIT", "175") or 175))
 SCRYFALL_IMPORT_LOOKUP_LIMIT = max(0, int(os.environ.get("SCRYFALL_IMPORT_LOOKUP_LIMIT", "80") or 80))
 SCRYFALL_IMPORT_LOOKUP_DELAY = max(0.0, float(os.environ.get("SCRYFALL_IMPORT_LOOKUP_DELAY", "0.12") or 0.12))
 APP_TIMEZONE = os.environ.get("APP_TIMEZONE", "America/New_York").strip() or "America/New_York"
@@ -119,7 +120,7 @@ ALLOWED_WEBSITE_LOGOUT_MINUTES = {15, 30, 60}
 EMAIL_VERIFICATION_MINUTES = int(os.environ.get("EMAIL_VERIFICATION_MINUTES", "30") or 30)
 PASSWORD_RESET_MINUTES = int(os.environ.get("PASSWORD_RESET_MINUTES", str(EMAIL_VERIFICATION_MINUTES)) or EMAIL_VERIFICATION_MINUTES)
 SUPPORTED_SCRYFALL_LANGUAGES = {"en"}
-APP_VERSION = "0.5.0 beta"
+APP_VERSION = "0.6.0 beta"
 USER_AGENT = "arcaneledger/0.5.0"
 PROCESS_STARTED_AT = datetime.now(timezone.utc).replace(microsecond=0)
 COLOR_ORDER = ("W", "U", "B", "R", "G")
@@ -5857,13 +5858,25 @@ def search_scryfall_cards(conn, query, language=None, order=None, user_id=None):
         "dir": "desc",
     }
     url = SCRYFALL_SEARCH_URL + "?" + urllib.parse.urlencode(params)
+    scryfall_cards = []
+    total_cards = 0
+    has_more = False
     try:
-        payload = request_json(url)
+        while url and len(scryfall_cards) < SCRYFALL_SEARCH_RESULT_LIMIT:
+            payload = request_json(url)
+            total_cards = int(payload.get("total_cards") or total_cards or 0)
+            has_more = bool(payload.get("has_more"))
+            for card in payload.get("data", []):
+                if len(scryfall_cards) >= SCRYFALL_SEARCH_RESULT_LIMIT:
+                    break
+                scryfall_cards.append(card)
+            url = payload.get("next_page") if has_more and len(scryfall_cards) < SCRYFALL_SEARCH_RESULT_LIMIT else None
+            if url:
+                time.sleep(0.08)
     except urllib.error.HTTPError as exc:
         if exc.code == HTTPStatus.NOT_FOUND:
-            return {"cards": []}
+            return {"cards": [], "total_cards": 0, "has_more": False, "limit": SCRYFALL_SEARCH_RESULT_LIMIT}
         raise
-    scryfall_cards = payload.get("data", [])[:24]
     card_ids = [card.get("id") for card in scryfall_cards if card.get("id")]
     owned_quantities = owned_quantities_for_cards(conn, card_ids, user_id)
     variant_summaries = variant_summaries_for_cards(conn, card_ids, user_id)
@@ -5874,7 +5887,12 @@ def search_scryfall_cards(conn, query, language=None, order=None, user_id=None):
         summary["variant_summaries"] = variant_summaries.get(card.get("id"), [])
         summary["wishlist"] = wishlist_flags.get(card.get("id"), 0)
         cards.append(summary)
-    return {"cards": cards}
+    return {
+        "cards": cards,
+        "total_cards": total_cards or len(cards),
+        "has_more": has_more or (total_cards > len(cards)),
+        "limit": SCRYFALL_SEARCH_RESULT_LIMIT,
+    }
 
 
 def scryfall_card_by_id(conn, card_id, user_id=None):

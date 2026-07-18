@@ -3381,12 +3381,15 @@ function buildCatalogSearchQuery() {
 
 function applyCatalogOwnedFilter() {
   const allResults = state.catalogSearchAllResults || [];
+  const meta = state.catalogSearchMeta || {};
   const hideOwned = Boolean(els.catalogHideOwnedFilter?.checked);
   state.catalogSearchResults = hideOwned
     ? allResults.filter((card) => Number(card.owned_quantity || 0) <= 0)
     : [...allResults];
   return {
     total: allResults.length,
+    totalCards: Number(meta.total_cards || allResults.length),
+    capped: Number(meta.total_cards || allResults.length) > allResults.length,
     visible: state.catalogSearchResults.length,
     hiddenOwned: allResults.length - state.catalogSearchResults.length,
     hideOwned,
@@ -3394,7 +3397,10 @@ function applyCatalogOwnedFilter() {
 }
 
 function catalogSearchStatusText(stats) {
-  const resultText = `${integer.format(stats.visible)} result${stats.visible === 1 ? "" : "s"}`;
+  const baseCount = stats.capped ? stats.total : stats.visible;
+  const resultText = stats.capped
+    ? `${integer.format(baseCount)} of ${integer.format(stats.totalCards)} results shown`
+    : `${integer.format(stats.visible)} result${stats.visible === 1 ? "" : "s"}`;
   if (stats.hideOwned && stats.hiddenOwned > 0) {
     return `${resultText} - ${integer.format(stats.hiddenOwned)} owned hidden`;
   }
@@ -3414,6 +3420,7 @@ async function searchCatalog() {
     const order = els.catalogSortSelect.value || "released";
     const result = await api(`/api/scryfall/search?q=${encodeURIComponent(query)}&lang=${encodeURIComponent(language)}&order=${encodeURIComponent(order)}`);
     state.catalogSearchAllResults = result.cards || [];
+    state.catalogSearchMeta = result;
     const stats = applyCatalogOwnedFilter();
     renderCatalogSearchResults();
     els.catalogSearchStatus.textContent = catalogSearchStatusText(stats);
