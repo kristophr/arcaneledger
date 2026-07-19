@@ -1833,10 +1833,7 @@ function wireWishlistButton(button, card, options = {}) {
 
 function openCardDetail(card) {
   if (!card || !card.scryfall_id) return;
-  window.history.pushState({}, "", cardDetailUrl(card));
-  loadCardDetail(card.scryfall_id, card.variant || "Normal").catch((error) => {
-    setStatus(error.message, "error");
-  });
+  openCardRoute(card.scryfall_id, card.variant || "Normal");
 }
 
 function wireCardDetailNavigation(node, card) {
@@ -2876,13 +2873,17 @@ function newsRouteId() {
   return match ? decodeURIComponent(match[1]) : "";
 }
 
-function cardDetailRoute() {
-  const match = window.location.pathname.match(/^\/card\/([^/]+)\/([^/]+)\/?$/);
+function cardRouteFromPath(pathname) {
+  const match = String(pathname || "").match(/^\/card\/([^/]+)\/([^/]+)\/?$/);
   if (!match) return null;
   return {
     cardId: decodeURIComponent(match[1]),
     variant: decodeURIComponent(match[2]),
   };
+}
+
+function cardDetailRoute() {
+  return cardRouteFromPath(window.location.pathname);
 }
 
 function verificationRouteToken() {
@@ -2902,6 +2903,16 @@ function appPageRoute() {
 
 function cardDetailUrl(card) {
   return `/card/${encodeURIComponent(card.scryfall_id || card.card_id || card.id || "")}/${encodeURIComponent(card.variant || "Normal")}`;
+}
+
+function openCardRoute(cardId, variant = "Normal", options = {}) {
+  if (!cardId) return;
+  const url = `/card/${encodeURIComponent(cardId)}/${encodeURIComponent(variant || "Normal")}`;
+  if (options.push !== false && window.location.pathname !== url) {
+    window.history.pushState({}, "", url);
+  }
+  const loader = state.user ? loadCardDetail : loadPublicCardDetail;
+  loader(cardId, variant || "Normal").catch((error) => setStatus(error.message, "error"));
 }
 
 function renderChart(points) {
@@ -4157,7 +4168,7 @@ function renderCatalogSearchResults() {
     `;
     item.addEventListener("click", (event) => {
       if (event.target.closest("a, button, input, select, textarea")) return;
-      window.location.href = cardDetailUrl(card);
+      openCardDetail(card);
     });
     const wishlistButton = item.querySelector(".wishlist-button");
     wishlistButton.addEventListener("click", async () => {
@@ -12436,6 +12447,17 @@ function wireEvents() {
     event.returnValue = "";
   });
   document.addEventListener("click", (event) => {
+    if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    const link = event.target.closest?.("a[href]");
+    if (!link || link.target === "_blank" || link.hasAttribute("download")) return;
+    const url = new URL(link.href, window.location.origin);
+    if (url.origin !== window.location.origin) return;
+    const detail = cardRouteFromPath(url.pathname);
+    if (!detail) return;
+    event.preventDefault();
+    openCardRoute(detail.cardId, detail.variant);
+  }, true);
+  document.addEventListener("click", (event) => {
     const button = event.target.closest?.(".report-content-button");
     if (!button) return;
     event.preventDefault();
@@ -12512,7 +12534,7 @@ function wireEvents() {
     discardDeckEditorChanges();
     const detail = cardDetailRoute();
     if (detail) {
-      loadCardDetail(detail.cardId, detail.variant);
+      openCardRoute(detail.cardId, detail.variant, { push: false });
       return;
     }
     const setCode = setRouteCode();
