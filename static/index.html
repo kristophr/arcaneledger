@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Arcane Ledger</title>
-    <link rel="stylesheet" href="/styles.css?v=200">
+    <link rel="stylesheet" href="/styles.css?v=201">
   </head>
   <body>
     <datalist id="storeLocationOptions"></datalist>
@@ -14,9 +14,9 @@
         <h1>Arcane Ledger</h1>
       </div>
       <div class="actions">
-        <button id="addCardButton" class="icon-button" type="button" title="Add a card">+ Add New Card</button>
+        <button id="addCardButton" class="icon-button" type="button" title="Add a card" hidden>+ Add New Card</button>
         <button id="contributorStudioButton" class="topbar-plus-button" type="button" title="Open contributor studio" aria-label="Open contributor studio" hidden>+</button>
-        <button id="accountButton" class="icon-button" type="button" title="Log in">Log In</button>
+        <button id="accountButton" class="icon-button" type="button" title="Log in or create an account">Login / Create Account</button>
       </div>
     </header>
 
@@ -28,30 +28,30 @@
         <nav>
           <button class="nav-command is-active" type="button" data-page-target="home"><span class="home-icon" aria-hidden="true"></span>Home</button>
           <button class="nav-command" type="button" data-page-target="news"><span class="news-icon" aria-hidden="true"></span>News</button>
-          <button class="nav-command" type="button" data-page-target="dashboard"><span class="dashboard-icon" aria-hidden="true"></span>Dashboard</button>
+          <button class="nav-command" type="button" data-page-target="dashboard" hidden><span class="dashboard-icon" aria-hidden="true"></span>Dashboard</button>
           <button class="nav-command" type="button" data-page-target="search"><span class="catalog-search-icon" aria-hidden="true"></span>Search</button>
-          <button class="nav-command" type="button" data-page-target="favorites"><span class="favorites-icon" aria-hidden="true"></span>Favorites</button>
-          <button class="nav-command" type="button" data-page-target="collection"><span class="collection-icon" aria-hidden="true"></span>Collection</button>
-          <button class="nav-command" type="button" data-page-target="reports"><span class="reports-icon" aria-hidden="true"></span>Reports</button>
-          <button class="nav-command" type="button" data-page-target="sets"><span class="sets-icon" aria-hidden="true"></span>Sets</button>
-          <button class="nav-command" type="button" data-page-target="decks"><span class="deck-icon" aria-hidden="true"></span>Decks</button>
+          <button class="nav-command" type="button" data-page-target="favorites" hidden><span class="favorites-icon" aria-hidden="true"></span>Favorites</button>
+          <button class="nav-command" type="button" data-page-target="collection" hidden><span class="collection-icon" aria-hidden="true"></span>Collection</button>
+          <button class="nav-command" type="button" data-page-target="reports" hidden><span class="reports-icon" aria-hidden="true"></span>Reports</button>
+          <button class="nav-command" type="button" data-page-target="sets" hidden><span class="sets-icon" aria-hidden="true"></span>Sets</button>
+          <button class="nav-command" type="button" data-page-target="decks" hidden><span class="deck-icon" aria-hidden="true"></span>Decks</button>
           <button class="nav-command" type="button" data-page-target="browse-decks"><span class="browse-decks-icon" aria-hidden="true"></span>Browse Decks</button>
-          <button class="nav-command" type="button" data-page-target="containers"><span class="container-icon box-icon" aria-hidden="true"></span>Containers</button>
-          <button class="nav-command" type="button" data-page-target="for-sale"><span class="sale-icon" aria-hidden="true"></span>For Sale</button>
+          <button class="nav-command" type="button" data-page-target="containers" hidden><span class="container-icon box-icon" aria-hidden="true"></span>Containers</button>
+          <button class="nav-command" type="button" data-page-target="for-sale" hidden><span class="sale-icon" aria-hidden="true"></span>For Sale</button>
           <button class="nav-command" type="button" data-page-target="store-front"><span class="storefront-icon" aria-hidden="true"></span>Store Front</button>
-          <button class="nav-command" type="button" data-page-target="wishlist"><span class="wishlist-icon" aria-hidden="true"></span>Wishlist</button>
-          <button class="nav-command" type="button" data-page-target="import"><span class="import-icon" aria-hidden="true"></span>Import</button>
+          <button class="nav-command" type="button" data-page-target="wishlist" hidden><span class="wishlist-icon" aria-hidden="true"></span>Wishlist</button>
+          <button class="nav-command" type="button" data-page-target="import" hidden><span class="import-icon" aria-hidden="true"></span>Import</button>
         </nav>
         <nav class="nav-bottom">
-          <button class="nav-command notification-nav-command" type="button" data-page-target="notifications">
+          <button class="nav-command notification-nav-command" type="button" data-page-target="notifications" hidden>
             <span class="notification-icon" aria-hidden="true"></span>
             Notifications
             <span id="notificationsNavDot" class="nav-unread-dot" aria-hidden="true" hidden></span>
           </button>
-          <button class="nav-command" type="button" data-page-target="admin"><span class="admin-icon" aria-hidden="true"></span>Admin</button>
-          <button id="myProfileButton" class="nav-command" type="button"><span class="profile-icon" aria-hidden="true"></span>My Profile</button>
-          <button class="nav-command" type="button" data-page-target="settings"><span class="settings-icon" aria-hidden="true"></span>Settings</button>
-          <button id="logoutButton" class="nav-command" type="button"><span class="login-icon" aria-hidden="true"></span><span class="auth-command-label">Log In</span></button>
+          <button class="nav-command" type="button" data-page-target="admin" hidden><span class="admin-icon" aria-hidden="true"></span>Admin</button>
+          <button id="myProfileButton" class="nav-command" type="button" hidden><span class="profile-icon" aria-hidden="true"></span>My Profile</button>
+          <button class="nav-command" type="button" data-page-target="settings" hidden><span class="settings-icon" aria-hidden="true"></span>Settings</button>
+          <button id="logoutButton" class="nav-command" type="button" hidden><span class="login-icon" aria-hidden="true"></span><span class="auth-command-label">Log In</span></button>
         </nav>
       </aside>
 
