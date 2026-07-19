@@ -10264,15 +10264,28 @@ function selectedSaleCardFromDetail(card) {
 }
 
 function openSaleModalForCardDetail(card) {
-  if (!card || Number(card.quantity || 0) <= 0) {
+  const entries = selectedCardEntries(card).filter((entry) => Number(entry.quantity || 0) > 0);
+  if (!card || !entries.length) {
     setStatus("Add this card to your collection before marking it for sale.", "error");
     return;
   }
-  const saleCard = selectedSaleCardFromDetail(card);
-  const confirmed = window.confirm(`Mark ${cardTitle(card)} for sale?`);
-  if (!confirmed) return;
   clearSelectedCards();
-  state.selectedCards.set(cardSelectionKey(card), saleCard);
+  for (const entry of entries) {
+    const variant = entry.variant || card.variant || "Normal";
+    const saleCard = selectedSaleCardFromDetail({
+      ...card,
+      variant,
+      quantity: Number(entry.quantity || 0),
+      saleable_quantity: Number(entry.saleable_quantity ?? entry.quantity ?? 0),
+      deck_quantity: Number(entry.deck_quantity ?? card.deck_quantity ?? 0),
+      display_price: Number(entry.display_price ?? entry.market_price ?? priceForVariant(card, variant) ?? 0),
+      market_price: Number(entry.market_price ?? entry.display_price ?? priceForVariant(card, variant) ?? 0),
+      sale_quantity: Number(entry.sale_quantity ?? 0),
+      sale_price: Number(entry.sale_price ?? priceForVariant(card, variant) ?? card.sale_price ?? 0),
+      whatnot_url: entry.whatnot_url || "",
+    });
+    state.selectedCards.set(cardSelectionKey({ ...card, variant }), saleCard);
+  }
   updateBulkBar();
   openSaleModal();
 }
