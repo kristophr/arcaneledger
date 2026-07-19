@@ -882,6 +882,14 @@
                   Default Sell Price
                   <input name="default_sell_price" type="number" min="0" step="0.01" placeholder="Use market price">
                 </label>
+                <label>
+                  Default Currency
+                  <select name="default_currency">
+                    <option value="usd" selected>USD - US Dollar</option>
+                    <option value="eur">EUR - Euro</option>
+                    <option value="tix">MTGO Tix</option>
+                  </select>
+                </label>
               </fieldset>
               <fieldset class="settings-group">
                 <legend>Website Maintenence</legend>
@@ -2613,6 +2621,6 @@
       </section>
     </div>
 
-    <script src="/app.js?v=234"></script>
+    <script src="/app.js?v=235"></script>
   </body>
 </html>

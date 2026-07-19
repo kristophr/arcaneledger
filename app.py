@@ -117,6 +117,7 @@ SESSION_COOKIE = "arcaneledger_session"
 SESSION_DAYS = int(os.environ.get("SESSION_DAYS", "30"))
 SESSION_IDLE_MINUTES = int(os.environ.get("SESSION_IDLE_MINUTES", "30") or 30)
 ALLOWED_WEBSITE_LOGOUT_MINUTES = {15, 30, 60}
+ALLOWED_PRICE_CURRENCIES = {"usd", "eur", "tix"}
 EMAIL_VERIFICATION_MINUTES = int(os.environ.get("EMAIL_VERIFICATION_MINUTES", "30") or 30)
 PASSWORD_RESET_MINUTES = int(os.environ.get("PASSWORD_RESET_MINUTES", str(EMAIL_VERIFICATION_MINUTES)) or EMAIL_VERIFICATION_MINUTES)
 SUPPORTED_SCRYFALL_LANGUAGES = {"en"}
@@ -1397,9 +1398,9 @@ def upsert_card(conn, card, synced_at):
         INSERT INTO cards (
             scryfall_id, oracle_id, name, set_code, set_name, collector_number, rarity,
             type_line, type_category, colors, color_identity, flavor_name, flavor_text, layout, finishes, image_small, image_normal, image_art, scryfall_uri,
-            current_usd, current_usd_foil, current_usd_etched, last_synced_at
+            current_usd, current_usd_foil, current_usd_etched, current_eur, current_eur_foil, current_tix, last_synced_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(scryfall_id) DO UPDATE SET
             oracle_id = excluded.oracle_id,
             name = excluded.name,
@@ -1422,6 +1423,9 @@ def upsert_card(conn, card, synced_at):
             current_usd = excluded.current_usd,
             current_usd_foil = excluded.current_usd_foil,
             current_usd_etched = excluded.current_usd_etched,
+            current_eur = excluded.current_eur,
+            current_eur_foil = excluded.current_eur_foil,
+            current_tix = excluded.current_tix,
             last_synced_at = excluded.last_synced_at
         """,
         (
@@ -1447,6 +1451,9 @@ def upsert_card(conn, card, synced_at):
             money(prices.get("usd")),
             money(prices.get("usd_foil")),
             money(prices.get("usd_etched")),
+            money(prices.get("eur")),
+            money(prices.get("eur_foil")),
+            money(prices.get("tix")),
             synced_at,
         ),
     )
@@ -1569,6 +1576,7 @@ def init_db(conn):
             profile_image TEXT NOT NULL DEFAULT '',
             default_purchase_price REAL NOT NULL DEFAULT 0.01,
             default_sell_price REAL NOT NULL DEFAULT 0,
+            default_currency TEXT NOT NULL DEFAULT 'usd',
             website_logout_minutes INTEGER NOT NULL DEFAULT 30,
             profile_slug TEXT UNIQUE,
             role TEXT NOT NULL DEFAULT 'normal',
@@ -1701,6 +1709,9 @@ def init_db(conn):
             current_usd REAL DEFAULT 0,
             current_usd_foil REAL DEFAULT 0,
             current_usd_etched REAL DEFAULT 0,
+            current_eur REAL DEFAULT 0,
+            current_eur_foil REAL DEFAULT 0,
+            current_tix REAL DEFAULT 0,
             last_synced_at TEXT NOT NULL,
             FOREIGN KEY (set_code) REFERENCES sets(code)
         );
@@ -2123,6 +2134,9 @@ def migrate_cards_schema(conn):
         conn.execute("ALTER TABLE cards ADD COLUMN colors TEXT")
     if "color_identity" not in columns:
         conn.execute("ALTER TABLE cards ADD COLUMN color_identity TEXT")
+    for column in ("current_eur", "current_eur_foil", "current_tix"):
+        if column not in columns:
+            conn.execute(f"ALTER TABLE cards ADD COLUMN {column} REAL DEFAULT 0")
     conn.execute(
         """
         UPDATE cards
@@ -3192,10 +3206,12 @@ def migrate_user_schema(conn):
     for column, definition in {
         "default_purchase_price": "REAL NOT NULL DEFAULT 0.01",
         "default_sell_price": "REAL NOT NULL DEFAULT 0",
+        "default_currency": "TEXT NOT NULL DEFAULT 'usd'",
         "website_logout_minutes": "INTEGER NOT NULL DEFAULT 30",
     }.items():
         if column not in user_columns:
             conn.execute(f"ALTER TABLE users ADD COLUMN {column} {definition}")
+    conn.execute("UPDATE users SET default_currency = 'usd' WHERE lower(COALESCE(default_currency, '')) NOT IN ('usd', 'eur', 'tix')")
     conn.execute("UPDATE users SET website_logout_minutes = 30 WHERE website_logout_minutes NOT IN (15, 30, 60) OR website_logout_minutes IS NULL")
     if "profile_slug" not in user_columns:
         conn.execute("ALTER TABLE users ADD COLUMN profile_slug TEXT")
@@ -3325,6 +3341,7 @@ def user_payload(row):
         "gravatar_url": gravatar_url(row["email"]),
         "default_purchase_price": money(row["default_purchase_price"] if "default_purchase_price" in row.keys() else 0.01, fallback=0.01),
         "default_sell_price": money(row["default_sell_price"] if "default_sell_price" in row.keys() else 0, fallback=0),
+        "default_currency": clean_default_currency(row["default_currency"] if "default_currency" in row.keys() else "usd"),
         "website_logout_minutes": clean_website_logout_minutes(row["website_logout_minutes"] if "website_logout_minutes" in row.keys() else 30),
         "profile_slug": row["profile_slug"] if "profile_slug" in row.keys() else profile_slug(row["name"] if "name" in row.keys() else row["email"]),
         "profile_url": f"/user/{urllib.parse.quote(row['profile_slug'])}" if "profile_slug" in row.keys() and row["profile_slug"] else "",
@@ -3346,6 +3363,13 @@ def clean_website_logout_minutes(value):
     if minutes not in ALLOWED_WEBSITE_LOGOUT_MINUTES:
         raise ValueError("Website logout time must be 15, 30, or 60 minutes.")
     return minutes
+
+
+def clean_default_currency(value):
+    currency = (value or "usd").strip().lower()
+    if currency not in ALLOWED_PRICE_CURRENCIES:
+        raise ValueError("Default currency must be USD, EUR, or MTGO Tix.")
+    return currency
 
 
 def user_session_minutes(row):
@@ -4890,7 +4914,7 @@ def logout_user(conn, token):
 
 
 def update_user_settings(conn, user_id, payload):
-    existing_user = conn.execute("SELECT website_logout_minutes FROM users WHERE id = ?", (user_id,)).fetchone()
+    existing_user = conn.execute("SELECT default_currency, website_logout_minutes FROM users WHERE id = ?", (user_id,)).fetchone()
     language = scryfall_language(payload.get("language"))
     theme = clean_theme(payload.get("theme"))
     display_name = validate_display_name(payload.get("name"))
@@ -4916,6 +4940,7 @@ def update_user_settings(conn, user_id, payload):
     default_sell_price = money(payload.get("default_sell_price"), fallback=0)
     if default_sell_price < 0:
         default_sell_price = 0
+    default_currency = clean_default_currency(payload.get("default_currency", existing_user["default_currency"] if existing_user else "usd"))
     website_logout_minutes = clean_website_logout_minutes(payload.get("website_logout_minutes", existing_user["website_logout_minutes"] if existing_user else 30))
     new_session_expires_at = session_expires_at(website_logout_minutes)
     conn.execute(
@@ -4925,7 +4950,7 @@ def update_user_settings(conn, user_id, payload):
             contact_signal = ?, contact_telegram = ?, contact_discord = ?, contact_website = ?,
             contact_whatnot = ?, contact_mtg_arena = ?, contact_mtgo = ?, contact_instagram = ?,
             contact_bluesky = ?, contact_threads = ?, about_me = ?, profile_image = ?,
-            default_purchase_price = ?, default_sell_price = ?, website_logout_minutes = ?, updated_at = ?
+            default_purchase_price = ?, default_sell_price = ?, default_currency = ?, website_logout_minutes = ?, updated_at = ?
         WHERE id = ?
         """,
         (
@@ -4949,6 +4974,7 @@ def update_user_settings(conn, user_id, payload):
             profile_image,
             default_purchase_price,
             default_sell_price,
+            default_currency,
             website_logout_minutes,
             now_iso(),
             user_id,
@@ -5637,6 +5663,9 @@ def card_summary(card, owned_quantity=0):
             "usd": money(prices.get("usd")),
             "usd_foil": money(prices.get("usd_foil")),
             "usd_etched": money(prices.get("usd_etched")),
+            "eur": money(prices.get("eur")),
+            "eur_foil": money(prices.get("eur_foil")),
+            "tix": money(prices.get("tix")),
         },
         "owned_quantity": owned_quantity,
     }
@@ -5847,7 +5876,7 @@ def search_scryfall_cards(conn, query, language=None, order=None, user_id=None):
     text = (query or "").strip()
     if len(text) < 2:
         return {"cards": []}
-    allowed_orders = {"released", "name", "set", "rarity", "color", "usd", "edhrec"}
+    allowed_orders = {"released", "name", "set", "rarity", "color", "usd", "eur", "tix", "edhrec"}
     order_value = order if order in allowed_orders else "released"
     params = {
         "q": scryfall_query_with_language(f"{text} game:paper", language),

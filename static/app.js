@@ -131,11 +131,40 @@ const compactDollars = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 1,
 });
 
+const priceCurrencyOptions = {
+  usd: { code: "USD", label: "USD" },
+  eur: { code: "EUR", label: "EUR" },
+  tix: { code: "TIX", label: "MTGO Tix" },
+};
+
 const integer = new Intl.NumberFormat("en-US");
 function formatPercent(value) {
   const percent = Number(value || 0);
   return `${Number.isFinite(percent) ? percent.toFixed(1) : "0.0"}%`;
 }
+
+function userDefaultCurrency(user = state.user) {
+  const currency = String(user?.default_currency || "usd").toLowerCase();
+  return Object.prototype.hasOwnProperty.call(priceCurrencyOptions, currency) ? currency : "usd";
+}
+
+function formatCardPrice(value, currency = userDefaultCurrency()) {
+  const amount = Number(value || 0);
+  if (currency === "tix") {
+    return `${amount.toFixed(2)} tix`;
+  }
+  return new Intl.NumberFormat(currency === "eur" ? "de-DE" : "en-US", {
+    style: "currency",
+    currency: priceCurrencyOptions[currency]?.code || "USD",
+  }).format(amount);
+}
+
+function catalogPriceOrder() {
+  const selected = els.catalogSortSelect?.value || "released";
+  if (selected !== "usd") return selected;
+  return userDefaultCurrency();
+}
+
 function isWhatnotUrl(value) {
   const text = String(value || "").trim();
   if (!text) return true;
@@ -3428,7 +3457,7 @@ async function searchCatalog() {
   els.catalogSearchStatus.textContent = "Searching Scryfall...";
   try {
     const language = (state.settings && state.settings.language) || "en";
-    const order = els.catalogSortSelect.value || "released";
+    const order = catalogPriceOrder();
     const result = await api(`/api/scryfall/search?q=${encodeURIComponent(query)}&lang=${encodeURIComponent(language)}&order=${encodeURIComponent(order)}`);
     state.catalogSearchAllResults = result.cards || [];
     state.catalogSearchMeta = result;
@@ -4156,7 +4185,7 @@ function renderCatalogSearchResults() {
           <span>${escapeHtml(cardTypeLabel(card))}</span>
           <span>${escapeHtml(cardColorLabel(card))}</span>
           ${catalogPrintTypePills(card)}
-          <span>${dollars.format(priceForVariant(card, "Normal"))}</span>
+          <span>${formatCardPrice(priceForVariant(card, "Normal", userDefaultCurrency()))}</span>
           <span>Owned ${integer.format(card.owned_quantity || 0)}</span>
         </div>
       </div>
@@ -6715,9 +6744,18 @@ function todayValue() {
   return local.toISOString().slice(0, 10);
 }
 
-function priceForVariant(card, variant) {
+function priceForVariant(card, variant, currency = "usd") {
   const prices = card.prices || {};
   const variantText = String(variant || "").toLowerCase();
+  if (currency === "eur") {
+    const normal = Number(prices.eur ?? card.current_eur ?? 0);
+    const foil = Number(prices.eur_foil ?? card.current_eur_foil ?? 0);
+    if (variantText.includes("foil") && foil > 0) return foil;
+    return normal || foil || 0;
+  }
+  if (currency === "tix") {
+    return Number(prices.tix ?? card.current_tix ?? 0);
+  }
   const normal = Number(prices.usd ?? card.current_usd ?? 0);
   const foil = Number(prices.usd_foil ?? card.current_usd_foil ?? 0);
   const etched = Number(prices.usd_etched ?? card.current_usd_etched ?? 0);
@@ -6980,7 +7018,7 @@ function renderAddResults(cards) {
         <strong>${escapeHtml(cardTitle(card))}</strong>
         <span>${escapeHtml(card.set_name)} #${escapeHtml(card.collector_number)}</span>
         ${cardRulesName(card) ? `<span>Rules: ${escapeHtml(cardRulesName(card))}</span>` : ""}
-        <span>${escapeHtml(card.rarity || "unknown")} - ${dollars.format(priceForVariant(card, "Normal"))}</span>
+        <span>${escapeHtml(card.rarity || "unknown")} - ${formatCardPrice(priceForVariant(card, "Normal", userDefaultCurrency()))}</span>
         <span class="owned-count">Owned: ${integer.format(card.owned_quantity || 0)}</span>
       </span>
     `;
@@ -7074,6 +7112,7 @@ function renderSettingsPage() {
   els.settingsPageForm.theme.value = settings.theme || "light";
   els.settingsPageForm.default_purchase_price.value = userDefaultPurchasePrice().toFixed(2);
   els.settingsPageForm.default_sell_price.value = userDefaultSellPrice() > 0 ? userDefaultSellPrice().toFixed(2) : "";
+  els.settingsPageForm.default_currency.value = userDefaultCurrency(user);
   els.settingsPageForm.website_logout_minutes.value = String(websiteLogoutMinutes(user));
   if (els.settingsAccountEmail) {
     els.settingsAccountEmail.textContent = state.user ? state.user.email : "Not logged in";
@@ -7376,6 +7415,7 @@ function userSettingsPayload(overrides = {}) {
     profile_image: user.profile_image || "",
     default_purchase_price: user.default_purchase_price ?? 0.01,
     default_sell_price: user.default_sell_price ?? 0,
+    default_currency: user.default_currency || "usd",
     website_logout_minutes: user.website_logout_minutes ?? 30,
     language: settings.language || "en",
     theme: settings.theme || "light",
