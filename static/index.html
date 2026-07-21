@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Arcane Ledger</title>
-    <link rel="stylesheet" href="/styles.css?v=201">
+    <link rel="stylesheet" href="/styles.css?v=203">
   </head>
   <body>
     <datalist id="storeLocationOptions"></datalist>
@@ -1414,6 +1414,9 @@
               <span>Update default purchase price</span>
             </label>
             <button id="cancelAddCardButton" class="secondary-button" type="button">Cancel</button>
+            <button id="addCardWishlistButton" class="secondary-button add-card-wishlist-button" type="button" aria-label="Add to Wishlist" title="Add to Wishlist" disabled>
+              <span class="wishlist-icon" aria-hidden="true"></span>
+            </button>
             <button id="confirmAddNewCardButton" class="primary-button" type="submit" title="Add and New" disabled>Add +</button>
             <button id="confirmAddCardButton" class="primary-button" type="submit" disabled>Add</button>
           </div>
@@ -2024,6 +2027,10 @@
             Wishlist
             <select name="wishlist_id" required></select>
           </label>
+          <label id="assignNewWishlistField" hidden>
+            New Wishlist Name
+            <input name="new_wishlist_name" type="text" maxlength="30" placeholder="30 characters max">
+          </label>
           <div id="assignWishlistPreview" class="assign-wishlist-preview"></div>
           <div class="modal-actions">
             <button id="cancelAssignWishlistButton" class="secondary-button" type="button">Cancel</button>
@@ -2621,6 +2628,6 @@
       </section>
     </div>
 
-    <script src="/app.js?v=235"></script>
+    <script src="/app.js?v=237"></script>
   </body>
 </html>

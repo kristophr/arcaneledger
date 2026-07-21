@@ -521,6 +521,7 @@ const els = {
   selectedAddCard: document.querySelector("#selectedAddCard"),
   closeAddCardButton: document.querySelector("#closeAddCardButton"),
   cancelAddCardButton: document.querySelector("#cancelAddCardButton"),
+  addCardWishlistButton: document.querySelector("#addCardWishlistButton"),
   confirmAddNewCardButton: document.querySelector("#confirmAddNewCardButton"),
   confirmAddCardButton: document.querySelector("#confirmAddCardButton"),
   settingsOverlay: document.querySelector("#settingsOverlay"),
@@ -584,6 +585,7 @@ const els = {
   cancelAddWishlistButton: document.querySelector("#cancelAddWishlistButton"),
   assignWishlistOverlay: document.querySelector("#assignWishlistOverlay"),
   assignWishlistForm: document.querySelector("#assignWishlistForm"),
+  assignNewWishlistField: document.querySelector("#assignNewWishlistField"),
   assignWishlistPreview: document.querySelector("#assignWishlistPreview"),
   closeAssignWishlistButton: document.querySelector("#closeAssignWishlistButton"),
   cancelAssignWishlistButton: document.querySelector("#cancelAssignWishlistButton"),
@@ -4030,6 +4032,14 @@ function closeAddWishlistModal() {
   els.addWishlistForm.reset();
 }
 
+function updateAssignWishlistMode() {
+  const creatingWishlist = els.assignWishlistForm.wishlist_id.value === "__new__";
+  els.assignNewWishlistField.hidden = !creatingWishlist;
+  const input = els.assignWishlistForm.new_wishlist_name;
+  input.required = creatingWishlist;
+  if (!creatingWishlist) input.value = "";
+}
+
 async function openAssignWishlistModal(card, options = {}) {
   if (!state.user) {
     openAuthModal("register", "Create an account or log in before saving cards to your Wishlist.");
@@ -4038,19 +4048,18 @@ async function openAssignWishlistModal(card, options = {}) {
   const wishlists = await loadWishlists();
   const select = els.assignWishlistForm.wishlist_id;
   select.innerHTML = "";
-  if (!wishlists.length) {
+  for (const wishlist of wishlists) {
     const option = document.createElement("option");
-    option.value = "";
-    option.textContent = "Create a wishlist first";
+    option.value = wishlist.id;
+    option.textContent = `${wishlist.name} (${integer.format(wishlist.item_count || 0)})`;
     select.appendChild(option);
-  } else {
-    for (const wishlist of wishlists) {
-      const option = document.createElement("option");
-      option.value = wishlist.id;
-      option.textContent = `${wishlist.name} (${integer.format(wishlist.item_count || 0)})`;
-      select.appendChild(option);
-    }
   }
+  const newWishlistOption = document.createElement("option");
+  newWishlistOption.value = "__new__";
+  newWishlistOption.textContent = "+ Create New Wishlist";
+  select.appendChild(newWishlistOption);
+  select.value = wishlists.length ? String(wishlists[0].id) : "__new__";
+  updateAssignWishlistMode();
   state.pendingWishlistCard = card;
   state.pendingWishlistOptions = options;
   els.assignWishlistPreview.innerHTML = `
@@ -4069,11 +4078,13 @@ async function openAssignWishlistModal(card, options = {}) {
 
 function closeAssignWishlistModal() {
   els.assignWishlistOverlay.hidden = true;
-  document.body.classList.remove("modal-open");
   els.assignWishlistForm.reset();
+  els.assignNewWishlistField.hidden = true;
+  els.assignWishlistForm.new_wishlist_name.required = false;
   els.assignWishlistPreview.innerHTML = "";
   state.pendingWishlistCard = null;
   state.pendingWishlistOptions = null;
+  document.body.classList.toggle("modal-open", Boolean(document.querySelector(".modal-overlay:not([hidden])")));
 }
 
 function shareUrlForEntity(type, entity) {
@@ -6942,6 +6953,7 @@ function openAddCardModal(preselectedCard = null) {
   els.selectedAddCard.innerHTML = "";
   els.confirmAddCardButton.disabled = true;
   els.confirmAddNewCardButton.disabled = true;
+  els.addCardWishlistButton.disabled = true;
   els.addCardOverlay.hidden = false;
   document.body.classList.add("modal-open");
   if (preselectedCard && preselectedCard.scryfall_id) {
@@ -6983,6 +6995,7 @@ function resetAddCardModalForNew() {
   els.selectedAddCard.innerHTML = "";
   els.confirmAddCardButton.disabled = true;
   els.confirmAddNewCardButton.disabled = true;
+  els.addCardWishlistButton.disabled = true;
   els.addSearchInput.focus();
 }
 
@@ -6999,6 +7012,7 @@ function closeAddCardModal() {
   resetLocationPicker(els.addCardForm.querySelector("[data-location-picker]"));
   els.confirmAddCardButton.disabled = true;
   els.confirmAddNewCardButton.disabled = true;
+  els.addCardWishlistButton.disabled = true;
 }
 
 function renderAddResults(cards) {
@@ -7057,6 +7071,9 @@ function selectAddCard(card) {
   renderAddPurchaseRows(card);
   els.confirmAddCardButton.disabled = false;
   els.confirmAddNewCardButton.disabled = false;
+  const canAddToWishlist = Number(card.owned_quantity || 0) <= 0;
+  els.addCardWishlistButton.disabled = !canAddToWishlist;
+  els.addCardWishlistButton.title = canAddToWishlist ? "Add to Wishlist" : "Owned cards cannot be added to Wishlist";
   for (const result of els.addSearchResults.querySelectorAll(".add-result")) {
     result.classList.toggle("is-selected", result.dataset.cardId === card.scryfall_id);
   }
@@ -11023,9 +11040,10 @@ function cardWebSearchLinks(card) {
 
 function renderCardDetailActionPanel(card, { owned = false, canManageCollection = false } = {}) {
   const showRefresh = Boolean(canManageCollection);
+  const showFavorite = Boolean(canManageCollection);
   const showSale = Boolean(canManageCollection && owned);
   const showShare = Boolean(shareUrlForCard(card));
-  if (!showRefresh && !card.scryfall_uri && !showSale && !showShare) return "";
+  if (!showRefresh && !showFavorite && !card.scryfall_uri && !showSale && !showShare) return "";
   return `
     <section class="card-insight-panel card-detail-action-panel">
       <div class="panel-head compact-panel-head">
@@ -11037,6 +11055,12 @@ function renderCardDetailActionPanel(card, { owned = false, canManageCollection 
           <button class="card-action-tile detail-refresh-button" type="button">
             <strong>&#8635;</strong>
             <span>Refresh Scryfall</span>
+          </button>
+        ` : ""}
+        ${showFavorite ? `
+          <button class="card-action-tile detail-favorite-button ${card.favorite ? "is-favorite" : ""}" type="button" aria-label="${card.favorite ? "Remove from favorites" : "Add to favorites"}" aria-pressed="${card.favorite ? "true" : "false"}">
+            <strong>${card.favorite ? "&#9733;" : "&#9734;"}</strong>
+            <span>${card.favorite ? "Remove from Favorites" : "Add to Favorites"}</span>
           </button>
         ` : ""}
         ${card.scryfall_uri ? `
@@ -11277,6 +11301,25 @@ function renderCardDetail(card) {
   });
   els.cardDetailShell.querySelector(".detail-refresh-button")?.addEventListener("click", (event) => {
     refreshCardDetailMetadata(event.currentTarget, card).catch((error) => setStatus(error.message, "error"));
+  });
+  els.cardDetailShell.querySelector(".detail-favorite-button")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    const nextFavorite = !Boolean(card.favorite);
+    button.disabled = true;
+    try {
+      await api(`/api/cards/${encodeURIComponent(card.scryfall_id)}/favorite`, {
+        method: "POST",
+        body: JSON.stringify({
+          variant: card.variant || "Normal",
+          favorite: nextFavorite,
+        }),
+      });
+      setStatus(nextFavorite ? `Favorited ${cardTitle(card)}.` : `Removed favorite from ${cardTitle(card)}.`, "", els.status);
+      await loadCardDetail(card.scryfall_id, card.variant || "Normal");
+    } catch (error) {
+      button.disabled = false;
+      setStatus(error.message, "error", els.status);
+    }
   });
   els.cardDetailShell.querySelector(".detail-for-sale-button")?.addEventListener("click", () => openSaleModalForCardDetail(card));
   els.cardDetailShell.querySelector(".detail-blog-posts-button")?.addEventListener("click", () => {
@@ -12982,6 +13025,15 @@ function wireEvents() {
   });
   els.closeAddCardButton.addEventListener("click", closeAddCardModal);
   els.cancelAddCardButton.addEventListener("click", closeAddCardModal);
+  els.addCardWishlistButton.addEventListener("click", () => {
+    if (!state.selectedAddCard) return;
+    openAssignWishlistModal(state.selectedAddCard, {
+      statusTarget: els.addSearchStatus,
+      afterWishlistChange: async () => {
+        await loadWishlists();
+      },
+    }).catch((error) => setStatus(error.message, "error", els.addSearchStatus));
+  });
   els.addCardOverlay.addEventListener("click", (event) => {
     if (event.target === els.addCardOverlay) {
       closeAddCardModal();
@@ -13106,6 +13158,12 @@ function wireEvents() {
   });
   els.closeAssignWishlistButton.addEventListener("click", closeAssignWishlistModal);
   els.cancelAssignWishlistButton.addEventListener("click", closeAssignWishlistModal);
+  els.assignWishlistForm.wishlist_id.addEventListener("change", () => {
+    updateAssignWishlistMode();
+    if (!els.assignNewWishlistField.hidden) {
+      els.assignWishlistForm.new_wishlist_name.focus();
+    }
+  });
   els.assignWishlistOverlay.addEventListener("click", (event) => {
     if (event.target === els.assignWishlistOverlay) {
       closeAssignWishlistModal();
@@ -13866,18 +13924,28 @@ function wireEvents() {
   });
   els.assignWishlistForm.addEventListener("submit", async (event) => {
     event.preventDefault();
-    const wishlistId = els.assignWishlistForm.wishlist_id.value;
+    let wishlistId = els.assignWishlistForm.wishlist_id.value;
     const card = state.pendingWishlistCard;
     const options = state.pendingWishlistOptions || {};
-    if (!wishlistId) {
-      setStatus("Create a wishlist first.", "error", options.statusTarget || els.wishlistStatus);
-      return;
-    }
     if (!card) {
       setStatus("Choose a card first.", "error", options.statusTarget || els.wishlistStatus);
       return;
     }
     try {
+      if (wishlistId === "__new__") {
+        const nameInput = els.assignWishlistForm.new_wishlist_name;
+        const name = nameInput.value.trim();
+        if (!name) {
+          nameInput.reportValidity();
+          return;
+        }
+        const result = await api("/api/wishlists", {
+          method: "POST",
+          body: JSON.stringify({ name }),
+          promptLogin: true,
+        });
+        wishlistId = String(result.wishlist.id);
+      }
       await api(`/api/cards/${encodeURIComponent(card.scryfall_id)}/wishlist`, {
         method: "POST",
         body: JSON.stringify({
