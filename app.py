@@ -3413,6 +3413,29 @@ def clean_price_currency(value, fallback="usd"):
     return currency
 
 
+IMPORT_CURRENCY_ALIASES = {
+    "usd": "usd", "us dollar": "usd", "us dollars": "usd", "$": "usd",
+    "eur": "eur", "euro": "eur", "euros": "eur", "€": "eur",
+    "tix": "tix", "mtgo tix": "tix", "mtgo ticket": "tix", "mtgo tickets": "tix",
+}
+
+
+def user_default_currency(conn, user_id):
+    row = conn.execute("SELECT default_currency FROM users WHERE id = ?", (user_id,)).fetchone() if user_id is not None else None
+    return clean_default_currency(row["default_currency"] if row else "usd")
+
+
+def normalize_import_currency(value, default_currency="usd"):
+    default_currency = clean_default_currency(default_currency)
+    raw = str(value or "").strip()
+    if not raw:
+        return default_currency, ""
+    currency = IMPORT_CURRENCY_ALIASES.get(raw.lower())
+    if currency:
+        return currency, ""
+    return default_currency, f'Currency "{raw}" is not valid. This row will use {default_currency.upper()}, your account default.'
+
+
 def user_session_minutes(row):
     try:
         return clean_website_logout_minutes(row["website_logout_minutes"] if row and "website_logout_minutes" in row.keys() else 30)
@@ -6342,6 +6365,8 @@ def import_csv(conn, csv_path, user_id=None):
     by_set_number, by_name_number, by_name = lookup_maps(conn)
     imported = 0
     unmatched = []
+    currency_warnings = []
+    default_currency = user_default_currency(conn, user_id)
     records = {}
     updated_at = now_iso()
     with path.open(newline="", encoding="utf-8-sig") as handle:
@@ -6386,6 +6411,9 @@ def import_csv(conn, csv_path, user_id=None):
                 })
                 continue
             variant = import_variant(source)
+            currency, currency_warning = normalize_import_currency(source.get("Currency") or source.get("currency"), default_currency)
+            if currency_warning:
+                currency_warnings.append({"line": reader.line_num, "error": currency_warning})
             key = (card_id, variant)
             if key not in records:
                 records[key] = {
@@ -6393,7 +6421,7 @@ def import_csv(conn, csv_path, user_id=None):
                     "variant": variant,
                     "quantity": 0,
                     "paid_total": 0.0,
-                    "currency": clean_price_currency(source.get("Currency") or source.get("currency") or "usd"),
+                    "currency": currency,
                     "acquired_date": source.get("Date Added") or today_iso(),
                     "card_condition": card_condition(source.get("Card Condition")),
                     "graded": bool_int(source.get("Graded")),
@@ -6457,7 +6485,7 @@ def import_csv(conn, csv_path, user_id=None):
         )
         conn.execute("DELETE FROM wishlist_cards WHERE user_id IS ? AND card_id = ?", (user_id, record["card_id"]))
     conn.commit()
-    return {"imported_rows": imported, "unmatched_rows": unmatched}
+    return {"imported_rows": imported, "unmatched_rows": unmatched, "currency_warnings": currency_warnings}
 
 
 def source_value(source, *names):
@@ -6469,7 +6497,7 @@ def source_value(source, *names):
     return ""
 
 
-def import_row_from_source(source, line_number, source_format):
+def import_row_from_source(source, line_number, source_format, default_currency="usd"):
     name = source_value(source, "name", "Name", "Product Name", "card_name")
     set_name = source_value(source, "set_name", "Set", "Set Name", "set")
     set_code = source_value(source, "set_code", "Set Code", "Edition")
@@ -6480,6 +6508,7 @@ def import_row_from_source(source, line_number, source_format):
     paid_price = money(source_value(source, "paid_price", "Price Paid", "Average Cost Paid", "Purchase Price"), fallback=0.01)
     if paid_price <= 0:
         paid_price = 0.01
+    currency, currency_warning = normalize_import_currency(source_value(source, "currency", "Currency"), default_currency)
     entry = {
         "line": line_number,
         "format": source_format,
@@ -6490,7 +6519,8 @@ def import_row_from_source(source, line_number, source_format):
         "collector_number": collector_number,
         "quantity": quantity,
         "paid_price": paid_price,
-        "currency": clean_price_currency(source_value(source, "currency", "Currency") or "usd"),
+        "currency": currency,
+        "currency_warning": currency_warning,
         "acquired_date": source_value(source, "acquired_date", "Date Acquired", "Date Added") or today_iso(),
         "variant": import_variant(source),
         "card_condition": card_condition(source_value(source, "card_condition", "Condition", "Card Condition")),
@@ -6612,6 +6642,15 @@ def preview_import_entries(conn, entries):
         if not entry.get("line"):
             entry["line"] = index
         row_id = f"row-{entry.get('row_key') or entry['line']}"
+        if entry.get("currency_warning"):
+            issues.append({
+                "line": entry["line"],
+                "row_key": entry.get("row_key") or str(entry["line"]),
+                "code": "invalid_currency",
+                "severity": "warning",
+                "name": entry.get("name"),
+                "error": entry["currency_warning"],
+            })
         if entry.get("error"):
             issues.append({"line": entry["line"], "name": entry.get("name"), "error": entry["error"]})
             preview.append({"id": row_id, "checked": False, "entry": entry, "match": None, "status": "bad"})
@@ -6657,8 +6696,8 @@ def preview_import_entries(conn, entries):
     return {"rows": preview, "issues": issues}
 
 
-def preview_import_rows(conn, rows, source_format):
-    entries = [import_row_from_source(source, index, source_format) for index, source in enumerate(rows, start=1)]
+def preview_import_rows(conn, rows, source_format, default_currency="usd"):
+    entries = [import_row_from_source(source, index, source_format, default_currency) for index, source in enumerate(rows, start=1)]
     return preview_import_entries(conn, entries)
 
 
@@ -6727,7 +6766,7 @@ def custom_purchase_variant_columns(headers):
     return columns
 
 
-def parse_custom_purchase_import_entries(text):
+def parse_custom_purchase_import_entries(text, default_currency="usd"):
     rows = parse_csv_import_text(text)
     reader = csv.DictReader(io.StringIO(text))
     headers = [header for header in (reader.fieldnames or []) if header]
@@ -6745,6 +6784,7 @@ def parse_custom_purchase_import_entries(text):
             paid_price = 0.01
         location = custom_purchase_value(row, "location", "store", "store name", "store bought from")
         acquired_date = parse_import_purchase_date(custom_purchase_value(row, "date purchased", "purchase date", "date acquired", "acquired date"))
+        currency, currency_warning = normalize_import_currency(custom_purchase_value(row, "currency", "currency code", "price currency"), default_currency)
         if not set_value or not collector_number:
             issues.append({"line": line_number, "error": "Set and card number are required."})
             continue
@@ -6765,6 +6805,8 @@ def parse_custom_purchase_import_entries(text):
                 "collector_number": collector_number,
                 "quantity": quantity,
                 "paid_price": paid_price,
+                "currency": currency,
+                "currency_warning": currency_warning,
                 "acquired_date": acquired_date,
                 "variant": variant,
                 "card_condition": DEFAULT_CARD_CONDITION,
@@ -6842,6 +6884,7 @@ IMPORT_FIELD_DEFINITIONS = [
     {"key": "collector_number", "label": "Collector number", "required": False, "aliases": ["collector number", "card number", "number", "cn"]},
     {"key": "quantity", "label": "Quantity", "required": False, "aliases": ["quantity", "qty", "count", "owned"]},
     {"key": "paid_price", "label": "Price paid each", "required": False, "aliases": ["price paid", "paid price", "average cost paid", "cost", "price"]},
+    {"key": "currency", "label": "Currency", "required": False, "aliases": ["currency", "currency code", "price currency"]},
     {"key": "acquired_date", "label": "Date acquired", "required": False, "aliases": ["date acquired", "date added", "acquired date", "added"]},
     {"key": "variant", "label": "Variant", "required": False, "aliases": ["variant", "finish", "foil", "printing"]},
     {"key": "card_condition", "label": "Condition", "required": False, "aliases": ["condition", "card condition"]},
@@ -6870,6 +6913,7 @@ MOXFIELD_IMPORT_MAPPING = {
     "collector_number": "Collector Number",
     "quantity": "Count",
     "paid_price": "Purchase Price",
+    "currency": "",
     "acquired_date": "",
     "variant": "Foil",
     "card_condition": "Condition",
@@ -6934,7 +6978,8 @@ def aggregate_import_preview_rows(preview_rows):
             continue
         variant = entry.get("variant") or "Normal"
         condition = card_condition(entry.get("card_condition"))
-        key = (card_id, variant, condition)
+        currency = clean_price_currency(entry.get("currency") or "usd")
+        key = (card_id, variant, condition, currency)
         if key not in aggregated:
             clone = json.loads(json.dumps(row))
             clone["source_rows"] = [entry]
@@ -6958,22 +7003,23 @@ def aggregate_import_preview_rows(preview_rows):
     return output
 
 
-def import_csv_mapped_preview(conn, payload):
+def import_csv_mapped_preview(conn, user_id, payload):
     text = payload.get("text") or ""
     mapping = payload.get("mapping") or {}
     rows = parse_csv_import_text(text)
     mapped = apply_csv_import_mapping(rows, mapping)
-    preview = preview_import_rows(conn, mapped, "csv")
+    preview = preview_import_rows(conn, mapped, "csv", user_default_currency(conn, user_id))
     preview["rows"] = aggregate_import_preview_rows(preview["rows"])
     return preview
 
 
-def import_csv_mapped_entries(payload):
+def import_csv_mapped_entries(conn, user_id, payload):
     text = payload.get("text") or ""
     mapping = payload.get("mapping") or {}
     rows = parse_csv_import_text(text)
     mapped = apply_csv_import_mapping(rows, mapping)
-    entries = [import_row_from_source(source, index, "csv") for index, source in enumerate(mapped, start=1)]
+    default_currency = user_default_currency(conn, user_id)
+    entries = [import_row_from_source(source, index, "csv", default_currency) for index, source in enumerate(mapped, start=1)]
     invalid = [
         {"line": entry["line"], "name": entry.get("name"), "error": entry["error"]}
         for entry in entries
@@ -6983,7 +7029,7 @@ def import_csv_mapped_entries(payload):
 
 
 def import_custom_purchase_entries(conn, user_id, payload):
-    parsed = parse_custom_purchase_import_entries(payload.get("text") or "")
+    parsed = parse_custom_purchase_import_entries(payload.get("text") or "", user_default_currency(conn, user_id))
     parsed = annotate_custom_purchase_locations(conn, user_id, parsed)
     unique_lookup_keys = {
         import_match_cache_key(entry)
@@ -7000,11 +7046,20 @@ def import_custom_purchase_entries(conn, user_id, payload):
     return parsed
 
 
-def import_entries_match_preview(conn, payload):
+def import_entries_match_preview(conn, user_id, payload):
     entries = payload.get("entries") or []
     if not isinstance(entries, list):
         raise ValueError("Import entries are required.")
-    return preview_import_entries(conn, entries)
+    default_currency = user_default_currency(conn, user_id)
+    normalized_entries = []
+    for source in entries:
+        entry = dict(source or {})
+        currency, warning = normalize_import_currency(entry.get("currency"), default_currency)
+        entry["currency"] = currency
+        if warning:
+            entry["currency_warning"] = warning
+        normalized_entries.append(entry)
+    return preview_import_entries(conn, normalized_entries)
 
 
 def looks_like_card_import_row(item):
@@ -7075,9 +7130,10 @@ def import_json_wizard_preview(conn, user_id, payload):
     except json.JSONDecodeError as exc:
         raise ValueError(f"Invalid JSON: {exc}")
     kind = classify_json_import_payload(parsed)
+    default_currency = user_default_currency(conn, user_id)
     if kind == "cards":
         source = json_import_source_for_kind(parsed, kind)
-        preview = preview_import_rows(conn, source, "json")
+        preview = preview_import_rows(conn, source, "json", default_currency)
         preview["rows"] = aggregate_import_preview_rows(preview["rows"])
         return {"ok": True, "kind": "cards", "label": f"{len(preview['rows'])} collection card group(s) found", "cards": preview, "can_commit": True}
     if kind == "decks":
@@ -7086,7 +7142,7 @@ def import_json_wizard_preview(conn, user_id, payload):
         return {"ok": True, "kind": "decks", "label": f"{len(preview['decks'])} deck(s) found", "decks": preview, "can_commit": not any(deck.get("needs_rename") for deck in preview.get("decks", []))}
     if kind == "full":
         source = json_import_source_for_kind(parsed, kind)
-        card_preview = preview_import_rows(conn, source.get("cards") or [], "json") if source.get("cards") else {"rows": [], "issues": []}
+        card_preview = preview_import_rows(conn, source.get("cards") or [], "json", default_currency) if source.get("cards") else {"rows": [], "issues": []}
         card_preview["rows"] = aggregate_import_preview_rows(card_preview["rows"])
         deck_preview = preview_deck_import(conn, user_id, {"decks": source.get("decks") or []}) if source.get("decks") else {"decks": [], "normalized_decks": []}
         wishlist_preview = preview_wishlist_import(conn, user_id, {"wishlists": source.get("wishlists") or []}) if source.get("wishlists") else {"wishlists": [], "normalized_wishlists": []}
@@ -7128,13 +7184,13 @@ def commit_import_wizard_json(conn, user_id, payload):
     return {"ok": True, "imported": imported, "skipped_rows": skipped}
 
 
-def import_preview(conn, payload):
+def import_preview(conn, user_id, payload):
     source_format = (payload.get("format") or "").lower()
     text = payload.get("text") or ""
     if source_format == "csv":
-        return preview_import_rows(conn, parse_csv_import_text(text), "csv")
+        return preview_import_rows(conn, parse_csv_import_text(text), "csv", user_default_currency(conn, user_id))
     if source_format == "json":
-        return preview_import_rows(conn, parse_json_import_text(text), "json")
+        return preview_import_rows(conn, parse_json_import_text(text), "json", user_default_currency(conn, user_id))
     raise ValueError("Choose CSV or JSON import.")
 
 
@@ -7146,6 +7202,7 @@ def commit_import_rows(conn, user_id, payload):
     skipped = []
     touched_sets = set()
     selected = []
+    default_currency = user_default_currency(conn, user_id)
     for item in rows:
         if not item.get("checked"):
             continue
@@ -7189,7 +7246,7 @@ def commit_import_rows(conn, user_id, payload):
             entry.get("graded") or 0,
             entry.get("notes") or "",
             entry.get("location_id") or None,
-            clean_price_currency(entry.get("currency") or "usd"),
+            normalize_import_currency(entry.get("currency"), default_currency)[0],
         )
         rollup_collection_from_purchases(conn, user_id, card_id, variant)
         imported += 1
@@ -15034,23 +15091,24 @@ class Handler(SimpleHTTPRequestHandler):
                     payload = self.read_json()
                     return self.send_json(import_csv(conn, payload.get("path") or DEFAULT_IMPORT, user["id"]))
                 if parsed.path == "/api/import/preview":
-                    return self.send_json(import_preview(conn, self.read_json()))
+                    user = self.require_user(conn)
+                    return self.send_json(import_preview(conn, user["id"], self.read_json()))
                 if parsed.path == "/api/import/csv/headers":
                     self.require_user(conn)
                     payload = self.read_json()
                     return self.send_json(csv_import_headers(payload.get("text") or "", payload.get("format")))
                 if parsed.path == "/api/import/csv/entries":
-                    self.require_user(conn)
-                    return self.send_json(import_csv_mapped_entries(self.read_json()))
+                    user = self.require_user(conn)
+                    return self.send_json(import_csv_mapped_entries(conn, user["id"], self.read_json()))
                 if parsed.path == "/api/import/custom-purchase/entries":
                     user = self.require_user(conn)
                     return self.send_json(import_custom_purchase_entries(conn, user["id"], self.read_json()))
                 if parsed.path == "/api/import/csv/match":
-                    self.require_user(conn)
-                    return self.send_json(import_csv_mapped_preview(conn, self.read_json()))
+                    user = self.require_user(conn)
+                    return self.send_json(import_csv_mapped_preview(conn, user["id"], self.read_json()))
                 if parsed.path == "/api/import/entries/match":
-                    self.require_user(conn)
-                    return self.send_json(import_entries_match_preview(conn, self.read_json()))
+                    user = self.require_user(conn)
+                    return self.send_json(import_entries_match_preview(conn, user["id"], self.read_json()))
                 if parsed.path == "/api/import/json/preview":
                     user = self.require_user(conn)
                     return self.send_json(import_json_wizard_preview(conn, user["id"], self.read_json()))

@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Arcane Ledger</title>
-    <link rel="stylesheet" href="/styles.css?v=204">
+    <link rel="stylesheet" href="/styles.css?v=205">
   </head>
   <body>
     <datalist id="storeLocationOptions"></datalist>
@@ -787,7 +787,7 @@
                 <textarea id="importWizardJsonText" rows="9" spellcheck="false" placeholder="Paste Arcane Ledger JSON here"></textarea>
               </label>
             </div>
-            <p class="settings-help">CSV files can come from anywhere as long as the first row contains headers. Bulk Purchase CSV uses set, card number, one or more variant quantity columns such as Normal/Foil/Etched Foil, price paid per card, location, and date purchased. <a href="/bulk-purchase-sample.csv" download>Download a Bulk Purchase CSV sample</a>. JSON can be an Arcane Ledger collection export, deck export, or supported Arcane Ledger data bundle.</p>
+            <p class="settings-help">CSV files can come from anywhere as long as the first row contains headers. Currency is optional; blank values use your account default, while invalid values are flagged for review. Bulk Purchase CSV uses set, card number, one or more variant quantity columns such as Normal/Foil/Etched Foil, price paid per card, currency, location, and date purchased. <a href="/bulk-purchase-sample.csv" download>Download a Bulk Purchase CSV sample</a>. JSON can be an Arcane Ledger collection export, deck export, or supported Arcane Ledger data bundle.</p>
           </section>
           <section class="import-step-panel" data-import-step="map" hidden>
             <div class="panel-head">
@@ -2653,6 +2653,6 @@
       </section>
     </div>
 
-    <script src="/app.js?v=238"></script>
+    <script src="/app.js?v=239"></script>
   </body>
 </html>

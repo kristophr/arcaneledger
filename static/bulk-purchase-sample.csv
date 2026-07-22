@@ -1,4 +1,4 @@
-set,card number,normal,foil,etched foil,surge foil,chocobo track foil,price paid per card,location,date purchased
-blb,219,2,1,0,0,0,$0.38,Best Buy,"July 16, 2026"
-blb,220,4,0,0,0,0,$0.12,Game Theory,"July 16, 2026"
-fin,145,0,2,0,1,0,$1.25,Triangle Area Trading Card,"July 16, 2026"
+set,card number,normal,foil,etched foil,surge foil,chocobo track foil,price paid per card,currency,location,date purchased
+blb,219,2,1,0,0,0,$0.38,USD,Best Buy,"July 16, 2026"
+blb,220,4,0,0,0,0,$0.12,USD,Game Theory,"July 16, 2026"
+fin,145,0,2,0,1,0,$1.25,USD,Triangle Area Trading Card,"July 16, 2026"

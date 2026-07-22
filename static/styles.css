@@ -8121,7 +8121,7 @@ body:not(.is-authenticated) .nav-bottom {
 
 .import-wizard-row {
   display: grid;
-  grid-template-columns: 28px minmax(150px, 0.9fr) minmax(180px, 1fr) 72px minmax(220px, 1fr) 36px;
+  grid-template-columns: 28px minmax(150px, 0.9fr) minmax(180px, 1fr) 72px 100px minmax(220px, 1fr) 36px;
   gap: 10px;
   align-items: center;
   border: 1px solid var(--line);
@@ -8157,10 +8157,15 @@ body:not(.is-authenticated) .nav-bottom {
 }
 
 .bulk-purchase-import-row {
-  grid-template-columns: 28px 46px minmax(180px, 1.25fr) 72px 58px 82px minmax(120px, 0.8fr) 102px minmax(210px, 1fr);
+  grid-template-columns: 28px 46px minmax(180px, 1.25fr) 72px 58px 82px 92px minmax(120px, 0.8fr) 102px minmax(210px, 1fr);
 }
 
 .bulk-purchase-import-row.location-missing {
+  border-color: rgba(177, 128, 35, 0.58);
+  background: color-mix(in srgb, #b18023 9%, var(--detail-bg));
+}
+
+.import-wizard-row.currency-warning {
   border-color: rgba(177, 128, 35, 0.58);
   background: color-mix(in srgb, #b18023 9%, var(--detail-bg));
 }
@@ -8401,6 +8406,12 @@ body:not(.is-authenticated) .nav-bottom {
   background: rgba(159, 63, 52, 0.08);
   font-size: 0.84rem;
   font-weight: 800;
+}
+
+.import-issues .is-warning {
+  color: #9c6420;
+  border-color: color-mix(in srgb, #b18023 38%, var(--line));
+  background: color-mix(in srgb, #b18023 10%, var(--detail-bg));
 }
 
 .import-review-rows {

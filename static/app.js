@@ -8924,10 +8924,17 @@ function renderImportMappingStep() {
         <span>${field.required ? "Required" : "Optional"}</span>
       </label>
     `).join("")}
+    <div class="import-json-card">
+      <strong>Currency fallback</strong>
+      <span>${wizard.mapping.currency
+        ? `Values from “${escapeHtml(wizard.mapping.currency)}” will be validated as USD, EUR, or MTGO Tix.`
+        : `No currency column is mapped. Blank currency values will use ${escapeHtml(priceCurrencyOptions[userDefaultCurrency()]?.label || "USD")}, your account default.`}</span>
+    </div>
   `;
   els.importMappingTable.querySelectorAll("select[data-import-field]").forEach((select) => {
     select.addEventListener("change", () => {
       state.importWizard.mapping[select.dataset.importField] = select.value;
+      if (select.dataset.importField === "currency") renderImportMappingStep();
     });
   });
 }
@@ -8946,7 +8953,7 @@ function renderCustomPurchaseImportMapStep() {
     els.importMappingTable.innerHTML = `
       <div class="import-json-card">
         <strong>Expected headers</strong>
-        <span>set, card number, Normal/Foil/Etched Foil/Surge Foil quantity columns, price paid per card, location, date purchased</span>
+        <span>set, card number, Normal/Foil/Etched Foil/Surge Foil quantity columns, price paid per card, currency, location, date purchased</span>
       </div>
       <div class="import-json-card">
         <strong>Detected variant columns</strong>
@@ -9042,7 +9049,8 @@ function importWizardAggregateRows(rows) {
     const entry = row.entry || {};
     const variant = entry.variant || "Normal";
     const condition = entry.card_condition || "Near Mint";
-    const key = `${cardId}::${variant}::${condition}`;
+    const currency = moneyCurrency(entry);
+    const key = `${cardId}::${variant}::${condition}::${currency}`;
     const quantity = Number(entry.quantity || 0);
     const paidPrice = Number(entry.paid_price || 0.01) || 0.01;
     if (!grouped.has(key)) {
@@ -9186,7 +9194,7 @@ function renderImportWizardReview() {
     els.importReviewStepSubtitle.textContent = `${integer.format(selected)} of ${integer.format(rows.length)} selected`;
   }
   els.importWizardIssues.innerHTML = issues.length
-    ? issues.map((issue) => `<div>Line ${escapeHtml(issue.line || "?")}: ${escapeHtml(issue.error || issue)}</div>`).join("")
+    ? issues.map((issue) => `<div class="${issue.severity === "warning" ? "is-warning" : ""}">Line ${escapeHtml(issue.line || "?")}: ${escapeHtml(issue.error || issue)}</div>`).join("")
     : "";
   els.importWizardRows.innerHTML = rows.length ? rows.map((row) => importWizardRowHtml(row)).join("") : '<div class="empty-state">No card rows to review.</div>';
   els.importWizardRows.querySelectorAll("[data-import-delete-row]").forEach((button) => {
@@ -9199,6 +9207,20 @@ function renderImportWizardReview() {
     checkbox.addEventListener("change", () => {
       const row = state.importWizard.rows.find((item) => item.id === checkbox.dataset.importRowCheck);
       if (row) row.checked = checkbox.checked;
+      renderImportWizardReview();
+    });
+  });
+  els.importWizardRows.querySelectorAll("[data-import-currency-row]").forEach((select) => {
+    select.addEventListener("change", () => {
+      const row = state.importWizard.rows.find((item) => item.id === select.dataset.importCurrencyRow);
+      if (!row) return;
+      const entry = row.entry || {};
+      const warningKey = String(entry.row_key || entry.line || "");
+      entry.currency = moneyCurrency(select.value);
+      entry.currency_warning = "";
+      state.importWizard.issues = (state.importWizard.issues || []).filter((issue) => (
+        issue.code !== "invalid_currency" || String(issue.row_key || issue.line || "") !== warningKey
+      ));
       renderImportWizardReview();
     });
   });
@@ -9241,7 +9263,7 @@ function importWizardRowHtml(row) {
     const location = entry.store_name || entry.store_location || "";
     const locationMissing = entry.location_status === "missing";
     return `
-      <article class="import-wizard-row bulk-purchase-import-row ${!matchCard ? "needs-review" : ""} ${locationMissing ? "location-missing" : ""}" data-row-id="${escapeHtml(row.id)}">
+      <article class="import-wizard-row bulk-purchase-import-row ${!matchCard ? "needs-review" : ""} ${locationMissing ? "location-missing" : ""} ${entry.currency_warning ? "currency-warning" : ""}" data-row-id="${escapeHtml(row.id)}">
         <label class="import-row-check">
           <input type="checkbox" data-import-row-check="${escapeHtml(row.id)}" ${row.checked ? "checked" : ""} ${matchCard ? "" : "disabled"}>
         </label>
@@ -9250,11 +9272,14 @@ function importWizardRowHtml(row) {
         </div>
         <div class="bulk-import-card-name">
           <strong>${escapeHtml(matchCard ? cardTitle(matchCard) : "No match")}</strong>
-          <span>${escapeHtml(setText || "Unknown set")} #${escapeHtml(matchCard?.collector_number || entry.collector_number || "?")} · ${escapeHtml(entry.variant || "Normal")}</span>
+          <span>${escapeHtml(setText || "Unknown set")} #${escapeHtml(matchCard?.collector_number || entry.collector_number || "?")} · ${escapeHtml(entry.variant || "Normal")}${entry.currency_warning ? ` · ${escapeHtml(entry.currency_warning)}` : ""}</span>
         </div>
         <span class="bulk-import-set">${escapeHtml(setText || "-")}</span>
         <b>${integer.format(entry.quantity || 0)}</b>
         <span>${formatMoney(Number(entry.paid_price || 0), entry)}</span>
+        <select data-import-currency-row="${escapeHtml(row.id)}" aria-label="Import currency for ${escapeAttribute(matchCard ? cardTitle(matchCard) : entry.collector_number || "card")}">
+          ${priceCurrencyOptionsHtml(entry.currency)}
+        </select>
         <span class="bulk-import-location ${locationMissing ? "is-missing" : ""}">
           ${escapeHtml(location || "-")}
           ${locationMissing ? `<small>${escapeHtml(entry.location_warning || "Not in address book")}</small>` : ""}
@@ -9271,16 +9296,19 @@ function importWizardRowHtml(row) {
     `;
   }
   return `
-    <article class="import-wizard-row ${!matchCard ? "needs-review" : ""}" data-row-id="${escapeHtml(row.id)}">
+    <article class="import-wizard-row ${!matchCard ? "needs-review" : ""} ${entry.currency_warning ? "currency-warning" : ""}" data-row-id="${escapeHtml(row.id)}">
       <label class="import-row-check">
         <input type="checkbox" data-import-row-check="${escapeHtml(row.id)}" ${row.checked ? "checked" : ""} ${matchCard ? "" : "disabled"}>
       </label>
       <div class="import-row-source">
         <strong>${escapeHtml(entry.name || "Unnamed row")}</strong>
-        <span>Line ${escapeHtml(entry.line || "?")} · ${escapeHtml(entry.set_name || entry.set_code || "Unknown set")} #${escapeHtml(entry.collector_number || "?")} · ${escapeHtml(entry.variant || "Normal")} · ${escapeHtml(entry.card_condition || "Near Mint")}</span>
+        <span>Line ${escapeHtml(entry.line || "?")} · ${escapeHtml(entry.set_name || entry.set_code || "Unknown set")} #${escapeHtml(entry.collector_number || "?")} · ${escapeHtml(entry.variant || "Normal")} · ${escapeHtml(entry.card_condition || "Near Mint")}${entry.currency_warning ? ` · ${escapeHtml(entry.currency_warning)}` : ""}</span>
       </div>
       <div class="import-row-match">${renderImportCard(matchCard)}</div>
       <b>${integer.format(entry.quantity || 0)}</b>
+      <select data-import-currency-row="${escapeHtml(row.id)}" aria-label="Import currency for ${escapeAttribute(entry.name || "card")}">
+        ${priceCurrencyOptionsHtml(entry.currency)}
+      </select>
       <div class="import-row-tools">
         <div class="search-control">
           <input class="import-match-search" type="search" value="${escapeAttribute(entry.name || "")}" placeholder="Search Scryfall">
@@ -9344,7 +9372,7 @@ function renderImportWizardRecap() {
         <article>
           <strong>${escapeHtml(cardTitle(row.match.card))}</strong>
           <span>${escapeHtml(row.match.card.set_name || "")} #${escapeHtml(row.match.card.collector_number || "")} · ${escapeHtml(row.entry?.variant || "Normal")} · ${escapeHtml(row.entry?.card_condition || "Near Mint")}</span>
-          <b>Qty ${integer.format(row.entry?.quantity || 0)}</b>
+          <b>Qty ${integer.format(row.entry?.quantity || 0)} · ${escapeHtml(priceCurrencyOptions[moneyCurrency(row.entry)]?.label || "USD")}</b>
         </article>
       `).join("")}
     </div>
