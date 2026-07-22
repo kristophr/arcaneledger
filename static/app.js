@@ -119,17 +119,24 @@ const state = {
 
 const settingsKey = "arcaneledger.settings";
 
-const dollars = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD",
-});
+const dollars = {
+  format(value) {
+    return formatCardPrice(value);
+  },
+};
 
-const compactDollars = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD",
-  notation: "compact",
-  maximumFractionDigits: 1,
-});
+const compactDollars = {
+  format(value) {
+    const currency = userDefaultCurrency();
+    if (currency === "tix") return `${Number(value || 0).toFixed(1)} tix`;
+    return new Intl.NumberFormat(currency === "eur" ? "de-DE" : "en-US", {
+      style: "currency",
+      currency: priceCurrencyOptions[currency]?.code || "USD",
+      notation: "compact",
+      maximumFractionDigits: 1,
+    }).format(Number(value || 0));
+  },
+};
 
 const priceCurrencyOptions = {
   usd: { code: "USD", label: "USD" },
@@ -149,6 +156,8 @@ function userDefaultCurrency(user = state.user) {
 }
 
 function formatCardPrice(value, currency = userDefaultCurrency()) {
+  currency = String(currency || userDefaultCurrency()).toLowerCase();
+  if (!Object.prototype.hasOwnProperty.call(priceCurrencyOptions, currency)) currency = userDefaultCurrency();
   const amount = Number(value || 0);
   if (currency === "tix") {
     return `${amount.toFixed(2)} tix`;
@@ -157,6 +166,24 @@ function formatCardPrice(value, currency = userDefaultCurrency()) {
     style: "currency",
     currency: priceCurrencyOptions[currency]?.code || "USD",
   }).format(amount);
+}
+
+function moneyCurrency(source, fallback = userDefaultCurrency()) {
+  const candidate = typeof source === "string"
+    ? source
+    : source?.currency || source?.price_currency || source?.market_currency;
+  const currency = String(candidate || fallback || "usd").toLowerCase();
+  return Object.prototype.hasOwnProperty.call(priceCurrencyOptions, currency) ? currency : userDefaultCurrency();
+}
+
+function formatMoney(value, source, fallback = userDefaultCurrency()) {
+  return formatCardPrice(value, moneyCurrency(source, fallback));
+}
+
+function formatCurrencyTotals(totals, field) {
+  const values = (totals || []).filter((item) => Number(item?.[field] || 0) !== 0);
+  if (!values.length) return formatCardPrice(0);
+  return values.map((item) => formatMoney(item[field], item)).join(" + ");
 }
 
 function catalogPriceOrder() {
@@ -201,6 +228,7 @@ const reportFields = [
   { key: "favorite", label: "Favorite" },
   { key: "for_sale_quantity", label: "For Sale Qty" },
   { key: "asking_price", label: "Asking Price" },
+  { key: "currency", label: "Currency" },
   { key: "container_quantity", label: "Container Qty" },
   { key: "deck_quantity", label: "Deck Qty" },
   { key: "notes", label: "Notes" },
@@ -513,6 +541,7 @@ const els = {
   addSetCodeInput: document.querySelector("#addSetCodeInput"),
   addColorInput: document.querySelector("#addColorInput"),
   addTypeInput: document.querySelector("#addTypeInput"),
+  addCurrencyInput: document.querySelector("#addCurrencyInput"),
   addSearchStatus: document.querySelector("#addSearchStatus"),
   addSearchResults: document.querySelector("#addSearchResults"),
   addCardForm: document.querySelector("#addCardForm"),
@@ -1512,6 +1541,7 @@ function cardVariantPortfolioTableHtml(card) {
     const portfolioValue = Number(source.portfolio_value ?? (quantity * currentPrice));
     return {
       variant,
+      currency: moneyCurrency(source, card.currency),
       quantity,
       total_paid: paid,
       current_price: currentPrice,
@@ -1538,10 +1568,10 @@ function cardVariantPortfolioTableHtml(card) {
               <tr>
                 <th scope="row">${escapeHtml(summary.variant || "Normal")}</th>
                 <td>${integer.format(summary.quantity || 0)}</td>
-                <td>${dollars.format(summary.total_paid || 0)}</td>
-                <td>${dollars.format(summary.current_price || 0)}</td>
-                <td>${dollars.format(summary.portfolio_value || 0)}</td>
-                <td class="${valueClass(summary.delta || 0)}">${dollars.format(summary.delta || 0)}</td>
+                <td>${formatMoney(summary.total_paid || 0, summary)}</td>
+                <td>${formatMoney(summary.current_price || 0, summary)}</td>
+                <td>${formatMoney(summary.portfolio_value || 0, summary)}</td>
+                <td class="${valueClass(summary.delta || 0)}">${formatMoney(summary.delta || 0, summary)}</td>
               </tr>
             `;
           }).join("")}
@@ -1992,7 +2022,9 @@ function renderHome(data = {}) {
   state.homeAnnouncements = Array.isArray(data.announcements) ? data.announcements : [];
   renderHomeAnnouncements();
   renderTodaysCard(data.todays_card || null);
-  if (els.homeTotalValue) els.homeTotalValue.textContent = dollars.format(data.total_value || 0);
+  if (els.homeTotalValue) els.homeTotalValue.textContent = data.currency_totals?.length
+    ? formatCurrencyTotals(data.currency_totals, "current_total")
+    : dollars.format(data.total_value || 0);
   if (els.homeUserCount) els.homeUserCount.textContent = integer.format(data.user_count || 0);
   if (els.homeCatalogedCards) els.homeCatalogedCards.textContent = integer.format(data.cataloged_cards || 0);
   if (els.homeUniqueCards) els.homeUniqueCards.textContent = integer.format(data.unique_cards || 0);
@@ -2000,7 +2032,9 @@ function renderHome(data = {}) {
   if (els.homeContainerCount) els.homeContainerCount.textContent = integer.format(data.container_count || 0);
   if (els.homeWishlistCount) els.homeWishlistCount.textContent = integer.format(data.wishlist_count || 0);
   if (els.homeSaleQuantity) els.homeSaleQuantity.textContent = integer.format(data.sale_quantity || 0);
-  if (els.homeSaleAskingTotal) els.homeSaleAskingTotal.textContent = dollars.format(data.sale_asking_total || 0);
+  if (els.homeSaleAskingTotal) els.homeSaleAskingTotal.textContent = data.sale_currency_totals?.length
+    ? formatCurrencyTotals(data.sale_currency_totals, "asking_total")
+    : dollars.format(data.sale_asking_total || 0);
 }
 
 function renderTodaysCard(card) {
@@ -2019,7 +2053,7 @@ function renderTodaysCard(card) {
     els.homeTodaysCardName.textContent = cardTitle(card);
   }
   if (els.homeTodaysCardMeta) {
-    els.homeTodaysCardMeta.textContent = `${card.set_name || ""} #${card.collector_number || ""} · ${card.variant || "Normal"} · ${dollars.format(card.display_price || card.market_price || 0)}`;
+    els.homeTodaysCardMeta.textContent = `${card.set_name || ""} #${card.collector_number || ""} · ${card.variant || "Normal"} · ${formatMoney(card.display_price || card.market_price || 0, card)}`;
   }
   if (els.homeTodaysCardText) {
     const fallback = card.type_line ? `${card.type_line}${card.rarity ? ` · ${card.rarity}` : ""}` : "Click to view card details.";
@@ -2079,15 +2113,17 @@ async function loadHome() {
 
 function renderDashboard(data) {
   state.dashboard = data;
-  els.currentValue.textContent = dollars.format(data.current_total || 0);
-  els.paidTotal.textContent = dollars.format(data.paid_total || 0);
-  els.gainLoss.textContent = `${dollars.format(data.gain_loss || 0)} (${(data.gain_loss_percent || 0).toFixed(1)}%)`;
+  els.currentValue.textContent = data.currency_totals?.length ? formatCurrencyTotals(data.currency_totals, "current_total") : dollars.format(data.current_total || 0);
+  els.paidTotal.textContent = data.currency_totals?.length ? formatCurrencyTotals(data.currency_totals, "paid_total") : dollars.format(data.paid_total || 0);
+  els.gainLoss.textContent = data.currency_totals?.length ? formatCurrencyTotals(data.currency_totals, "gain_loss") : `${dollars.format(data.gain_loss || 0)} (${(data.gain_loss_percent || 0).toFixed(1)}%)`;
   els.gainLoss.className = valueClass(data.gain_loss || 0);
   els.ownedCards.textContent = `${integer.format(data.owned_cards || 0)} cards`;
   els.favoriteCount.textContent = integer.format(data.favorite_count || 0);
   els.wishlistCount.textContent = integer.format(data.wishlist_count || 0);
   els.saleCount.textContent = integer.format(data.sale_count || 0);
-  els.saleAskingTotal.textContent = dollars.format(data.sale_asking_total || 0);
+  els.saleAskingTotal.textContent = data.sale_currency_totals?.length
+    ? formatCurrencyTotals(data.sale_currency_totals, "asking_total")
+    : dollars.format(data.sale_asking_total || 0);
   els.deckCount.textContent = integer.format(data.deck_count || 0);
   els.cardsInDecks.textContent = integer.format(data.cards_in_decks || 0);
   els.containerCount.textContent = integer.format(data.container_count || 0);
@@ -2139,7 +2175,7 @@ function renderTopCards(cards) {
         <strong title="${escapeHtml(cardTitle(card))}">${escapeHtml(cardTitle(card))}</strong>
         <span>${escapeHtml(card.set_name)} #${escapeHtml(card.collector_number)} - Qty ${card.quantity}</span>
       </div>
-      <span class="value">${dollars.format(card.owned_value || 0)}</span>
+      <span class="value">${formatMoney(card.owned_value || 0, card)}</span>
     `;
     els.topCards.appendChild(item);
   }
@@ -2688,10 +2724,10 @@ function collectionReportPayload() {
   };
 }
 
-function reportDisplayValue(value, key) {
+function reportDisplayValue(value, key, row = {}) {
   if (value === null || value === undefined || value === "") return "";
   if (["market_price", "total_value", "average_paid", "total_paid", "delta", "asking_price"].includes(key)) {
-    return dollars.format(Number(value || 0));
+    return formatMoney(Number(value || 0), row._currency || row.currency);
   }
   if (["quantity", "for_sale_quantity", "container_quantity", "deck_quantity"].includes(key)) {
     return integer.format(Number(value || 0));
@@ -2719,7 +2755,7 @@ function renderReportTable(payload) {
     <tbody>
       ${rows.length ? rows.map((row) => `
         <tr>
-          ${fields.map((field) => `<td>${escapeHtml(reportDisplayValue(row[field.key], field.key))}</td>`).join("")}
+          ${fields.map((field) => `<td>${escapeHtml(reportDisplayValue(row[field.key], field.key, row))}</td>`).join("")}
         </tr>
       `).join("") : `<tr><td colspan="${fields.length}">No cards matched those filters.</td></tr>`}
     </tbody>
@@ -2745,7 +2781,7 @@ function reportCsv(payload = state.reportPayload) {
   };
   return [
     fields.map((field) => quote(field.label)).join(","),
-    ...rows.map((row) => fields.map((field) => quote(reportDisplayValue(row[field.key], field.key))).join(",")),
+    ...rows.map((row) => fields.map((field) => quote(reportDisplayValue(row[field.key], field.key, row))).join(",")),
   ].join("\n");
 }
 
@@ -2755,7 +2791,7 @@ function reportXls(payload = state.reportPayload) {
   return `<!doctype html><html><head><meta charset="utf-8"></head><body><table><thead><tr>${
     fields.map((field) => `<th>${escapeHtml(field.label)}</th>`).join("")
   }</tr></thead><tbody>${
-    rows.map((row) => `<tr>${fields.map((field) => `<td>${escapeHtml(reportDisplayValue(row[field.key], field.key))}</td>`).join("")}</tr>`).join("")
+    rows.map((row) => `<tr>${fields.map((field) => `<td>${escapeHtml(reportDisplayValue(row[field.key], field.key, row))}</td>`).join("")}</tr>`).join("")
   }</tbody></table></body></html>`;
 }
 
@@ -3517,6 +3553,7 @@ function ownedSetGroups(cards, completionSets = []) {
       quantity: 0,
       paid: 0,
       value: 0,
+      currency_totals: {},
       preview_images: [],
     };
     group.cards.push(card);
@@ -3524,6 +3561,11 @@ function ownedSetGroups(cards, completionSets = []) {
     group.quantity += quantity;
     group.paid += Number(card.total_paid ?? (quantity * Number(card.paid_price || 0)));
     group.value += Number(card.owned_value || card.total_value || 0);
+    const currency = moneyCurrency(card);
+    const currencyTotal = group.currency_totals[currency] || { currency, paid_total: 0, current_total: 0 };
+    currencyTotal.paid_total += Number(card.total_paid ?? (quantity * Number(card.paid_price || 0)));
+    currencyTotal.current_total += Number(card.owned_value || card.total_value || 0);
+    group.currency_totals[currency] = currencyTotal;
     if (card.image_normal || card.image_small) {
       group.preview_images.push(card.image_normal || card.image_small);
     }
@@ -3541,6 +3583,7 @@ function ownedSetGroups(cards, completionSets = []) {
         total_cards: totalCards,
         owned_cards: ownedUnique,
         completion_percent: completionPercent,
+        currency_totals: Object.values(group.currency_totals),
         preview_images: Array.from(new Set(group.preview_images)).slice(0, 5),
         cards: group.cards.sort(compareCardsBySetOrder),
       };
@@ -3559,7 +3602,10 @@ function setCompletionMetaText(set) {
     : `${integer.format(set.unique_count || 0)} unique owned`;
   const paid = Number(set.total_paid ?? set.paid ?? set.paid_total ?? 0);
   const market = Number(set.total_market_value ?? set.value ?? 0);
-  return `${uniqueText} - ${integer.format(set.quantity || 0)} cards - ${dollars.format(paid)} / ${dollars.format(market)}`;
+  const currencyTotals = Array.isArray(set.currency_totals) ? set.currency_totals : [];
+  const paidText = currencyTotals.length ? formatCurrencyTotals(currencyTotals, "paid_total") : dollars.format(paid);
+  const marketText = currencyTotals.length ? formatCurrencyTotals(currencyTotals, "current_total") : dollars.format(market);
+  return `${uniqueText} - ${integer.format(set.quantity || 0)} cards - ${paidText} / ${marketText}`;
 }
 
 function compareCardsBySetOrder(a, b) {
@@ -3793,8 +3839,8 @@ function renderFavoriteStoreListings() {
         <span>${displayNameHtml(listing.seller_name || "Seller", { is_pro: listing.seller_is_pro, role: listing.seller_role })} - ${escapeHtml(listing.variant || "Normal")} - ${escapeHtml(listing.card_condition || "Near Mint")}</span>
         <div class="deck-card-tags">
           <span>${integer.format(listing.sale_quantity || listing.quantity || 0)} for sale</span>
-          <span>${dollars.format(listing.asking_price || 0)} ask</span>
-          <span>${dollars.format(listing.display_price || 0)} market</span>
+          <span>${formatMoney(listing.asking_price || 0, listing)} ask</span>
+          <span>${formatMoney(listing.display_price || 0, listing)} market</span>
         </div>
       </div>
       <div class="wishlist-card-actions">
@@ -3848,7 +3894,7 @@ function renderWishlist() {
             <span>${escapeHtml(card.rarity || "unknown")}</span>
             <span>${escapeHtml(cardTypeLabel(card))}</span>
             <span>${escapeHtml(cardColorLabel(card))}</span>
-            <span>Market ${dollars.format(card.display_price || 0)}</span>
+            <span>Market ${formatMoney(card.display_price || 0, card)}</span>
             <span>Need ${integer.format(card.wishlist_quantity || 1)}</span>
             ${card.fulfilled ? "<span>Owned</span>" : ""}
           </div>
@@ -4362,7 +4408,7 @@ function renderSaleList() {
         <p>${escapeHtml(card.set_name || "")} #${escapeHtml(card.collector_number || "")} - ${escapeHtml(card.variant || "Normal")} - ${escapeHtml(conditionText(card))}</p>
       </div>
       <span class="sale-available">Available ${integer.format(card.quantity || 0)}</span>
-      <span class="sale-value-pill">${dollars.format(card.display_price || 0)} market</span>
+      <span class="sale-value-pill">${formatMoney(card.display_price || 0, card)} market</span>
       <label class="sale-inline-field">
         Qty
         <input name="quantity" type="number" min="1" max="${Number(card.quantity || 0)}" step="1" value="${Number(card.sale_quantity || 1)}">
@@ -4398,8 +4444,8 @@ function renderSaleList() {
 function saleAskingLabel(card) {
   const min = Number(card.min_asking_price || card.sale_price || 0);
   const max = Number(card.max_asking_price || card.sale_price || 0);
-  if (min > 0 && max > 0 && Math.abs(min - max) > 0.004) return `${dollars.format(min)} - ${dollars.format(max)}`;
-  return dollars.format(min || max || 0);
+  if (min > 0 && max > 0 && Math.abs(min - max) > 0.004) return `${formatMoney(min, card)} - ${formatMoney(max, card)}`;
+  return formatMoney(min || max || 0, card);
 }
 
 async function toggleStoreFavoriteListing(listing, favorite, options = {}) {
@@ -4494,7 +4540,7 @@ function renderStoreFrontCardDetail(card, sellers) {
         <small>${escapeHtml(seller.variant || "Normal")} - ${escapeHtml(seller.card_condition || "Near Mint")}</small>
       </span>
       <b>${integer.format(seller.sale_quantity || 0)}</b>
-      <b>${dollars.format(seller.asking_price || 0)}</b>
+      <b>${formatMoney(seller.asking_price || 0, seller)}</b>
       ${seller.whatnot_url ? `<a class="secondary-button compact-button" href="${escapeHtml(seller.whatnot_url)}" target="_blank" rel="noreferrer" aria-label="Open Whatnot listing">Whatnot</a>` : "<span></span>"}
       <button class="share-button store-front-favorite-button ${seller.favorite_store ? "is-favorite" : ""}" type="button" aria-label="${seller.favorite_store ? "Remove store favorite" : "Favorite store listing"}" title="${seller.is_current_user ? "This is your listing" : seller.favorite_store ? "Remove favorite" : "Favorite listing"}" ${seller.is_current_user ? "disabled" : ""}>☆</button>
     </article>
@@ -4520,11 +4566,11 @@ function renderStoreFrontCardDetail(card, sellers) {
         <dl class="shared-card-details store-front-market-details">
           <div>
             <dt>Market Price</dt>
-            <dd>${dollars.format(card.display_price || 0)}</dd>
+            <dd>${formatMoney(card.display_price || 0, card)}</dd>
           </div>
           <div>
             <dt>Market Total</dt>
-            <dd>${dollars.format(card.market_total || 0)}</dd>
+            <dd>${formatMoney(card.market_total || 0, card)}</dd>
           </div>
           <div>
             <dt>Asking Range</dt>
@@ -4532,7 +4578,7 @@ function renderStoreFrontCardDetail(card, sellers) {
           </div>
           <div>
             <dt>Asking Total</dt>
-            <dd>${dollars.format(card.sale_asking_total || card.owned_value || 0)}</dd>
+            <dd>${formatMoney(card.sale_asking_total || card.owned_value || 0, card)}</dd>
           </div>
         </dl>
         <a class="scryfall-button store-front-detail-scryfall" href="${escapeHtml(card.scryfall_uri || "#")}" target="_blank" rel="noreferrer" aria-label="Open on Scryfall" title="Open on Scryfall">S</a>
@@ -5482,6 +5528,7 @@ function salePayloadFromRow(row) {
     card_condition: row.dataset.condition || "Near Mint",
     quantity: Number(quantityInput?.value || 0),
     asking_price: Number(priceInput?.value || 0),
+    currency: moneyCurrency(row.dataset.currency),
     whatnot_url: whatnotInput?.value.trim() || "",
   };
 }
@@ -5493,7 +5540,7 @@ async function saveSaleRow(row) {
     throw new Error(`Sale quantity must be between 1 and ${integer.format(max)}.`);
   }
   if (payload.asking_price <= 0) {
-    throw new Error("Asking price must be greater than $0.00.");
+    throw new Error("Asking price must be greater than zero.");
   }
   if (!isWhatnotUrl(payload.whatnot_url)) {
     throw new Error("Whatnot listing URL must be on whatnot.com.");
@@ -5596,9 +5643,9 @@ function renderCards(cards, target = els.cardsGrid, options = {}) {
     quantityWatermark.textContent = integer.format(card.quantity || 0);
     node.classList.toggle("is-special", cardHasSpecialVariant(card));
     node.classList.toggle("is-missing", !owned);
-    ownedValue.textContent = dollars.format(card.owned_value || 0);
-    if (price) price.textContent = `Now ${dollars.format(card.display_price || 0)}`;
-    delta.textContent = `Delta ${dollars.format(card.gain_loss || 0)}`;
+    ownedValue.textContent = formatMoney(card.owned_value || 0, card);
+    if (price) price.textContent = `Now ${formatMoney(card.display_price || 0, card)}`;
+    delta.textContent = `Delta ${formatMoney(card.gain_loss || 0, card)}`;
     delta.className = `delta ${valueClass(card.gain_loss || 0)}`;
     variantPill.textContent = summaries.length > 1 ? `${integer.format(summaries.length)} variants` : (card.variant || "Normal");
     conditionPill.textContent = summaries.length > 1 ? "Mixed conditions" : conditionText(card);
@@ -5718,8 +5765,8 @@ function renderCardList(cards, target = els.cardsGrid, options = {}) {
     title.textContent = cardTitle(card);
     meta.textContent = `${card.set_name} #${card.collector_number} - ${card.rarity || "unknown"}${cardRulesName(card) ? ` - Rules: ${cardRulesName(card)}` : ""}`;
     type.textContent = card.type_line || "";
-    price.textContent = `Now ${dollars.format(card.display_price || 0)}`;
-    ownedValue.textContent = `Value ${dollars.format(card.owned_value || 0)}`;
+    price.textContent = `Now ${formatMoney(card.display_price || 0, card)}`;
+    ownedValue.textContent = `Value ${formatMoney(card.owned_value || 0, card)}`;
     quantity.textContent = `Qty ${integer.format(card.quantity || 0)}`;
     variant.textContent = summaries.length > 1 ? `${integer.format(summaries.length)} variants` : (card.variant || "Normal");
     conditionPill.textContent = summaries.length > 1 ? "Mixed conditions" : conditionText(card);
@@ -5794,6 +5841,7 @@ function openEditModal(card) {
   els.editForm.original_variant.value = card.variant || "Normal";
   els.editForm.quantity.value = card.quantity || 0;
   els.editForm.paid_price.value = Number(card.paid_price || 0.01).toFixed(2);
+  els.editForm.currency.value = moneyCurrency(card);
   els.editForm.acquired_date.value = card.acquired_date || "";
   ensureSelectOption(els.editForm.variant, card.variant || "Normal");
   els.editForm.variant.value = card.variant || "Normal";
@@ -6755,7 +6803,8 @@ function todayValue() {
   return local.toISOString().slice(0, 10);
 }
 
-function priceForVariant(card, variant, currency = "usd") {
+function priceForVariant(card, variant, currency = userDefaultCurrency()) {
+  currency = moneyCurrency(card, currency);
   const prices = card.prices || {};
   const variantText = String(variant || "").toLowerCase();
   if (currency === "eur") {
@@ -6803,6 +6852,13 @@ function conditionOptionsHtml(selected = "Near Mint") {
   )).join("");
 }
 
+function priceCurrencyOptionsHtml(selected = userDefaultCurrency()) {
+  const active = moneyCurrency(selected);
+  return Object.entries(priceCurrencyOptions).map(([key, option]) => (
+    `<option value="${key}" ${key === active ? "selected" : ""}>${escapeHtml(option.label)}</option>`
+  )).join("");
+}
+
 function userDefaultPurchasePrice() {
   const value = Number(state.user?.default_purchase_price ?? 0.01);
   return Number.isFinite(value) && value > 0 ? value : 0.01;
@@ -6828,6 +6884,7 @@ function addPurchaseRowHtml(row = {}) {
   const condition = cardConditions.includes(row.card_condition) ? row.card_condition : "Near Mint";
   const defaultPaid = userDefaultPurchasePrice();
   const paidPrice = Number(row.paid_price || defaultPaid) > 0 ? Number(row.paid_price || defaultPaid).toFixed(2) : defaultPaid.toFixed(2);
+  const currency = moneyCurrency(row.currency || els.addCurrencyInput?.value || userDefaultCurrency());
   const quantity = Number.isFinite(Number(row.quantity)) ? Math.max(0, Number(row.quantity || 0)) : 0;
   return `
     <tr class="add-purchase-row" data-row-id="${escapeHtml(rowId)}" data-variant="${escapeHtml(variant)}">
@@ -6838,6 +6895,7 @@ function addPurchaseRowHtml(row = {}) {
         </select>
       </td>
       <td><input data-add-field="paid_price" type="number" min="0.01" step="0.01" value="${escapeHtml(paidPrice)}" aria-label="${escapeAttribute(`${variant} price paid per card`)}"></td>
+      <td><select data-add-field="currency" aria-label="${escapeAttribute(`${variant} purchase currency`)}">${priceCurrencyOptionsHtml(currency)}</select></td>
       <td><input data-add-field="graded" type="checkbox" value="1" ${row.graded ? "checked" : ""} aria-label="${escapeAttribute(`${variant} graded`)}"></td>
       <td><input data-add-field="quantity" type="number" min="0" step="1" value="${escapeHtml(String(quantity))}" aria-label="${escapeAttribute(`${variant} quantity`)}"></td>
       <td><button class="secondary-button add-row-button" type="button" data-add-row-copy title="Add another condition row for ${escapeAttribute(variant)}" aria-label="Add another condition row for ${escapeAttribute(variant)}">+</button></td>
@@ -6857,6 +6915,7 @@ function duplicateAddPurchaseRow(row) {
     variant: row.dataset.variant || "Normal",
     card_condition: row.querySelector('[data-add-field="card_condition"]')?.value || "Near Mint",
     paid_price: row.querySelector('[data-add-field="paid_price"]')?.value || "0.01",
+    currency: row.querySelector('[data-add-field="currency"]')?.value || userDefaultCurrency(),
     graded: Boolean(row.querySelector('[data-add-field="graded"]')?.checked),
     quantity: 0,
   };
@@ -6905,6 +6964,7 @@ function addPurchasePayloadRows() {
       variant: row.dataset.variant || "Normal",
       card_condition: row.querySelector('[data-add-field="card_condition"]')?.value || "Near Mint",
       paid_price: Number(row.querySelector('[data-add-field="paid_price"]')?.value || 0),
+      currency: moneyCurrency(row.querySelector('[data-add-field="currency"]')?.value),
       acquired_date: acquiredDate,
       graded: row.querySelector('[data-add-field="graded"]')?.checked ? 1 : 0,
       quantity,
@@ -6939,6 +6999,7 @@ function openAddCardModal(preselectedCard = null) {
   state.addResults = [];
   state.selectedAddCard = null;
   els.addSearchForm.reset();
+  els.addCurrencyInput.value = userDefaultCurrency();
   collapseAddAdvancedFilters();
   els.addCardForm.reset();
   resetLocationPicker(els.addCardForm.querySelector("[data-location-picker]"));
@@ -6983,6 +7044,7 @@ function resetAddCardModalForNew() {
   state.addResults = [];
   state.selectedAddCard = null;
   els.addSearchForm.reset();
+  els.addCurrencyInput.value = userDefaultCurrency();
   collapseAddAdvancedFilters();
   els.addCardForm.reset();
   resetLocationPicker(els.addCardForm.querySelector("[data-location-picker]"));
@@ -7024,6 +7086,7 @@ function renderAddResults(cards) {
   for (const card of cards) {
     const button = document.createElement("button");
     button.className = "add-result";
+    button.classList.toggle("is-selected", state.selectedAddCard?.scryfall_id === card.scryfall_id);
     button.type = "button";
     button.dataset.cardId = card.scryfall_id;
     button.innerHTML = `
@@ -7032,7 +7095,7 @@ function renderAddResults(cards) {
         <strong>${escapeHtml(cardTitle(card))}</strong>
         <span>${escapeHtml(card.set_name)} #${escapeHtml(card.collector_number)}</span>
         ${cardRulesName(card) ? `<span>Rules: ${escapeHtml(cardRulesName(card))}</span>` : ""}
-        <span>${escapeHtml(card.rarity || "unknown")} - ${formatCardPrice(priceForVariant(card, "Normal", userDefaultCurrency()))}</span>
+        <span>${escapeHtml(card.rarity || "unknown")} - ${formatCardPrice(priceForVariant(card, "Normal", els.addCurrencyInput.value), els.addCurrencyInput.value)}</span>
         <span class="owned-count">Owned: ${integer.format(card.owned_quantity || 0)}</span>
       </span>
     `;
@@ -7764,7 +7827,7 @@ function renderDeckCardPreviewModal(card, sourceCard) {
           </div>
           <div>
             <dt>Market Price</dt>
-            <dd>${dollars.format(card.market_price ?? card.display_price ?? 0)}</dd>
+            <dd>${formatMoney(card.market_price ?? card.display_price ?? 0, card)}</dd>
           </div>
           <div>
             <dt>Set</dt>
@@ -8427,7 +8490,7 @@ function renderContainerDetail(container) {
         </article>
         <article>
           <span>Market value</span>
-          <strong>${dollars.format(Number(container.container_value || 0))}</strong>
+          <strong>${container.currency_totals?.length ? formatCurrencyTotals(container.currency_totals, "current_total") : dollars.format(Number(container.container_value || 0))}</strong>
         </article>
       </div>
     </section>
@@ -9191,7 +9254,7 @@ function importWizardRowHtml(row) {
         </div>
         <span class="bulk-import-set">${escapeHtml(setText || "-")}</span>
         <b>${integer.format(entry.quantity || 0)}</b>
-        <span>${dollars.format(Number(entry.paid_price || 0))}</span>
+        <span>${formatMoney(Number(entry.paid_price || 0), entry)}</span>
         <span class="bulk-import-location ${locationMissing ? "is-missing" : ""}">
           ${escapeHtml(location || "-")}
           ${locationMissing ? `<small>${escapeHtml(entry.location_warning || "Not in address book")}</small>` : ""}
@@ -10232,6 +10295,7 @@ function renderSaleCards() {
       row.dataset.cardId = card.card_id;
       row.dataset.variant = card.variant || "Normal";
       row.dataset.condition = condition;
+      row.dataset.currency = moneyCurrency(card);
       row.innerHTML = `
         <label class="sale-modal-check" title="Include in sale">
           <input type="checkbox" ${disabled ? "disabled" : "checked"} aria-label="Include ${escapeHtml(card.name || "card")} ${escapeHtml(condition)}">
@@ -10245,7 +10309,7 @@ function renderSaleCards() {
           Available Qty
           <output>${integer.format(maxQuantity)}</output>
         </label>
-        <span class="sale-value-pill">${dollars.format(market)} market</span>
+        <span class="sale-value-pill">${formatMoney(market, card)} market</span>
         <label class="sale-inline-field">
           Quantity
           <input name="quantity" type="number" min="1" max="${maxQuantity}" step="1" value="${disabled ? 0 : existingQuantity > 0 ? existingQuantity : 1}" ${disabled ? "disabled" : ""}>
@@ -10500,7 +10564,7 @@ function renderSharedCard(card) {
           </div>
           <div>
             <dt>Market Price</dt>
-            <dd>${dollars.format(card.market_price ?? card.display_price ?? 0)}</dd>
+            <dd>${formatMoney(card.market_price ?? card.display_price ?? 0, card)}</dd>
           </div>
           <div>
             <dt>Type</dt>
@@ -10547,7 +10611,7 @@ function renderMovementHistory(movements) {
           </div>
           <div>
             <b>${integer.format(movement.quantity || 0)} ${verb}</b>
-            <span>${isAdjust ? escapeHtml(movement.note || "Manual inventory adjustment") : `${dollars.format(movement.total_amount ?? movement.total_price ?? 0)} ${amountLabel} - ${dollars.format(movement.price_each || 0)} each`}</span>
+            <span>${isAdjust ? escapeHtml(movement.note || "Manual inventory adjustment") : `${formatMoney(movement.total_amount ?? movement.total_price ?? 0, movement)} ${amountLabel} - ${formatMoney(movement.price_each || 0, movement)} each`}</span>
             ${!isSale && !isAdjust && purchaseSource ? `<small>${escapeHtml(purchaseSource)}</small>` : ""}
             ${!isSale && !isAdjust && movement.notes ? `<small>${escapeHtml(movement.notes)}</small>` : ""}
           </div>
@@ -10598,10 +10662,10 @@ function renderLedgerEntries(movements) {
       ${movements.map((movement) => {
         const amount = movement.movement_type === "adjust"
           ? ""
-          : dollars.format(movement.total_amount ?? movement.total_price ?? 0);
+          : formatMoney(movement.total_amount ?? movement.total_price ?? 0, movement);
         const priceEach = movement.movement_type === "adjust"
           ? ""
-          : dollars.format(movement.price_each || 0);
+          : formatMoney(movement.price_each || 0, movement);
         const storeName = movement.movement_type === "buy" ? movement.store_name || "" : "";
         const storeLocation = movement.movement_type === "buy" ? movement.store_location || "" : "";
         return `
@@ -10642,8 +10706,8 @@ function renderPurchaseEntryLedger(payload) {
       <article><span>Date</span><strong>${escapeHtml(formatDate(payload.purchase_date || ""))}</strong></article>
       <article><span>Store</span><strong>${escapeHtml(source)}</strong></article>
       <article><span>Cards</span><strong>${integer.format(payload.total_quantity || 0)}</strong></article>
-      <article><span>Total Paid</span><strong>${dollars.format(payload.total_paid || 0)}</strong></article>
-      <article><span>Average</span><strong>${dollars.format(payload.average_paid || 0)} each</strong></article>
+      <article><span>Total Paid</span><strong>${formatMoney(payload.total_paid || 0, payload)}</strong></article>
+      <article><span>Average</span><strong>${formatMoney(payload.average_paid || 0, payload)} each</strong></article>
     </div>
     <div class="entry-ledger-table">
       <div class="entry-ledger-head">
@@ -10665,8 +10729,8 @@ function renderPurchaseEntryLedger(payload) {
           <span>${escapeHtml(entry.variant || "Normal")}</span>
           <span>${escapeHtml(entry.card_condition || "Near Mint")}${Number(entry.graded || 0) ? " - Graded" : ""}</span>
           <b>${integer.format(entry.quantity || 0)}</b>
-          <span>${dollars.format(entry.price_each || 0)}</span>
-          <strong>${dollars.format(entry.total_price || 0)}</strong>
+          <span>${formatMoney(entry.price_each || 0, entry)}</span>
+          <strong>${formatMoney(entry.total_price || 0, entry)}</strong>
         </div>
       `).join("")}
     </div>
@@ -10866,6 +10930,7 @@ function normalizedPriceSeries(card) {
   return source
     .map((series) => ({
       variant: series.variant || "Normal",
+      currency: moneyCurrency(series, card.currency),
       points: (series.points || [])
         .map((point) => ({ date: point.date, value: Number(point.value || 0) }))
         .filter((point) => point.date && point.value > 0),
@@ -10924,7 +10989,7 @@ function renderCardPriceChart(card) {
       <path d="${path}" class="card-price-line ${special ? "is-special" : "is-normal"}"></path>
       ${series.points.map((point, index) => `
         <circle class="${special ? "is-special" : "is-normal"}" cx="${xForDate(point.date).toFixed(1)}" cy="${yFor(point.value).toFixed(1)}" r="${index === series.points.length - 1 ? "4" : "2.5"}">
-          <title>${escapeHtml(series.variant)} ${escapeHtml(formatDate(point.date))}: ${dollars.format(point.value)}</title>
+          <title>${escapeHtml(series.variant)} ${escapeHtml(formatDate(point.date))}: ${formatMoney(point.value, series, card.currency)}</title>
         </circle>
       `).join("")}
     `;
@@ -10948,7 +11013,7 @@ function renderCardPriceChart(card) {
         <line x1="${pad}" y1="${pad}" x2="${width - pad}" y2="${pad}" class="card-price-grid"></line>
         <line x1="${pad}" y1="${height / 2}" x2="${width - pad}" y2="${height / 2}" class="card-price-grid"></line>
         ${yTicks.map((tick) => `
-          <text x="${pad + 3}" y="${tick.y - 4}" class="card-price-scale-label" text-anchor="${tick.anchor}">${escapeHtml(dollars.format(tick.value))}</text>
+          <text x="${pad + 3}" y="${tick.y - 4}" class="card-price-scale-label" text-anchor="${tick.anchor}">${escapeHtml(formatMoney(tick.value, card))}</text>
         `).join("")}
         ${firstDate ? `<text x="${pad}" y="${height - 2}" class="card-price-date-label" text-anchor="start">${escapeHtml(formatDate(firstDate))}</text>` : ""}
         ${lastDate && lastDate !== firstDate ? `<text x="${width - pad}" y="${height - 2}" class="card-price-date-label" text-anchor="end">${escapeHtml(formatDate(lastDate))}</text>` : ""}
@@ -10956,13 +11021,13 @@ function renderCardPriceChart(card) {
         ${normalSeriesMarkup.join("")}
       </svg>
       <div class="card-price-chart-meta">
-        <strong>${dollars.format(latest.value)}</strong>
-        <span class="${valueClass(delta)}">${escapeHtml(normalSeries.variant)} ${delta >= 0 ? "+" : ""}${dollars.format(delta)}</span>
+        <strong>${formatMoney(latest.value, normalSeries, card.currency)}</strong>
+        <span class="${valueClass(delta)}">${escapeHtml(normalSeries.variant)} ${delta >= 0 ? "+" : ""}${formatMoney(delta, normalSeries, card.currency)}</span>
       </div>
       <div class="card-price-legend">
         ${seriesList.map((series) => {
           const latestPoint = series.points[series.points.length - 1];
-          return `<span class="${isSpecialVariant(series.variant) ? "is-special" : "is-normal"}"><i></i>${escapeHtml(series.variant)} ${dollars.format(latestPoint.value)}</span>`;
+          return `<span class="${isSpecialVariant(series.variant) ? "is-special" : "is-normal"}"><i></i>${escapeHtml(series.variant)} ${formatMoney(latestPoint.value, series, card.currency)}</span>`;
         }).join("")}
       </div>
     </div>
@@ -11152,8 +11217,8 @@ async function openCardSaleSellersModal(card) {
       const minPrice = Number(seller.min_asking_price || 0);
       const maxPrice = Number(seller.max_asking_price || 0);
       const priceLabel = minPrice && maxPrice && minPrice !== maxPrice
-        ? `${dollars.format(minPrice)}-${dollars.format(maxPrice)}`
-        : dollars.format(minPrice || maxPrice || 0);
+        ? `${formatMoney(minPrice, seller)}-${formatMoney(maxPrice, seller)}`
+        : formatMoney(minPrice || maxPrice || 0, seller);
       return `
         <a class="card-meta-drilldown-row" href="${escapeHtml(seller.store_url || `/stores/${encodeURIComponent(seller.store_share_id || "")}`)}" target="_blank" rel="noreferrer">
           <span>
@@ -11471,6 +11536,7 @@ function openAddPurchaseModal(card) {
   els.addPurchaseForm.card_condition.value = conditionText(card);
   els.addPurchaseForm.purchase_date.value = todayValue();
   els.addPurchaseForm.total_price.value = userDefaultPurchasePrice().toFixed(2);
+  els.addPurchaseForm.currency.value = moneyCurrency(card);
   resetLocationPicker(els.addPurchaseForm.querySelector("[data-location-picker]"));
   els.addPurchaseOverlay.hidden = false;
   document.body.classList.add("modal-open");
@@ -11586,6 +11652,7 @@ function renderSetPage(setDetail, cards, options = {}) {
   const totalMarketValue = Number(setDetail.total_market_value || 0);
   const delta = Number(setDetail.delta || (totalMarketValue - totalPaid));
   const deltaClass = delta >= 0 ? "positive" : "negative";
+  const currencyTotals = Array.isArray(setDetail.currency_totals) ? setDetail.currency_totals : [];
   const readonly = Boolean(options.readonly || setDetail.readonly);
   els.setPageShell.innerHTML = `
     <section class="set-hero">
@@ -11601,15 +11668,15 @@ function renderSetPage(setDetail, cards, options = {}) {
       <div class="set-financial-strip" aria-label="Set financial summary">
         <article>
           <span>Total Paid</span>
-          <strong>${dollars.format(totalPaid)}</strong>
+          <strong>${currencyTotals.length ? formatCurrencyTotals(currencyTotals, "paid_total") : dollars.format(totalPaid)}</strong>
         </article>
         <article>
           <span>Market Value</span>
-          <strong>${dollars.format(totalMarketValue)}</strong>
+          <strong>${currencyTotals.length ? formatCurrencyTotals(currencyTotals, "current_total") : dollars.format(totalMarketValue)}</strong>
         </article>
         <article>
           <span>Delta</span>
-          <strong class="${deltaClass}">${dollars.format(delta)}</strong>
+          <strong class="${deltaClass}">${currencyTotals.length ? formatCurrencyTotals(currencyTotals, "gain_loss") : dollars.format(delta)}</strong>
         </article>
       </div>
       <div class="set-progress set-progress-large" aria-label="${percent.toFixed(1)} percent complete">
@@ -11749,7 +11816,7 @@ function wishlistRowsHtml(cards) {
         <div class="deck-card-tags">${cardMetadataPillsHtml(card)}</div>
         <div class="missing-market-links shared-wishlist-market-links">${marketplaceLinksHtml(card)}</div>
       </div>
-      <b>${card.wishlist_quantity ? `Need ${integer.format(card.wishlist_quantity)}` : dollars.format(card.display_price || 0)}${card.fulfilled ? " ✓" : ""}</b>
+      <b>${card.wishlist_quantity ? `Need ${integer.format(card.wishlist_quantity)}` : formatMoney(card.display_price || 0, card)}${card.fulfilled ? " ✓" : ""}</b>
     </article>
   `).join("");
 }
@@ -11985,7 +12052,7 @@ function renderSharedStore(store) {
         <span>${escapeHtml(card.variant || "Normal")} - ${escapeHtml(conditionText(card))}</span>
         <small>${escapeHtml(card.set_name || "")} #${escapeHtml(card.collector_number || "")}</small>
       </div>
-      <b>${integer.format(card.sale_quantity || 0)} @ ${dollars.format(card.sale_price || 0)}</b>
+      <b>${integer.format(card.sale_quantity || 0)} @ ${formatMoney(card.sale_price || 0, card)}</b>
       ${card.whatnot_url ? `<a class="secondary-button compact-button" href="${escapeHtml(card.whatnot_url)}" target="_blank" rel="noreferrer">Whatnot</a>` : ""}
     </article>
   `).join("") : '<div class="empty-state">No active sale listings.</div>';
@@ -12246,7 +12313,7 @@ function renderUserProfile(profile) {
       <div class="user-profile-stats">
         <article><span>Cards</span><strong>${integer.format(stats.owned_quantity || 0)}</strong></article>
         <article><span>Unique</span><strong>${integer.format(stats.unique_cards || 0)}</strong></article>
-        <article><span>Collection value</span><strong>${dollars.format(stats.collection_value || 0)}</strong></article>
+        <article><span>Collection value</span><strong>${stats.currency_totals?.length ? formatCurrencyTotals(stats.currency_totals, "current_total") : dollars.format(stats.collection_value || 0)}</strong></article>
         <article><span>Public decks</span><strong>${integer.format(stats.public_deck_count || decks.length || 0)}</strong></article>
       </div>
       <div class="user-profile-actions">
@@ -13284,6 +13351,7 @@ function wireEvents() {
     const payload = Object.fromEntries(new FormData(els.soldForm).entries());
     payload.quantity = Number(payload.quantity || 0);
     payload.sold_price_each = Number(payload.sold_price_each || 0);
+    payload.currency = moneyCurrency(state.activeSaleCard);
     const maxQuantity = Number(els.soldForm.quantity.max || 0);
     if (payload.quantity < 1 || payload.quantity > maxQuantity) {
       setStatus(`Sold quantity must be between 1 and ${integer.format(maxQuantity)}.`, "error", els.saleStatus);
@@ -13294,7 +13362,7 @@ function wireEvents() {
       return;
     }
     if (payload.sold_price_each <= 0) {
-      setStatus("Sold price must be greater than $0.00.", "error", els.saleStatus);
+      setStatus("Sold price must be greater than zero.", "error", els.saleStatus);
       return;
     }
     try {
@@ -13642,6 +13710,12 @@ function wireEvents() {
     els.addAdvancedToggle.setAttribute("aria-expanded", String(isHidden));
     els.addAdvancedToggle.textContent = isHidden ? "Hide advanced filters" : "Show advanced filters";
   });
+  els.addCurrencyInput?.addEventListener("change", () => {
+    renderAddResults(state.addResults || []);
+    for (const select of els.addPurchaseRows?.querySelectorAll('[data-add-field="currency"]') || []) {
+      select.value = els.addCurrencyInput.value;
+    }
+  });
   els.addSearchInput.addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
       event.preventDefault();
@@ -13680,7 +13754,7 @@ function wireEvents() {
         return;
       }
       if (purchase.paid_price <= 0) {
-        els.addSearchStatus.textContent = "Price paid per card must be greater than $0.00.";
+        els.addSearchStatus.textContent = "Price paid per card must be greater than zero.";
         els.addSearchStatus.dataset.tone = "error";
         return;
       }
@@ -14220,7 +14294,7 @@ function wireEvents() {
         return;
       }
       if (askingPrice <= 0) {
-        setStatus("Asking price must be greater than $0.00.", "error", els.saleModalStatus);
+        setStatus("Asking price must be greater than zero.", "error", els.saleModalStatus);
         return;
       }
       if (!isWhatnotUrl(whatnotUrl)) {
@@ -14234,6 +14308,7 @@ function wireEvents() {
         card_condition: row.dataset.condition || "Near Mint",
         quantity,
         asking_price: askingPrice,
+        currency: moneyCurrency(row.dataset.currency),
         whatnot_url: whatnotUrl,
       });
     }
@@ -14336,12 +14411,13 @@ function wireEvents() {
     const maxQuantity = Number(els.directSaleForm.quantity.max || 0);
     payload.quantity = Number(payload.quantity || 0);
     payload.sold_price_each = Number(payload.sold_price_each || 0);
+    payload.currency = moneyCurrency(state.activeCardDetail);
     if (payload.quantity < 1 || (maxQuantity && payload.quantity > maxQuantity)) {
       setStatus(`Sold quantity must be between 1 and ${integer.format(maxQuantity || 1)}.`, "error");
       return;
     }
     if (payload.sold_price_each <= 0) {
-      setStatus("Sold price must be greater than $0.00.", "error");
+      setStatus("Sold price must be greater than zero.", "error");
       return;
     }
     try {

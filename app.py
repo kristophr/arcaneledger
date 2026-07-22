@@ -1463,12 +1463,15 @@ def upsert_price_snapshot_from_card(conn, card, snapshot_date=None):
     prices = card.get("prices") or {}
     conn.execute(
         """
-        INSERT INTO price_snapshots (card_id, snapshot_date, usd, usd_foil, usd_etched)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO price_snapshots (card_id, snapshot_date, usd, usd_foil, usd_etched, eur, eur_foil, tix)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(card_id, snapshot_date) DO UPDATE SET
             usd = excluded.usd,
             usd_foil = excluded.usd_foil,
-            usd_etched = excluded.usd_etched
+            usd_etched = excluded.usd_etched,
+            eur = excluded.eur,
+            eur_foil = excluded.eur_foil,
+            tix = excluded.tix
         """,
         (
             card.get("id"),
@@ -1476,6 +1479,9 @@ def upsert_price_snapshot_from_card(conn, card, snapshot_date=None):
             money(prices.get("usd")),
             money(prices.get("usd_foil")),
             money(prices.get("usd_etched")),
+            money(prices.get("eur")),
+            money(prices.get("eur_foil")),
+            money(prices.get("tix")),
         ),
     )
 
@@ -1485,12 +1491,15 @@ def upsert_price_snapshot_from_card_row(conn, row, snapshot_date=None):
         return
     conn.execute(
         """
-        INSERT INTO price_snapshots (card_id, snapshot_date, usd, usd_foil, usd_etched)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO price_snapshots (card_id, snapshot_date, usd, usd_foil, usd_etched, eur, eur_foil, tix)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(card_id, snapshot_date) DO UPDATE SET
             usd = excluded.usd,
             usd_foil = excluded.usd_foil,
-            usd_etched = excluded.usd_etched
+            usd_etched = excluded.usd_etched,
+            eur = excluded.eur,
+            eur_foil = excluded.eur_foil,
+            tix = excluded.tix
         """,
         (
             row["scryfall_id"],
@@ -1498,6 +1507,9 @@ def upsert_price_snapshot_from_card_row(conn, row, snapshot_date=None):
             money(row["current_usd"]),
             money(row["current_usd_foil"]),
             money(row["current_usd_etched"]),
+            money(row["current_eur"]),
+            money(row["current_eur_foil"]),
+            money(row["current_tix"]),
         ),
     )
 
@@ -1723,6 +1735,7 @@ def init_db(conn):
             quantity INTEGER NOT NULL DEFAULT 0,
             acquired_date TEXT,
             paid_price REAL NOT NULL DEFAULT 0.01,
+            currency TEXT NOT NULL DEFAULT 'usd',
             variant TEXT NOT NULL DEFAULT 'Normal',
             card_condition TEXT NOT NULL DEFAULT 'Near Mint',
             graded INTEGER NOT NULL DEFAULT 0,
@@ -1742,6 +1755,7 @@ def init_db(conn):
             card_condition TEXT NOT NULL DEFAULT 'Near Mint',
             purchase_date TEXT NOT NULL,
             total_price REAL NOT NULL DEFAULT 0.01,
+            currency TEXT NOT NULL DEFAULT 'usd',
             graded INTEGER NOT NULL DEFAULT 0,
             store_name TEXT NOT NULL DEFAULT '',
             store_location TEXT NOT NULL DEFAULT '',
@@ -1844,6 +1858,7 @@ def init_db(conn):
             card_condition TEXT NOT NULL DEFAULT 'Near Mint',
             quantity INTEGER NOT NULL DEFAULT 1,
             asking_price REAL NOT NULL DEFAULT 0.01,
+            currency TEXT NOT NULL DEFAULT 'usd',
             whatnot_url TEXT NOT NULL DEFAULT '',
             updated_at TEXT NOT NULL,
             PRIMARY KEY (user_id, card_id, variant, card_condition),
@@ -1932,6 +1947,7 @@ def init_db(conn):
             sold_date TEXT NOT NULL,
             sold_price_each REAL NOT NULL DEFAULT 0.01,
             asking_price_each REAL NOT NULL DEFAULT 0.01,
+            currency TEXT NOT NULL DEFAULT 'usd',
             created_at TEXT NOT NULL,
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
             FOREIGN KEY (card_id) REFERENCES cards(scryfall_id) ON DELETE CASCADE
@@ -1959,6 +1975,9 @@ def init_db(conn):
             usd REAL DEFAULT 0,
             usd_foil REAL DEFAULT 0,
             usd_etched REAL DEFAULT 0,
+            eur REAL DEFAULT 0,
+            eur_foil REAL DEFAULT 0,
+            tix REAL DEFAULT 0,
             FOREIGN KEY (card_id) REFERENCES cards(scryfall_id) ON DELETE CASCADE,
             UNIQUE(card_id, snapshot_date)
         );
@@ -3154,6 +3173,20 @@ def add_user_id_column(conn, table):
         conn.execute(f"ALTER TABLE {table} ADD COLUMN user_id INTEGER")
 
 
+def migrate_money_currency_schema(conn):
+    for table in ("collection", "card_purchases", "card_sales", "card_sale_journal"):
+        columns = table_columns(conn, table)
+        if "currency" not in columns:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN currency TEXT NOT NULL DEFAULT 'usd'")
+        conn.execute(
+            f"UPDATE {table} SET currency = 'usd' WHERE lower(COALESCE(currency, '')) NOT IN ('usd', 'eur', 'tix')"
+        )
+    snapshot_columns = table_columns(conn, "price_snapshots")
+    for column in ("eur", "eur_foil", "tix"):
+        if column not in snapshot_columns:
+            conn.execute(f"ALTER TABLE price_snapshots ADD COLUMN {column} REAL DEFAULT 0")
+
+
 def migrate_user_schema(conn):
     add_user_id_column(conn, "card_purchases")
     add_user_id_column(conn, "card_sale_journal")
@@ -3166,6 +3199,7 @@ def migrate_user_schema(conn):
     migrate_wishlists_schema(conn)
     migrate_favorite_decks_schema(conn)
     migrate_favorite_store_listings_schema(conn)
+    migrate_money_currency_schema(conn)
     user_columns = table_columns(conn, "users")
     if "name" not in user_columns:
         conn.execute("ALTER TABLE users ADD COLUMN name TEXT NOT NULL DEFAULT ''")
@@ -3369,6 +3403,13 @@ def clean_default_currency(value):
     currency = (value or "usd").strip().lower()
     if currency not in ALLOWED_PRICE_CURRENCIES:
         raise ValueError("Default currency must be USD, EUR, or MTGO Tix.")
+    return currency
+
+
+def clean_price_currency(value, fallback="usd"):
+    currency = str(value or fallback or "usd").strip().lower()
+    if currency not in ALLOWED_PRICE_CURRENCIES:
+        raise ValueError("Currency must be USD, EUR, or MTGO Tix.")
     return currency
 
 
@@ -5742,7 +5783,8 @@ def variant_summaries_for_cards(conn, card_ids, user_id=None):
         f"""
         SELECT card_id, COALESCE(NULLIF(variant, ''), 'Normal') AS variant,
                COALESCE(SUM(quantity), 0) AS quantity,
-               COALESCE(SUM(quantity * paid_price), 0) AS collection_paid
+               COALESCE(SUM(quantity * paid_price), 0) AS collection_paid,
+               COALESCE(MAX(NULLIF(currency, '')), 'usd') AS currency
         FROM collection
         WHERE user_id = ? AND card_id IN ({placeholders}) AND COALESCE(quantity, 0) > 0
         GROUP BY card_id, COALESCE(NULLIF(variant, ''), 'Normal')
@@ -5756,12 +5798,14 @@ def variant_summaries_for_cards(conn, card_ids, user_id=None):
             "variant": variant,
             "quantity": int(row["quantity"] or 0),
             "total_paid": float(row["collection_paid"] or 0),
+            "currency": clean_price_currency(row["currency"]),
             "conditions": [],
         }
     purchase_paid_rows = conn.execute(
         f"""
         SELECT card_id, COALESCE(NULLIF(variant, ''), 'Normal') AS variant,
-               COALESCE(SUM(total_price), 0) AS total_paid
+               COALESCE(SUM(total_price), 0) AS total_paid,
+               COALESCE(MAX(NULLIF(currency, '')), 'usd') AS currency
         FROM card_purchases
         WHERE user_id = ? AND card_id IN ({placeholders}) AND COALESCE(quantity, 0) > 0
         GROUP BY card_id, COALESCE(NULLIF(variant, ''), 'Normal')
@@ -5778,6 +5822,7 @@ def variant_summaries_for_cards(conn, card_ids, user_id=None):
             "conditions": [],
         })
         summary["total_paid"] = float(row["total_paid"] or 0)
+        summary["currency"] = clean_price_currency(row["currency"])
     purchase_rows = conn.execute(
         f"""
         SELECT card_id, COALESCE(NULLIF(variant, ''), 'Normal') AS variant,
@@ -5806,7 +5851,7 @@ def variant_summaries_for_cards(conn, card_ids, user_id=None):
     card_rows = {
         row["scryfall_id"]: row
         for row in conn.execute(
-            f"SELECT scryfall_id, current_usd, current_usd_foil, current_usd_etched FROM cards WHERE scryfall_id IN ({placeholders})",
+            f"SELECT scryfall_id, current_usd, current_usd_foil, current_usd_etched, current_eur, current_eur_foil, current_tix FROM cards WHERE scryfall_id IN ({placeholders})",
             unique_ids,
         ).fetchall()
     }
@@ -5819,7 +5864,8 @@ def variant_summaries_for_cards(conn, card_ids, user_id=None):
                 })
             summary["conditions"].sort(key=lambda item: (CONDITION_ORDER.get(item["card_condition"], 99), item["card_condition"]))
             card_row = card_rows.get(card_id)
-            current_price = float(variant_price_from_row(card_row, summary["variant"]) or 0) if card_row else 0.0
+            summary["currency"] = clean_price_currency(summary.get("currency") or "usd")
+            current_price = float(variant_price_from_row(card_row, summary["variant"], summary["currency"]) or 0) if card_row else 0.0
             portfolio_value = int(summary["quantity"] or 0) * current_price
             total_paid = float(summary.get("total_paid") or 0)
             summary["current_price"] = current_price
@@ -5936,7 +5982,7 @@ def scryfall_card_by_id(conn, card_id, user_id=None):
     return {"card": summary}
 
 
-def variant_price_from_row(card, variant):
+def variant_price_from_row(card, variant, currency="usd"):
     def card_value(key):
         if isinstance(card, sqlite3.Row):
             return card[key] if key in card.keys() else 0
@@ -5948,7 +5994,17 @@ def variant_price_from_row(card, variant):
     current_usd = card_value("current_usd") or prices.get("usd") or 0
     current_usd_foil = card_value("current_usd_foil") or prices.get("usd_foil") or 0
     current_usd_etched = card_value("current_usd_etched") or prices.get("usd_etched") or 0
+    current_eur = card_value("current_eur") or prices.get("eur") or 0
+    current_eur_foil = card_value("current_eur_foil") or prices.get("eur_foil") or 0
+    current_tix = card_value("current_tix") or prices.get("tix") or 0
     variant_text = (variant or "").lower()
+    currency = clean_price_currency(currency)
+    if currency == "eur":
+        if "foil" in variant_text and current_eur_foil:
+            return current_eur_foil
+        return current_eur or current_eur_foil or 0
+    if currency == "tix":
+        return current_tix or 0
     if "etched" in variant_text and current_usd_etched:
         return current_usd_etched
     if "foil" in variant_text and current_usd_foil:
@@ -5958,7 +6014,7 @@ def variant_price_from_row(card, variant):
 
 def aggregate_variant_market_value(card, variant_summaries):
     return sum(
-        int(summary.get("quantity") or 0) * float(variant_price_from_row(card, summary.get("variant") or "Normal") or 0)
+        int(summary.get("quantity") or 0) * float(variant_price_from_row(card, summary.get("variant") or "Normal", summary.get("currency") or "usd") or 0)
         for summary in variant_summaries or []
     )
 
@@ -6018,11 +6074,12 @@ def validate_selected_card(card, payload):
             raise ValueError("Selected Scryfall card changed before save. Please search and choose the card again.")
 
 
-def record_card_purchase(conn, user_id, card_id, variant, quantity, condition, purchase_date, total_price, store_name="", store_location="", graded=0, notes="", location_id=None):
+def record_card_purchase(conn, user_id, card_id, variant, quantity, condition, purchase_date, total_price, store_name="", store_location="", graded=0, notes="", location_id=None, currency="usd"):
     quantity = max(1, int(quantity or 1))
     total_price = money(total_price, fallback=0.01)
     if total_price <= 0:
         total_price = 0.01
+    currency = clean_price_currency(currency)
     store_name = clean_purchase_detail(store_name, "Store name")
     store_location = clean_purchase_detail(store_location, "Store location")
     linked_location = None
@@ -6044,8 +6101,8 @@ def record_card_purchase(conn, user_id, card_id, variant, quantity, condition, p
         raise ValueError("Purchase notes must be 1,000 characters or fewer.")
     conn.execute(
         """
-        INSERT INTO card_purchases (user_id, card_id, variant, quantity, card_condition, purchase_date, total_price, graded, store_name, store_location, notes, location_id, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO card_purchases (user_id, card_id, variant, quantity, card_condition, purchase_date, total_price, currency, graded, store_name, store_location, notes, location_id, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             user_id,
@@ -6055,6 +6112,7 @@ def record_card_purchase(conn, user_id, card_id, variant, quantity, condition, p
             card_condition(condition),
             purchase_date or today_iso(),
             total_price,
+            currency,
             bool_int(graded),
             store_name,
             store_location,
@@ -6084,7 +6142,7 @@ def rollup_collection_from_purchases(conn, user_id, card_id, variant):
         return None
     latest = conn.execute(
         """
-        SELECT card_condition, notes
+        SELECT card_condition, notes, COALESCE(NULLIF(currency, ''), 'usd') AS currency
         FROM card_purchases
         WHERE user_id = ? AND card_id = ? AND variant = ?
         ORDER BY purchase_date DESC, id DESC
@@ -6106,13 +6164,14 @@ def rollup_collection_from_purchases(conn, user_id, card_id, variant):
     average_paid = money(aggregate["total_paid"], fallback=0.01) / quantity
     conn.execute(
         """
-        INSERT INTO collection (user_id, card_id, share_id, quantity, acquired_date, paid_price, variant, card_condition, graded, notes, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO collection (user_id, card_id, share_id, quantity, acquired_date, paid_price, currency, variant, card_condition, graded, notes, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(user_id, card_id, variant) DO UPDATE SET
             share_id = COALESCE(collection.share_id, excluded.share_id),
             quantity = excluded.quantity,
             acquired_date = excluded.acquired_date,
             paid_price = excluded.paid_price,
+            currency = excluded.currency,
             card_condition = excluded.card_condition,
             graded = excluded.graded,
             notes = excluded.notes,
@@ -6125,6 +6184,7 @@ def rollup_collection_from_purchases(conn, user_id, card_id, variant):
             quantity,
             aggregate["first_purchase"] or today_iso(),
             average_paid,
+            clean_price_currency(latest["currency"] if latest else "usd"),
             variant,
             card_condition(latest["card_condition"] if latest else DEFAULT_CARD_CONDITION),
             graded,
@@ -6182,12 +6242,13 @@ def add_card_to_collection(conn, user_id, payload):
             continue
         paid_price = money(row.get("paid_price"), fallback=0.01)
         if paid_price <= 0:
-            raise ValueError("Price paid per card must be greater than $0.00.")
+            raise ValueError("Price paid per card must be greater than zero.")
         purchase_date = row.get("acquired_date") or row.get("purchase_date") or today_iso()
         normalized_rows.append({
             "variant": row.get("variant") or "Normal",
             "quantity": quantity,
             "paid_price": paid_price,
+            "currency": clean_price_currency(row.get("currency") or payload.get("currency") or "usd"),
             "purchase_date": purchase_date,
             "card_condition": card_condition(row.get("card_condition")),
             "graded": bool_int(row.get("graded")),
@@ -6217,6 +6278,7 @@ def add_card_to_collection(conn, user_id, payload):
             row["graded"],
             row["notes"],
             row["location_id"],
+            row["currency"],
         )
         if row["variant"] not in variants:
             variants.append(row["variant"])
@@ -6236,7 +6298,12 @@ def add_card_to_collection(conn, user_id, payload):
         "quantity_added": total_added,
         "variant": variants[0] if variants else "Normal",
         "variants": variants,
-        "current_value": variant_price_from_row(card, variants[0] if variants else "Normal"),
+        "currency": collection_rows[0].get("currency", "usd") if collection_rows else "usd",
+        "current_value": variant_price_from_row(
+            card,
+            variants[0] if variants else "Normal",
+            collection_rows[0].get("currency", "usd") if collection_rows else "usd",
+        ),
     }
 
 
@@ -6326,6 +6393,7 @@ def import_csv(conn, csv_path, user_id=None):
                     "variant": variant,
                     "quantity": 0,
                     "paid_total": 0.0,
+                    "currency": clean_price_currency(source.get("Currency") or source.get("currency") or "usd"),
                     "acquired_date": source.get("Date Added") or today_iso(),
                     "card_condition": card_condition(source.get("Card Condition")),
                     "graded": bool_int(source.get("Graded")),
@@ -6355,13 +6423,14 @@ def import_csv(conn, csv_path, user_id=None):
         used_share_ids.add(share_id)
         conn.execute(
             """
-            INSERT INTO collection (user_id, card_id, share_id, quantity, acquired_date, paid_price, variant, card_condition, graded, notes, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO collection (user_id, card_id, share_id, quantity, acquired_date, paid_price, currency, variant, card_condition, graded, notes, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(user_id, card_id, variant) DO UPDATE SET
                 share_id = COALESCE(collection.share_id, excluded.share_id),
                 quantity = excluded.quantity,
                 acquired_date = excluded.acquired_date,
                 paid_price = excluded.paid_price,
+                currency = excluded.currency,
                 card_condition = excluded.card_condition,
                 graded = excluded.graded,
                 notes = excluded.notes,
@@ -6374,6 +6443,7 @@ def import_csv(conn, csv_path, user_id=None):
                 record["quantity"],
                 record["acquired_date"],
                 paid_price,
+                record["currency"],
                 record["variant"],
                 record["card_condition"],
                 record["graded"],
@@ -6420,6 +6490,7 @@ def import_row_from_source(source, line_number, source_format):
         "collector_number": collector_number,
         "quantity": quantity,
         "paid_price": paid_price,
+        "currency": clean_price_currency(source_value(source, "currency", "Currency") or "usd"),
         "acquired_date": source_value(source, "acquired_date", "Date Acquired", "Date Added") or today_iso(),
         "variant": import_variant(source),
         "card_condition": card_condition(source_value(source, "card_condition", "Condition", "Card Condition")),
@@ -7118,6 +7189,7 @@ def commit_import_rows(conn, user_id, payload):
             entry.get("graded") or 0,
             entry.get("notes") or "",
             entry.get("location_id") or None,
+            clean_price_currency(entry.get("currency") or "usd"),
         )
         rollup_collection_from_purchases(conn, user_id, card_id, variant)
         imported += 1
@@ -7413,11 +7485,16 @@ def commit_container_allocation_import(conn, user_id, payload):
     }
 
 
-def current_price_sql(alias="c"):
+def current_price_sql(alias="c", variant_expr="col.variant", currency_expr="col.currency"):
     return (
         f"CASE "
-        f"WHEN lower(coalesce(col.variant, '')) LIKE '%etched%' AND {alias}.current_usd_etched > 0 THEN {alias}.current_usd_etched "
-        f"WHEN lower(coalesce(col.variant, '')) LIKE '%foil%' AND {alias}.current_usd_foil > 0 THEN {alias}.current_usd_foil "
+        f"WHEN lower(coalesce({currency_expr}, 'usd')) = 'eur' AND lower(coalesce({variant_expr}, '')) LIKE '%foil%' AND {alias}.current_eur_foil > 0 THEN {alias}.current_eur_foil "
+        f"WHEN lower(coalesce({currency_expr}, 'usd')) = 'eur' AND {alias}.current_eur > 0 THEN {alias}.current_eur "
+        f"WHEN lower(coalesce({currency_expr}, 'usd')) = 'eur' AND {alias}.current_eur_foil > 0 THEN {alias}.current_eur_foil "
+        f"WHEN lower(coalesce({currency_expr}, 'usd')) = 'eur' THEN 0 "
+        f"WHEN lower(coalesce({currency_expr}, 'usd')) = 'tix' THEN COALESCE({alias}.current_tix, 0) "
+        f"WHEN lower(coalesce({variant_expr}, '')) LIKE '%etched%' AND {alias}.current_usd_etched > 0 THEN {alias}.current_usd_etched "
+        f"WHEN lower(coalesce({variant_expr}, '')) LIKE '%foil%' AND {alias}.current_usd_foil > 0 THEN {alias}.current_usd_foil "
         f"WHEN {alias}.current_usd > 0 THEN {alias}.current_usd "
         f"WHEN {alias}.current_usd_foil > 0 THEN {alias}.current_usd_foil "
         f"WHEN {alias}.current_usd_etched > 0 THEN {alias}.current_usd_etched "
@@ -7426,9 +7503,11 @@ def current_price_sql(alias="c"):
 
 
 def collection_value_history(conn, user_id, months=24):
+    user_row = conn.execute("SELECT default_currency FROM users WHERE id = ?", (user_id,)).fetchone()
+    currency = clean_price_currency(user_row["default_currency"] if user_row else "usd")
     first_acquired = conn.execute(
-        "SELECT MIN(acquired_date) AS first_acquired FROM collection WHERE user_id = ? AND quantity > 0 AND acquired_date IS NOT NULL AND acquired_date != ''",
-        (user_id,),
+        "SELECT MIN(acquired_date) AS first_acquired FROM collection WHERE user_id = ? AND currency = ? AND quantity > 0 AND acquired_date IS NOT NULL AND acquired_date != ''",
+        (user_id, currency),
     ).fetchone()["first_acquired"]
     first_date = parse_iso_date(first_acquired)
     if not first_date:
@@ -7449,11 +7528,21 @@ def collection_value_history(conn, user_id, months=24):
         month_end_text = month_end.isoformat()
         price_expr = (
             "CASE "
+            "WHEN lower(coalesce(col.currency, 'usd')) = 'eur' AND lower(coalesce(col.variant, '')) LIKE '%foil%' AND COALESCE(ps.eur_foil, 0) > 0 THEN ps.eur_foil "
+            "WHEN lower(coalesce(col.currency, 'usd')) = 'eur' AND COALESCE(ps.eur, 0) > 0 THEN ps.eur "
+            "WHEN lower(coalesce(col.currency, 'usd')) = 'eur' AND COALESCE(ps.eur_foil, 0) > 0 THEN ps.eur_foil "
+            "WHEN lower(coalesce(col.currency, 'usd')) = 'tix' AND COALESCE(ps.tix, 0) > 0 THEN ps.tix "
+            "WHEN lower(coalesce(col.currency, 'usd')) = 'eur' THEN 0 "
+            "WHEN lower(coalesce(col.currency, 'usd')) = 'tix' THEN 0 "
             "WHEN lower(coalesce(col.variant, '')) LIKE '%etched%' AND COALESCE(ps.usd_etched, 0) > 0 THEN ps.usd_etched "
             "WHEN lower(coalesce(col.variant, '')) LIKE '%foil%' AND COALESCE(ps.usd_foil, 0) > 0 THEN ps.usd_foil "
             "WHEN COALESCE(ps.usd, 0) > 0 THEN ps.usd "
             "WHEN COALESCE(ps.usd_foil, 0) > 0 THEN ps.usd_foil "
             "WHEN COALESCE(ps.usd_etched, 0) > 0 THEN ps.usd_etched "
+            "WHEN lower(coalesce(col.currency, 'usd')) = 'eur' AND lower(coalesce(col.variant, '')) LIKE '%foil%' AND c.current_eur_foil > 0 THEN c.current_eur_foil "
+            "WHEN lower(coalesce(col.currency, 'usd')) = 'eur' AND c.current_eur > 0 THEN c.current_eur "
+            "WHEN lower(coalesce(col.currency, 'usd')) = 'eur' AND c.current_eur_foil > 0 THEN c.current_eur_foil "
+            "WHEN lower(coalesce(col.currency, 'usd')) = 'tix' THEN COALESCE(c.current_tix, 0) "
             "WHEN lower(coalesce(col.variant, '')) LIKE '%etched%' AND c.current_usd_etched > 0 THEN c.current_usd_etched "
             "WHEN lower(coalesce(col.variant, '')) LIKE '%foil%' AND c.current_usd_foil > 0 THEN c.current_usd_foil "
             "WHEN c.current_usd > 0 THEN c.current_usd "
@@ -7477,17 +7566,19 @@ def collection_value_history(conn, user_id, months=24):
                   AND ps2.snapshot_date <= ?
              )
             WHERE col.user_id = ?
+              AND COALESCE(NULLIF(lower(col.currency), ''), 'usd') = ?
               AND col.quantity > 0
               AND col.acquired_date IS NOT NULL
               AND col.acquired_date != ''
             """,
-            (month_end_text, month_start, month_end_text, month_end_text, user_id),
+            (month_end_text, month_start, month_end_text, month_end_text, user_id, currency),
         ).fetchone()
         points.append({
             "date": key,
             "label": month_label(cursor),
             "added_value": round(row["added_value"] or 0, 2),
             "value": round(row["value"] or 0, 2),
+            "currency": currency,
         })
         cursor = add_months(cursor, 1)
     return points
@@ -7521,6 +7612,55 @@ def set_completion(conn, user_id, limit=10):
             "completion_percent": round((owned / total * 100) if total else 0, 1),
         })
     return result
+
+
+def collection_currency_totals(conn, user_id=None, set_code=None):
+    price_expr = current_price_sql("c")
+    user_where = "AND col.user_id = ?" if user_id is not None else ""
+    set_where = "AND c.set_code = ?" if set_code is not None else ""
+    params = tuple(value for value in (user_id, set_code) if value is not None)
+    rows = conn.execute(
+        f"""
+        SELECT COALESCE(NULLIF(lower(col.currency), ''), 'usd') AS currency,
+               COALESCE(SUM(col.quantity * col.paid_price), 0) AS paid_total,
+               COALESCE(SUM(col.quantity * ({price_expr})), 0) AS current_total
+        FROM collection col
+        JOIN cards c ON c.scryfall_id = col.card_id
+        WHERE COALESCE(col.quantity, 0) > 0 {user_where} {set_where}
+        GROUP BY COALESCE(NULLIF(lower(col.currency), ''), 'usd')
+        ORDER BY currency
+        """,
+        params,
+    ).fetchall()
+    return [
+        {
+            "currency": clean_price_currency(row["currency"]),
+            "paid_total": float(row["paid_total"] or 0),
+            "current_total": float(row["current_total"] or 0),
+            "gain_loss": float(row["current_total"] or 0) - float(row["paid_total"] or 0),
+        }
+        for row in rows
+    ]
+
+
+def sale_currency_totals(conn, user_id=None):
+    user_where = "AND user_id = ?" if user_id is not None else ""
+    params = (user_id,) if user_id is not None else ()
+    rows = conn.execute(
+        f"""
+        SELECT COALESCE(NULLIF(lower(currency), ''), 'usd') AS currency,
+               COALESCE(SUM(quantity * asking_price), 0) AS asking_total
+        FROM card_sales
+        WHERE COALESCE(quantity, 0) > 0 {user_where}
+        GROUP BY COALESCE(NULLIF(lower(currency), ''), 'usd')
+        ORDER BY currency
+        """,
+        params,
+    ).fetchall()
+    return [
+        {"currency": clean_price_currency(row["currency"]), "asking_total": float(row["asking_total"] or 0)}
+        for row in rows
+    ]
 
 
 def set_detail(conn, user_id, set_code):
@@ -7563,6 +7703,7 @@ def set_detail(conn, user_id, set_code):
         **dict(row),
         "completion_percent": round((owned / total * 100) if total else 0, 1),
         "delta": float(row["total_market_value"] or 0) - float(row["total_paid"] or 0),
+        "currency_totals": collection_currency_totals(conn, user_id, set_code),
     }
 
 
@@ -7673,7 +7814,7 @@ def dashboard(conn, user_id):
     ).fetchone()
     top = rows_to_dicts(conn.execute(
         f"""
-        SELECT c.*, col.quantity, col.paid_price, col.variant, col.acquired_date,
+        SELECT c.*, col.quantity, col.paid_price, COALESCE(col.currency, 'usd') AS currency, col.variant, col.acquired_date,
                COALESCE(meta.favorite, 0) AS favorite,
                ({price_expr}) AS display_price,
                col.quantity * ({price_expr}) AS owned_value,
@@ -7739,6 +7880,7 @@ def dashboard(conn, user_id):
     result["wishlist_count"] = wishlist_count
     result["sale_count"] = sale_summary["count"] or 0
     result["sale_asking_total"] = sale_summary["asking_total"] or 0
+    result["sale_currency_totals"] = sale_currency_totals(conn, user_id)
     result["total_value"] = result["current_total"]
     result["gain_loss"] = result["current_total"] - result["paid_total"]
     result["gain_loss_percent"] = (result["gain_loss"] / result["paid_total"] * 100) if result["paid_total"] else 0
@@ -7747,6 +7889,7 @@ def dashboard(conn, user_id):
     result["history"] = history
     result["set_breakdown"] = set_breakdown
     result["set_completion"] = set_completion(conn, user_id)
+    result["currency_totals"] = collection_currency_totals(conn, user_id)
     return result
 
 
@@ -7797,12 +7940,13 @@ def home_stats(conn):
                    c.collector_number, c.rarity, c.type_line, c.type_category, c.colors, c.color_identity,
                    c.image_small, c.image_normal, c.scryfall_uri,
                    COALESCE(NULLIF(col.variant, ''), 'Normal') AS variant,
+                   COALESCE(NULLIF(col.currency, ''), 'usd') AS currency,
                    COALESCE(SUM(col.quantity), 0) AS quantity,
                    ({price_expr}) AS display_price
             FROM collection col
             JOIN cards c ON c.scryfall_id = col.card_id
             WHERE COALESCE(col.quantity, 0) > 0
-            GROUP BY col.card_id, COALESCE(NULLIF(col.variant, ''), 'Normal')
+            GROUP BY col.card_id, COALESCE(NULLIF(col.variant, ''), 'Normal'), COALESCE(NULLIF(col.currency, ''), 'usd')
             ORDER BY lower(c.name), lower(c.set_code), c.collector_number, variant
             LIMIT 1 OFFSET ?
             """,
@@ -7818,9 +7962,11 @@ def home_stats(conn):
         "container_count": int(container_count),
         "wishlist_count": int(wishlist_count),
         "total_value": float(totals["total_value"] or 0),
+        "currency_totals": collection_currency_totals(conn),
         "sale_listing_count": int(sale_summary["listing_count"] or 0),
         "sale_quantity": int(sale_summary["sale_quantity"] or 0),
         "sale_asking_total": float(sale_summary["asking_total"] or 0),
+        "sale_currency_totals": sale_currency_totals(conn),
         "announcements": active_home_announcements(conn),
         "todays_card": todays_card,
     }
@@ -7984,6 +8130,7 @@ def deck_cards(conn, user_id, deck_id):
         SELECT c.*, dc.variant, dc.quantity AS deck_quantity, dc.added_at,
                COALESCE(col.quantity, 0) AS quantity,
                COALESCE(col.paid_price, 0.01) AS paid_price,
+               COALESCE(col.currency, 'usd') AS currency,
                COALESCE(col.card_condition, 'Near Mint') AS card_condition,
                COALESCE(col.graded, 0) AS graded,
                col.acquired_date,
@@ -8898,15 +9045,7 @@ def purge_store_listing_favorites(conn, seller_user_id, card_id, variant=None, c
 
 
 def list_favorite_store_listings(conn, user_id):
-    price_expr = (
-        "CASE "
-        "WHEN lower(coalesce(fav.variant, '')) LIKE '%etched%' AND c.current_usd_etched > 0 THEN c.current_usd_etched "
-        "WHEN lower(coalesce(fav.variant, '')) LIKE '%foil%' AND c.current_usd_foil > 0 THEN c.current_usd_foil "
-        "WHEN c.current_usd > 0 THEN c.current_usd "
-        "WHEN c.current_usd_foil > 0 THEN c.current_usd_foil "
-        "WHEN c.current_usd_etched > 0 THEN c.current_usd_etched "
-        "ELSE 0 END"
-    )
+    price_expr = current_price_sql("c", "fav.variant", "sale.currency")
     rows = conn.execute(
         f"""
         SELECT fav.seller_user_id, fav.card_id, fav.variant, fav.card_condition,
@@ -8914,6 +9053,7 @@ def list_favorite_store_listings(conn, user_id):
                c.*,
                sale.quantity AS sale_quantity,
                sale.asking_price,
+               COALESCE(NULLIF(sale.currency, ''), 'usd') AS currency,
                sale.quantity AS quantity,
                sale.quantity * sale.asking_price AS sale_asking_total,
                sale.quantity * sale.asking_price AS owned_value,
@@ -9449,15 +9589,7 @@ def owned_quantity(conn, user_id, card_id, variant):
 
 
 def list_containers(conn, user_id):
-    price_expr = (
-        "CASE "
-        "WHEN lower(coalesce(cc.variant, '')) LIKE '%etched%' AND c.current_usd_etched > 0 THEN c.current_usd_etched "
-        "WHEN lower(coalesce(cc.variant, '')) LIKE '%foil%' AND c.current_usd_foil > 0 THEN c.current_usd_foil "
-        "WHEN c.current_usd > 0 THEN c.current_usd "
-        "WHEN c.current_usd_foil > 0 THEN c.current_usd_foil "
-        "WHEN c.current_usd_etched > 0 THEN c.current_usd_etched "
-        "ELSE 0 END"
-    )
+    price_expr = current_price_sql("c", "cc.variant", "col.currency")
     rows = conn.execute(
         f"""
         SELECT ct.id, ct.share_id, ct.name, COALESCE(ct.storage_type, 'other') AS storage_type,
@@ -9470,6 +9602,7 @@ def list_containers(conn, user_id):
         FROM containers ct
         LEFT JOIN container_cards cc ON cc.container_id = ct.id
         LEFT JOIN cards c ON c.scryfall_id = cc.card_id
+        LEFT JOIN collection col ON col.user_id = ct.user_id AND col.card_id = cc.card_id AND col.variant = cc.variant
         WHERE ct.user_id = ?
         GROUP BY ct.id
         ORDER BY ct.updated_at DESC, ct.name COLLATE NOCASE
@@ -9502,15 +9635,7 @@ def list_containers(conn, user_id):
 
 
 def container_storage_stats(conn, user_id, container_id):
-    price_expr = (
-        "CASE "
-        "WHEN lower(coalesce(cc.variant, '')) LIKE '%etched%' AND c.current_usd_etched > 0 THEN c.current_usd_etched "
-        "WHEN lower(coalesce(cc.variant, '')) LIKE '%foil%' AND c.current_usd_foil > 0 THEN c.current_usd_foil "
-        "WHEN c.current_usd > 0 THEN c.current_usd "
-        "WHEN c.current_usd_foil > 0 THEN c.current_usd_foil "
-        "WHEN c.current_usd_etched > 0 THEN c.current_usd_etched "
-        "ELSE 0 END"
-    )
+    price_expr = current_price_sql("c", "cc.variant", "col.currency")
     row = conn.execute(
         f"""
         SELECT COALESCE(ct.capacity, 0) AS capacity,
@@ -9520,6 +9645,7 @@ def container_storage_stats(conn, user_id, container_id):
         FROM containers ct
         LEFT JOIN container_cards cc ON cc.container_id = ct.id
         LEFT JOIN cards c ON c.scryfall_id = cc.card_id
+        LEFT JOIN collection col ON col.user_id = ct.user_id AND col.card_id = cc.card_id AND col.variant = cc.variant
         WHERE ct.id = ? AND ct.user_id = ?
         GROUP BY ct.id
         """,
@@ -9532,6 +9658,24 @@ def container_storage_stats(conn, user_id, container_id):
     stored = int(stats.get("stored_quantity") or 0)
     stats["remaining_capacity"] = max(0, capacity - stored) if capacity > 0 else None
     stats["fill_percent"] = round(min(100, (stored / capacity) * 100), 1) if capacity > 0 else None
+    currency_rows = conn.execute(
+        f"""
+        SELECT COALESCE(NULLIF(lower(col.currency), ''), 'usd') AS currency,
+               COALESCE(SUM(cc.quantity * ({price_expr})), 0) AS current_total
+        FROM container_cards cc
+        JOIN containers ct ON ct.id = cc.container_id AND ct.user_id = ?
+        JOIN cards c ON c.scryfall_id = cc.card_id
+        LEFT JOIN collection col ON col.user_id = ct.user_id AND col.card_id = cc.card_id AND col.variant = cc.variant
+        WHERE cc.container_id = ? AND COALESCE(cc.quantity, 0) > 0
+        GROUP BY COALESCE(NULLIF(lower(col.currency), ''), 'usd')
+        ORDER BY currency
+        """,
+        (user_id, container_id),
+    ).fetchall()
+    stats["currency_totals"] = [
+        {"currency": clean_price_currency(item["currency"]), "current_total": float(item["current_total"] or 0)}
+        for item in currency_rows
+    ]
     return stats
 
 
@@ -9755,6 +9899,7 @@ def container_cards(conn, user_id, container_id):
                cc.quantity AS stored_quantity, cc.updated_at,
                COALESCE(col.quantity, 0) AS quantity,
                COALESCE(col.paid_price, 0.01) AS paid_price,
+               COALESCE(col.currency, 'usd') AS currency,
                COALESCE(col.graded, 0) AS graded,
                col.acquired_date,
                col.share_id,
@@ -10144,6 +10289,7 @@ def list_cards(conn, query, user_id):
     rows = conn.execute(
         f"""
         SELECT c.*, COALESCE(col.quantity, 0) AS quantity, COALESCE(col.paid_price, 0.01) AS paid_price,
+               COALESCE(col.currency, 'usd') AS currency,
                COALESCE(col.variant, 'Normal') AS variant, col.share_id, col.acquired_date,
                COALESCE(col.card_condition, 'Near Mint') AS card_condition,
                COALESCE(col.graded, 0) AS graded,
@@ -10381,7 +10527,7 @@ def wishlist_email_html(wishlist, share_url, sender_name):
             except json.JSONDecodeError:
                 colors = [colors] if colors else []
         color_text = html_lib.escape(", ".join(colors or card.get("color_identity") or []) or "Colorless")
-        price_text = money(card.get("display_price"), fallback=0)
+        price_text = format_currency_amount(card.get("display_price"), card.get("currency") or "usd")
         rows.append(f"""
           <tr>
             <td style="padding:10px 8px;border-bottom:1px solid #d7dedb;">
@@ -10390,7 +10536,7 @@ def wishlist_email_html(wishlist, share_url, sender_name):
             </td>
             <td style="padding:10px 8px;border-bottom:1px solid #d7dedb;color:#303936;">{type_text}</td>
             <td style="padding:10px 8px;border-bottom:1px solid #d7dedb;color:#303936;">{color_text}</td>
-            <td style="padding:10px 8px;border-bottom:1px solid #d7dedb;text-align:right;">${price_text:.2f}</td>
+            <td style="padding:10px 8px;border-bottom:1px solid #d7dedb;text-align:right;">{price_text}</td>
           </tr>
         """)
     list_rows = "\n".join(rows) or """
@@ -10566,7 +10712,7 @@ def shared_list_email_html(payload, share_url, sender_name, entity_type):
         type_text = html_lib.escape(card.get("type_line") or card.get("type_category") or "")
         color_text = html_lib.escape(email_card_colors(card))
         quantity = share_list_quantity(card, entity_type)
-        price_text = money(card.get("display_price"), fallback=0)
+        price_text = format_currency_amount(card.get("display_price"), card.get("currency") or "usd")
         rows.append(f"""
           <tr>
             <td style="padding:10px 8px;border-bottom:1px solid #d7dedb;">
@@ -10576,7 +10722,7 @@ def shared_list_email_html(payload, share_url, sender_name, entity_type):
             <td style="padding:10px 8px;border-bottom:1px solid #d7dedb;color:#303936;">{type_text}</td>
             <td style="padding:10px 8px;border-bottom:1px solid #d7dedb;color:#303936;">{color_text}</td>
             <td style="padding:10px 8px;border-bottom:1px solid #d7dedb;text-align:right;">{quantity}</td>
-            <td style="padding:10px 8px;border-bottom:1px solid #d7dedb;text-align:right;">${price_text:.2f}</td>
+            <td style="padding:10px 8px;border-bottom:1px solid #d7dedb;text-align:right;">{price_text}</td>
           </tr>
         """)
     list_rows = "\n".join(rows) or f"""
@@ -10895,6 +11041,7 @@ def list_sale_cards(conn, query, user_id):
         SELECT c.*, COALESCE(col.quantity, 0) AS owned_quantity,
                COALESCE(inv.quantity, col.quantity, sale.quantity) AS quantity,
                COALESCE(col.paid_price, 0.01) AS paid_price,
+               COALESCE(col.currency, 'usd') AS currency,
                sale.variant AS variant,
                col.share_id,
                col.acquired_date,
@@ -10932,12 +11079,9 @@ def list_sale_cards(conn, query, user_id):
 
 
 def price_for_variant_from_row(card_row, variant):
-    variant_key = (variant or "Normal").lower()
-    if "etched" in variant_key and card_row["current_usd_etched"]:
-        return float(card_row["current_usd_etched"] or 0)
-    if "foil" in variant_key and card_row["current_usd_foil"]:
-        return float(card_row["current_usd_foil"] or 0)
-    return float(card_row["current_usd"] or card_row["current_usd_foil"] or card_row["current_usd_etched"] or 0)
+    keys = card_row.keys() if hasattr(card_row, "keys") else card_row
+    currency = card_row["currency"] if "currency" in keys else "usd"
+    return variant_price_from_row(card_row, variant, currency)
 
 
 def list_notifications(conn, user_id, limit=100):
@@ -10975,10 +11119,11 @@ def mark_notification_read(conn, user_id, notification_id):
     return {"ok": True, **list_notifications(conn, user_id)}
 
 
-def notify_wishlist_users_for_sale(conn, seller_user_id, card_id, variant, sale_condition, quantity, asking_price):
+def notify_wishlist_users_for_sale(conn, seller_user_id, card_id, variant, sale_condition, quantity, asking_price, currency="usd"):
     card = conn.execute(
         """
-        SELECT scryfall_id, name, flavor_name, current_usd, current_usd_foil, current_usd_etched
+        SELECT scryfall_id, name, flavor_name, current_usd, current_usd_foil, current_usd_etched,
+               current_eur, current_eur_foil, current_tix
         FROM cards
         WHERE scryfall_id = ?
         """,
@@ -10997,14 +11142,15 @@ def notify_wishlist_users_for_sale(conn, seller_user_id, card_id, variant, sale_
         conn.execute("UPDATE users SET store_share_id = ? WHERE id = ?", (store_share_id, seller_user_id))
     seller_name = public_display_name({**dict(seller), "store_share_id": store_share_id}, "Seller")
     title = card_email_title(dict(card))
-    market_price = price_for_variant_from_row(card, variant)
+    currency = clean_price_currency(currency)
+    market_price = variant_price_from_row(card, variant, currency)
     store_url = store_share_url(store_share_id)
     subject = "A Card on your wishlist is for sale!"
     body = (
         f"The card - {title} was just listed for sale on {seller_name}'s store. "
         f"They have {int(quantity or 0)} for sale. "
-        f"They're asking ${float(asking_price or 0):.2f}. "
-        f"The current market value of this card is ${float(market_price or 0):.2f}."
+        f"They're asking {format_currency_amount(asking_price, currency)}. "
+        f"The current market value of this card is {format_currency_amount(market_price, currency)}."
     )
     rows = conn.execute(
         """
@@ -11084,11 +11230,12 @@ def card_sale_sellers(conn, card_id):
                COALESCE(SUM(sale.quantity), 0) AS sale_quantity,
                MIN(sale.asking_price) AS min_asking_price,
                MAX(sale.asking_price) AS max_asking_price,
+               COALESCE(NULLIF(sale.currency, ''), 'usd') AS currency,
                COUNT(DISTINCT COALESCE(NULLIF(sale.variant, ''), 'Normal')) AS variant_count
         FROM card_sales sale
         JOIN users u ON u.id = sale.user_id
         WHERE sale.card_id = ? AND COALESCE(sale.quantity, 0) > 0
-        GROUP BY u.id
+        GROUP BY u.id, COALESCE(NULLIF(sale.currency, ''), 'usd')
         ORDER BY COALESCE(SUM(sale.quantity), 0) DESC, u.name COLLATE NOCASE
         """,
         (card_id,),
@@ -11121,15 +11268,7 @@ def list_store_front_cards(conn, query, current_user_id=None):
         needle = f"%{search}%"
         values.extend([needle, needle, needle, needle, needle])
     where_sql = "WHERE " + " AND ".join(where)
-    price_expr = (
-        "CASE "
-        "WHEN lower(coalesce(sale.variant, '')) LIKE '%etched%' AND c.current_usd_etched > 0 THEN c.current_usd_etched "
-        "WHEN lower(coalesce(sale.variant, '')) LIKE '%foil%' AND c.current_usd_foil > 0 THEN c.current_usd_foil "
-        "WHEN c.current_usd > 0 THEN c.current_usd "
-        "WHEN c.current_usd_foil > 0 THEN c.current_usd_foil "
-        "WHEN c.current_usd_etched > 0 THEN c.current_usd_etched "
-        "ELSE 0 END"
-    )
+    price_expr = current_price_sql("c", "sale.variant", "sale.currency")
     sort_map = {
         "name": "c.name COLLATE NOCASE ASC",
         "set": "c.set_name COLLATE NOCASE ASC, CAST(c.collector_number AS INTEGER), c.collector_number",
@@ -11148,6 +11287,7 @@ def list_store_front_cards(conn, query, current_user_id=None):
                COALESCE(SUM(sale.quantity * sale.asking_price), 0) AS sale_asking_total,
                MIN(sale.asking_price) AS min_asking_price,
                MAX(sale.asking_price) AS max_asking_price,
+               COALESCE(MAX(NULLIF(sale.currency, '')), 'usd') AS currency,
                COUNT(DISTINCT sale.user_id) AS seller_count,
                COUNT(DISTINCT COALESCE(NULLIF(sale.variant, ''), 'Normal')) AS variant_count,
                MAX(CASE WHEN LOWER(COALESCE(NULLIF(sale.variant, ''), 'Normal')) != 'normal' THEN 1 ELSE 0 END) AS has_special_variant,
@@ -11265,6 +11405,7 @@ def store_front_card_detail(conn, card_id, current_user_id=None):
                COALESCE(NULLIF(sale.card_condition, ''), ?) AS card_condition,
                COALESCE(sale.quantity, 0) AS sale_quantity,
                sale.asking_price,
+               COALESCE(NULLIF(sale.currency, ''), 'usd') AS currency,
                COALESCE(sale.whatnot_url, '') AS whatnot_url
         FROM card_sales sale
         JOIN users u ON u.id = sale.user_id
@@ -11325,15 +11466,7 @@ def public_profile_contacts(user):
 
 
 def public_profile_stats(conn, user_id):
-    price_expr = (
-        "CASE "
-        "WHEN lower(coalesce(col.variant, '')) LIKE '%etched%' AND c.current_usd_etched > 0 THEN c.current_usd_etched "
-        "WHEN lower(coalesce(col.variant, '')) LIKE '%foil%' AND c.current_usd_foil > 0 THEN c.current_usd_foil "
-        "WHEN c.current_usd > 0 THEN c.current_usd "
-        "WHEN c.current_usd_foil > 0 THEN c.current_usd_foil "
-        "WHEN c.current_usd_etched > 0 THEN c.current_usd_etched "
-        "ELSE 0 END"
-    )
+    price_expr = current_price_sql("c")
     row = conn.execute(
         f"""
         SELECT COALESCE(SUM(col.quantity), 0) AS owned_quantity,
@@ -11357,6 +11490,7 @@ def public_profile_stats(conn, user_id):
         "owned_quantity": int(row["owned_quantity"] or 0),
         "unique_cards": int(row["unique_cards"] or 0),
         "collection_value": float(row["collection_value"] or 0),
+        "currency_totals": collection_currency_totals(conn, user_id),
         "public_deck_count": int(deck_count["count"] or 0),
         "sale_quantity": int(sale_row["quantity"] or 0),
         "sale_listing_count": int(sale_row["listings"] or 0),
@@ -11970,6 +12104,7 @@ def card_email_html(card, share_url, sender_name):
     type_text = html_lib.escape(card.get("type_line") or card.get("type_category") or "")
     color_text = html_lib.escape(email_card_colors(card))
     market = money(card.get("display_price"), fallback=0)
+    market_text = html_lib.escape(format_currency_amount(market, card.get("currency") or "usd"))
     image_url = html_lib.escape(card.get("image_normal") or card.get("image_small") or "")
     image_html = f'<p><img src="{image_url}" alt="{title}" style="max-width:260px;width:100%;border-radius:12px;"></p>' if image_url else ""
     return f"""
@@ -11989,7 +12124,7 @@ def card_email_html(card, share_url, sender_name):
               <tr><th style="text-align:left;padding:10px 8px;background:#e9efec;">Set</th><td style="padding:10px 8px;">{set_text}</td></tr>
               <tr><th style="text-align:left;padding:10px 8px;background:#e9efec;">Type</th><td style="padding:10px 8px;">{type_text}</td></tr>
               <tr><th style="text-align:left;padding:10px 8px;background:#e9efec;">Colors</th><td style="padding:10px 8px;">{color_text}</td></tr>
-              <tr><th style="text-align:left;padding:10px 8px;background:#e9efec;">Market</th><td style="padding:10px 8px;">${market:.2f}</td></tr>
+              <tr><th style="text-align:left;padding:10px 8px;background:#e9efec;">Market</th><td style="padding:10px 8px;">{market_text}</td></tr>
             </tbody>
           </table>
         </div>
@@ -12011,7 +12146,7 @@ def card_email_text(card, share_url, sender_name):
         f"Set: {set_text}",
         f"Type: {card.get('type_line') or card.get('type_category') or ''}",
         f"Colors: {email_card_colors(card)}",
-        f"Market: ${money(card.get('display_price'), fallback=0):.2f}",
+        f"Market: {format_currency_amount(card.get('display_price'), card.get('currency') or 'usd')}",
     ])
 
 
@@ -12037,6 +12172,7 @@ def purchase_history(conn, user_id, card_id, variant):
         """
         SELECT purchase_date,
                card_condition,
+               COALESCE(NULLIF(currency, ''), 'usd') AS currency,
                COALESCE(graded, 0) AS graded,
                store_name,
                store_location,
@@ -12047,7 +12183,7 @@ def purchase_history(conn, user_id, card_id, variant):
                MIN(created_at) AS created_at
         FROM card_purchases
         WHERE user_id = ? AND card_id = ? AND variant = ?
-        GROUP BY purchase_date, card_condition, COALESCE(graded, 0), store_name, store_location
+        GROUP BY purchase_date, card_condition, COALESCE(NULLIF(currency, ''), 'usd'), COALESCE(graded, 0), store_name, store_location
         ORDER BY purchase_date DESC, created_at DESC
         """,
         (user_id, card_id, variant or "Normal"),
@@ -12069,6 +12205,7 @@ def movement_history(conn, user_id, card_id, variant=None):
                quantity,
                total_price AS total_amount,
                ROUND(total_price / quantity, 2) AS price_each,
+               COALESCE(NULLIF(currency, ''), 'usd') AS currency,
                created_at,
                store_name,
                store_location,
@@ -12114,6 +12251,7 @@ def movement_history(conn, user_id, card_id, variant=None):
                '' AS store_location,
                '' AS note,
                asking_price_each
+               , COALESCE(NULLIF(currency, ''), 'usd') AS currency
         FROM card_sale_journal
         WHERE user_id = ? AND card_id = ? {variant_where}
         """,
@@ -12138,7 +12276,7 @@ def purchase_entry_ledger(conn, user_id, card_id, movement_id):
         raise ValueError("Choose a purchase entry to view.")
     source = conn.execute(
         """
-        SELECT id, purchase_date, store_name, store_location
+        SELECT id, purchase_date, store_name, store_location, COALESCE(NULLIF(currency, ''), 'usd') AS currency
         FROM card_purchases
         WHERE user_id = ? AND card_id = ? AND id = ?
         """,
@@ -12151,6 +12289,7 @@ def purchase_entry_ledger(conn, user_id, card_id, movement_id):
         SELECT cp.id, cp.card_id, cp.variant, cp.quantity, cp.card_condition,
                COALESCE(cp.graded, 0) AS graded, cp.purchase_date, cp.total_price,
                ROUND(cp.total_price / cp.quantity, 2) AS price_each,
+               COALESCE(NULLIF(cp.currency, ''), 'usd') AS currency,
                cp.store_name, cp.store_location, cp.notes, cp.created_at,
                c.name, c.flavor_name, c.set_code, c.set_name, c.collector_number,
                c.rarity, c.type_line, c.image_small, c.image_normal, c.scryfall_uri
@@ -12160,11 +12299,12 @@ def purchase_entry_ledger(conn, user_id, card_id, movement_id):
           AND cp.purchase_date = ?
           AND COALESCE(cp.store_name, '') = COALESCE(?, '')
           AND COALESCE(cp.store_location, '') = COALESCE(?, '')
+          AND COALESCE(NULLIF(cp.currency, ''), 'usd') = ?
         ORDER BY c.set_code COLLATE NOCASE, CAST(c.collector_number AS INTEGER), c.collector_number COLLATE NOCASE,
                  COALESCE(NULLIF(c.flavor_name, ''), c.name) COLLATE NOCASE,
                  cp.variant COLLATE NOCASE, cp.card_condition COLLATE NOCASE, cp.id
         """,
-        (user_id, source["purchase_date"], source["store_name"], source["store_location"]),
+        (user_id, source["purchase_date"], source["store_name"], source["store_location"], source["currency"]),
     ).fetchall()
     entries = []
     for row in rows:
@@ -12189,6 +12329,7 @@ def purchase_entry_ledger(conn, user_id, card_id, movement_id):
             "purchase_date": row["purchase_date"],
             "total_price": float(row["total_price"] or 0),
             "price_each": float(row["price_each"] or 0),
+            "currency": clean_price_currency(row["currency"]),
             "store_name": row["store_name"] or "",
             "store_location": row["store_location"] or "",
             "notes": row["notes"] or "",
@@ -12204,6 +12345,7 @@ def purchase_entry_ledger(conn, user_id, card_id, movement_id):
         "total_quantity": total_quantity,
         "total_paid": total_paid,
         "average_paid": round(total_paid / total_quantity, 2) if total_quantity > 0 else 0,
+        "currency": clean_price_currency(source["currency"]),
         "entries": entries,
     }
 
@@ -12316,8 +12458,18 @@ def card_container_memberships(conn, user_id, card_id, variant=None):
     return memberships
 
 
-def snapshot_price_for_variant(row, variant):
+def snapshot_price_for_variant(row, variant, currency="usd"):
     variant_text = (variant or "Normal").lower()
+    currency = clean_price_currency(currency)
+    if currency == "eur":
+        normal = row["eur"] if "eur" in row.keys() else row.get("eur")
+        foil = row["eur_foil"] if "eur_foil" in row.keys() else row.get("eur_foil")
+        if "foil" in variant_text and foil:
+            return float(foil or 0)
+        return float(normal or foil or 0)
+    if currency == "tix":
+        value = row["tix"] if "tix" in row.keys() else row.get("tix")
+        return float(value or 0)
     values = {
         "normal": row["usd"] if "usd" in row.keys() else row.get("usd"),
         "foil": row["usd_foil"] if "usd_foil" in row.keys() else row.get("usd_foil"),
@@ -12333,12 +12485,13 @@ def snapshot_price_for_variant(row, variant):
     return 0.0
 
 
-def card_price_history(conn, card_id, variant="Normal", days=92):
+def card_price_history(conn, card_id, variant="Normal", days=92, currency="usd"):
     cutoff = (datetime.now(app_timezone()).date() - timedelta(days=days)).isoformat()
     rows = conn.execute(
         """
         SELECT snapshot_date, COALESCE(usd, 0) AS usd, COALESCE(usd_foil, 0) AS usd_foil,
-               COALESCE(usd_etched, 0) AS usd_etched
+               COALESCE(usd_etched, 0) AS usd_etched, COALESCE(eur, 0) AS eur,
+               COALESCE(eur_foil, 0) AS eur_foil, COALESCE(tix, 0) AS tix
         FROM price_snapshots
         WHERE card_id = ? AND snapshot_date >= ?
         ORDER BY snapshot_date ASC
@@ -12347,13 +12500,13 @@ def card_price_history(conn, card_id, variant="Normal", days=92):
     ).fetchall()
     points = []
     for row in rows:
-        value = snapshot_price_for_variant(row, variant)
+        value = snapshot_price_for_variant(row, variant, currency)
         if value > 0:
             points.append({"date": row["snapshot_date"], "value": round(value, 2)})
     return points
 
 
-def card_price_histories(conn, card_id, variants=None, days=92):
+def card_price_histories(conn, card_id, variants=None, days=92, currency="usd"):
     requested = []
     for variant in variants or ["Normal"]:
         variant = variant or "Normal"
@@ -12364,7 +12517,8 @@ def card_price_histories(conn, card_id, variants=None, days=92):
     return [
         {
             "variant": variant,
-            "points": card_price_history(conn, card_id, variant, days),
+            "points": card_price_history(conn, card_id, variant, days, currency),
+            "currency": clean_price_currency(currency),
         }
         for variant in requested
     ]
@@ -12565,6 +12719,7 @@ def card_detail(conn, user_id, card_id, variant="Normal"):
         f"""
         SELECT c.*, col.share_id, COALESCE(col.quantity, 0) AS quantity,
                COALESCE(col.paid_price, 0.01) AS paid_price,
+               COALESCE(col.currency, 'usd') AS currency,
                COALESCE(col.variant, ?) AS variant,
                COALESCE(col.acquired_date, '') AS acquired_date,
                COALESCE(col.card_condition, 'Near Mint') AS card_condition,
@@ -12588,9 +12743,13 @@ def card_detail(conn, user_id, card_id, variant="Normal"):
         card = scryfall_card_detail_payload(scryfall_card, variant, user_id=user_id, conn=conn)
         card["variant_summaries"] = variant_summaries_for_cards(conn, [card_id], user_id).get(card_id, [])
         apply_card_collection_financials(card, conn, user_id, card_id)
-        card["price_history"] = card_price_history(conn, card_id, variant)
+        viewer_currency_row = conn.execute("SELECT default_currency FROM users WHERE id = ?", (user_id,)).fetchone()
+        card["currency"] = clean_price_currency(viewer_currency_row["default_currency"] if viewer_currency_row else "usd")
+        card["display_price"] = variant_price_from_row(card, variant, card["currency"])
+        card["market_price"] = card["display_price"]
+        card["price_history"] = card_price_history(conn, card_id, variant, currency=card["currency"])
         variants = [item.get("variant") for item in card.get("variant_summaries") or []] or [variant]
-        card["price_histories"] = card_price_histories(conn, card_id, variants)
+        card["price_histories"] = card_price_histories(conn, card_id, variants, currency=card["currency"])
         card["aggregate_stats"] = card_aggregate_stats(conn, card_id)
         card["private_notes"] = card_private_notes(conn, user_id, card_id, variant)
         card["comments"] = card_comments(conn, user_id, card_id)
@@ -12620,9 +12779,9 @@ def card_detail(conn, user_id, card_id, variant="Normal"):
     card["sale_quantity"] = int(sale["sale_quantity"] or 0) if sale else 0
     card["sale_price"] = float(sale["sale_price"] or 0) if sale else 0
     card["whatnot_url"] = sale["whatnot_url"] if sale else ""
-    card["price_history"] = card_price_history(conn, card_id, variant)
+    card["price_history"] = card_price_history(conn, card_id, variant, currency=card.get("currency") or "usd")
     variants = [item.get("variant") for item in card.get("variant_summaries") or []] or [variant]
-    card["price_histories"] = card_price_histories(conn, card_id, variants)
+    card["price_histories"] = card_price_histories(conn, card_id, variants, currency=card.get("currency") or "usd")
     card["aggregate_stats"] = card_aggregate_stats(conn, card_id)
     card["private_notes"] = card_private_notes(conn, user_id, card_id, variant)
     card["comments"] = card_comments(conn, user_id, card_id)
@@ -12681,6 +12840,7 @@ def add_card_purchase(conn, user_id, card_id, payload):
         payload.get("graded", 0),
         payload.get("notes"),
         payload.get("location_id"),
+        clean_price_currency(payload.get("currency") or "usd"),
     )
     rollup_collection_from_purchases(conn, user_id, card_id, variant)
     upsert_price_snapshot_from_card_row(conn, card)
@@ -12754,16 +12914,21 @@ def add_card_direct_sale(conn, user_id, card_id, payload):
         raise ValueError(f"Only {available} copy/copies are available to sell for {variant} / {condition}.")
     sold_date = payload.get("sold_date") or today_iso()
     sold_price_each = money(payload.get("sold_price_each"), fallback=0.01)
+    collection_currency = conn.execute(
+        "SELECT currency FROM collection WHERE user_id = ? AND card_id = ? AND variant = ?",
+        (user_id, card_id, variant),
+    ).fetchone()
+    currency = clean_price_currency(payload.get("currency") or (collection_currency["currency"] if collection_currency else "usd"))
     if sold_price_each <= 0:
-        raise ValueError("Sold price must be greater than $0.00.")
+        raise ValueError("Sold price must be greater than zero.")
     conn.execute(
         """
         INSERT INTO card_sale_journal (
-            user_id, card_id, variant, card_condition, quantity, sold_date, sold_price_each, asking_price_each, created_at
+            user_id, card_id, variant, card_condition, quantity, sold_date, sold_price_each, asking_price_each, currency, created_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (user_id, card_id, variant, condition, quantity, sold_date, sold_price_each, sold_price_each, now_iso()),
+        (user_id, card_id, variant, condition, quantity, sold_date, sold_price_each, sold_price_each, currency, now_iso()),
     )
     decrement_purchase_quantity(conn, user_id, card_id, variant, condition, quantity)
     sale_row = conn.execute(
@@ -12806,9 +12971,10 @@ def update_collection(conn, user_id, card_id, payload):
     if paid_price <= 0:
         paid_price = 0.01
     existing_collection = conn.execute(
-        "SELECT share_id FROM collection WHERE user_id = ? AND card_id = ? AND variant = ?",
+        "SELECT share_id, currency FROM collection WHERE user_id = ? AND card_id = ? AND variant = ?",
         (user_id, card_id, original_variant),
     ).fetchone()
+    currency = clean_price_currency(payload.get("currency") or (existing_collection["currency"] if existing_collection else "usd"))
     existing_meta = conn.execute(
         "SELECT favorite, missing_list, wishlist FROM card_meta WHERE user_id = ? AND card_id = ? AND variant = ?",
         (user_id, card_id, original_variant),
@@ -12836,13 +13002,14 @@ def update_collection(conn, user_id, card_id, payload):
             )
         conn.execute(
             """
-            INSERT INTO collection (user_id, card_id, share_id, quantity, acquired_date, paid_price, variant, card_condition, graded, notes, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO collection (user_id, card_id, share_id, quantity, acquired_date, paid_price, currency, variant, card_condition, graded, notes, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(user_id, card_id, variant) DO UPDATE SET
                 share_id = COALESCE(collection.share_id, excluded.share_id),
                 quantity = excluded.quantity,
                 acquired_date = excluded.acquired_date,
                 paid_price = excluded.paid_price,
+                currency = excluded.currency,
                 variant = excluded.variant,
                 card_condition = excluded.card_condition,
                 graded = excluded.graded,
@@ -12856,6 +13023,7 @@ def update_collection(conn, user_id, card_id, payload):
                 quantity,
                 payload.get("acquired_date") or today_iso(),
                 paid_price,
+                currency,
                 variant,
                 card_condition(payload.get("card_condition")),
                 bool_int(payload.get("graded")),
@@ -13307,7 +13475,7 @@ def update_cards_for_sale(conn, user_id, payload):
             continue
         owned = conn.execute(
             """
-            SELECT quantity, card_condition
+            SELECT quantity, card_condition, COALESCE(NULLIF(currency, ''), 'usd') AS currency
             FROM collection
             WHERE user_id = ? AND card_id = ? AND variant = ? AND COALESCE(quantity, 0) > 0
             """,
@@ -13353,38 +13521,32 @@ def update_cards_for_sale(conn, user_id, payload):
             raise ValueError(f"Only {saleable_for_condition} copy/copies are available to list for sale.")
         card_price = conn.execute(
             """
-            SELECT current_usd, current_usd_foil, current_usd_etched
+            SELECT current_usd, current_usd_foil, current_usd_etched, current_eur, current_eur_foil, current_tix
             FROM cards
             WHERE scryfall_id = ?
             """,
             (card_id,),
         ).fetchone()
-        variant_key = variant.lower()
-        if card_price and "etched" in variant_key and card_price["current_usd_etched"]:
-            fallback_price = card_price["current_usd_etched"]
-        elif card_price and "foil" in variant_key and card_price["current_usd_foil"]:
-            fallback_price = card_price["current_usd_foil"]
-        elif card_price:
-            fallback_price = card_price["current_usd"] or card_price["current_usd_foil"] or card_price["current_usd_etched"] or 0.01
-        else:
-            fallback_price = 0.01
+        currency = clean_price_currency(item.get("currency") or owned["currency"])
+        fallback_price = variant_price_from_row(card_price, variant, currency) if card_price else 0.01
         asking_price = money(item.get("asking_price"), fallback=fallback_price)
         if asking_price <= 0:
             asking_price = 0.01
         whatnot_url = clean_whatnot_listing_url(item.get("whatnot_url"))
         conn.execute(
             """
-            INSERT INTO card_sales (user_id, card_id, variant, card_condition, quantity, asking_price, whatnot_url, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO card_sales (user_id, card_id, variant, card_condition, quantity, asking_price, currency, whatnot_url, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(user_id, card_id, variant, card_condition) DO UPDATE SET
                 quantity = excluded.quantity,
                 asking_price = excluded.asking_price,
+                currency = excluded.currency,
                 whatnot_url = excluded.whatnot_url,
                 updated_at = excluded.updated_at
             """,
-            (user_id, card_id, variant, sale_condition, quantity, asking_price, whatnot_url, timestamp),
+            (user_id, card_id, variant, sale_condition, quantity, asking_price, currency, whatnot_url, timestamp),
         )
-        notifications += notify_wishlist_users_for_sale(conn, user_id, card_id, variant, sale_condition, quantity, asking_price)
+        notifications += notify_wishlist_users_for_sale(conn, user_id, card_id, variant, sale_condition, quantity, asking_price, currency)
         updated += 1
     conn.commit()
     return {"ok": True, "updated": updated, "skipped": skipped, "notifications": notifications}
@@ -13455,7 +13617,7 @@ def mark_card_sold(conn, user_id, payload):
     sale_condition = card_condition(payload.get("card_condition"))
     sale_row = conn.execute(
         """
-        SELECT quantity, asking_price
+        SELECT quantity, asking_price, COALESCE(NULLIF(currency, ''), 'usd') AS currency
         FROM card_sales
         WHERE user_id = ? AND card_id = ? AND variant = ? AND card_condition = ?
         """,
@@ -13474,16 +13636,16 @@ def mark_card_sold(conn, user_id, payload):
     sold_date = payload.get("sold_date") or today_iso()
     sold_price_each = money(payload.get("sold_price_each"), fallback=sale_row["asking_price"])
     if sold_price_each <= 0:
-        raise ValueError("Sold price must be greater than $0.00.")
+        raise ValueError("Sold price must be greater than zero.")
     asking_price_each = money(sale_row["asking_price"], fallback=0.01)
     conn.execute(
         """
         INSERT INTO card_sale_journal (
-            user_id, card_id, variant, card_condition, quantity, sold_date, sold_price_each, asking_price_each, created_at
+            user_id, card_id, variant, card_condition, quantity, sold_date, sold_price_each, asking_price_each, currency, created_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (user_id, card_id, variant, sale_condition, quantity, sold_date, sold_price_each, asking_price_each, now_iso()),
+        (user_id, card_id, variant, sale_condition, quantity, sold_date, sold_price_each, asking_price_each, clean_price_currency(sale_row["currency"]), now_iso()),
     )
     decrement_purchase_quantity(conn, user_id, card_id, variant, sale_condition, quantity)
     remaining_sale_quantity = int(sale_row["quantity"] or 0) - quantity
@@ -13539,7 +13701,7 @@ def delete_card_movement(conn, user_id, card_id, payload):
         condition = card_condition(sale["card_condition"])
         existing_purchase = conn.execute(
             """
-            SELECT id, quantity, total_price
+            SELECT id, quantity, total_price, COALESCE(NULLIF(currency, ''), 'usd') AS currency
             FROM card_purchases
             WHERE user_id = ? AND card_id = ? AND variant = ? AND card_condition = ?
             ORDER BY purchase_date ASC, id ASC
@@ -13570,8 +13732,8 @@ def delete_card_movement(conn, user_id, card_id, payload):
         else:
             conn.execute(
                 """
-                INSERT INTO card_purchases (user_id, card_id, variant, quantity, card_condition, purchase_date, total_price, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO card_purchases (user_id, card_id, variant, quantity, card_condition, purchase_date, total_price, currency, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     user_id,
@@ -13581,16 +13743,18 @@ def delete_card_movement(conn, user_id, card_id, payload):
                     condition,
                     sale["sold_date"] or today_iso(),
                     restored_total,
+                    clean_price_currency(sale["currency"]),
                     now_iso(),
                 ),
             )
         conn.execute(
             """
-            INSERT INTO card_sales (user_id, card_id, variant, card_condition, quantity, asking_price, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO card_sales (user_id, card_id, variant, card_condition, quantity, asking_price, currency, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(user_id, card_id, variant, card_condition) DO UPDATE SET
                 quantity = card_sales.quantity + excluded.quantity,
                 asking_price = excluded.asking_price,
+                currency = excluded.currency,
                 updated_at = excluded.updated_at
             """,
             (
@@ -13600,6 +13764,7 @@ def delete_card_movement(conn, user_id, card_id, payload):
                 condition,
                 int(sale["quantity"] or 0),
                 money(sale["asking_price_each"], fallback=sale["sold_price_each"]),
+                clean_price_currency(sale["currency"]),
                 now_iso(),
             ),
         )
@@ -13923,7 +14088,8 @@ def export_rows(conn, user_id):
                COALESCE(c.colors, '') AS colors,
                COALESCE(c.color_identity, '') AS color_identity,
                COALESCE(col.quantity, 0) AS quantity, COALESCE(col.acquired_date, '') AS acquired_date,
-               COALESCE(col.paid_price, 0.01) AS paid_price, COALESCE(col.variant, 'Normal') AS variant,
+               COALESCE(col.paid_price, 0.01) AS paid_price, COALESCE(col.currency, 'usd') AS currency,
+               COALESCE(col.variant, 'Normal') AS variant,
                COALESCE(col.card_condition, 'Near Mint') AS card_condition,
                COALESCE(col.graded, 0) AS graded,
                COALESCE(col.notes, '') AS notes,
@@ -13952,7 +14118,7 @@ def export_csv(conn, user_id):
     keys = export_keys()
     headers = [
         "Scryfall ID", "Name", "Set Code", "Set", "Card Number", "Rarity", "Type", "Type Category", "Colors", "Color Identity", "Quantity", "Date Acquired",
-        "Price Paid", "Variant", "Condition", "Graded", "Notes", "Favorite", "Wishlist", "Market Price", "Total Value", "Scryfall URL",
+        "Price Paid", "Currency", "Variant", "Condition", "Graded", "Notes", "Favorite", "Wishlist", "Market Price", "Total Value", "Scryfall URL",
     ]
     writer.writerow(headers)
     for row in rows:
@@ -13984,7 +14150,7 @@ def export_moxfield_csv(conn, user_id):
 def export_keys():
     return [
         "scryfall_id", "name", "set_code", "set_name", "collector_number", "rarity", "type_line", "type_category", "colors", "color_identity", "quantity", "acquired_date",
-        "paid_price", "variant", "card_condition", "graded", "notes", "favorite", "wishlist", "market_price", "total_value", "scryfall_uri"
+        "paid_price", "currency", "variant", "card_condition", "graded", "notes", "favorite", "wishlist", "market_price", "total_value", "scryfall_uri"
     ]
 
 
@@ -14020,6 +14186,7 @@ REPORT_FIELD_LABELS = {
     "favorite": "Favorite",
     "for_sale_quantity": "For Sale Qty",
     "asking_price": "Asking Price",
+    "currency": "Currency",
     "container_quantity": "Container Qty",
     "deck_quantity": "Deck Qty",
     "notes": "Notes",
@@ -14039,18 +14206,28 @@ def selected_report_fields(payload):
     return [{"key": field, "label": REPORT_FIELD_LABELS[field]} for field in fields]
 
 
-def report_money(value):
+def format_currency_amount(value, currency="usd"):
+    currency = clean_price_currency(currency)
+    amount = float(value or 0)
+    if currency == "eur":
+        return f"€{amount:,.2f}"
+    if currency == "tix":
+        return f"{amount:,.2f} tix"
+    return f"${amount:,.2f}"
+
+
+def report_money(value, currency="usd"):
     try:
-        return f"${float(value or 0):,.2f}"
+        return format_currency_amount(value, currency)
     except (TypeError, ValueError):
-        return "$0.00"
+        return format_currency_amount(0, currency if currency in ALLOWED_PRICE_CURRENCIES else "usd")
 
 
-def report_display_value(key, value):
+def report_display_value(key, value, currency="usd"):
     if value is None:
         return ""
     if key in MONEY_REPORT_FIELDS:
-        return report_money(value)
+        return report_money(value, currency)
     if key == "favorite":
         return "Yes" if int(value or 0) else "No"
     return str(value)
@@ -14163,6 +14340,7 @@ def build_collection_report(conn, user_id, payload):
                    COALESCE(NULLIF(variant, ''), 'Normal') AS variant,
                    COALESCE(NULLIF(card_condition, ''), ?) AS condition,
                    SUM(COALESCE(total_price, 0)) AS total_paid,
+                   COALESCE(MAX(NULLIF(currency, '')), 'usd') AS currency,
                    SUM(COALESCE(quantity, 0)) AS quantity,
                    MIN(purchase_date) AS first_obtained,
                    GROUP_CONCAT(DISTINCT NULLIF(source_store_name, '')) AS store_name,
@@ -14217,6 +14395,7 @@ def build_collection_report(conn, user_id, payload):
                c.collector_number,
                inv.variant AS variant,
                inv.condition AS condition,
+               COALESCE(NULLIF(inv.currency, ''), 'usd') AS currency,
                COALESCE(inv.quantity, 0) AS quantity,
                ({price_expr}) AS market_price,
                COALESCE(inv.quantity, 0) * ({price_expr}) AS total_value,
@@ -14262,7 +14441,10 @@ def build_collection_report(conn, user_id, payload):
     return {
         "fields": fields,
         "rows": [
-            {field["key"]: row[field["key"]] for field in fields}
+            {
+                **{field["key"]: row[field["key"]] for field in fields},
+                "_currency": clean_price_currency(row["currency"]),
+            }
             for row in rows
         ],
     }
@@ -14274,7 +14456,7 @@ def collection_report_html(report, title="Arcane Ledger Collection Report"):
     header = "".join(f"<th>{html_lib.escape(field['label'])}</th>" for field in fields)
     body = "".join(
         "<tr>" + "".join(
-            f"<td>{html_lib.escape(report_display_value(field['key'], row.get(field['key'])))}</td>"
+            f"<td>{html_lib.escape(report_display_value(field['key'], row.get(field['key']), row.get('_currency') or row.get('currency') or 'usd'))}</td>"
             for field in fields
         ) + "</tr>"
         for row in rows
